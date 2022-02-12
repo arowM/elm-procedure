@@ -112,6 +112,7 @@ import Browser.Navigation exposing (Key)
 import Html exposing (Html)
 import Internal.ObserverId as ObserverId exposing (ObserverId)
 import Platform
+import Procedure.Wrapper exposing (Wrapper)
 import Url exposing (Url)
 
 
@@ -713,14 +714,6 @@ type alias Lifter a b =
     }
 
 
-{-| Use to convert local event types.
--}
-type alias Wrapper a b =
-    { unwrap : a -> Maybe b
-    , wrap : b -> a
-    }
-
-
 {-| Construct a `Procedure` instance that modifies the memory state.
 If the given `Observer` has expired, it does nothing.
 
@@ -1283,10 +1276,7 @@ If the given `Observer` has expired, the call back function is called, but is pa
 -}
 setVariant :
     Observer memory a
-    ->
-        { wrap : ( ObserverId, b ) -> a
-        , unwrap : a -> Maybe ( ObserverId, b )
-        }
+    -> Wrapper a ( ObserverId, b )
     -> b
     -> (Observer memory b -> List (Procedure_ cmd memory event))
     -> Procedure_ cmd memory event

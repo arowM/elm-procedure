@@ -19,6 +19,6 @@
     },
     "test-dependencies": {
         "elm-explorations/test": "1.2.2 <= v < 2.0.0",
-        "arowM/elm-sequential-test": "1.0.1 <= v < 2.0.0"
+        "arowM/elm-sequential-test": "1.0.3 <= v < 2.0.0"
     }
 }

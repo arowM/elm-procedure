@@ -1,5 +1,6 @@
 module Procedure.ObserverId exposing
     ( ObserverId
+    , global
     , decoder
     , toString
     , toValue
@@ -8,6 +9,7 @@ module Procedure.ObserverId exposing
 {-|
 
 @docs ObserverId
+@docs global
 @docs decoder
 @docs toString
 @docs toValue
@@ -23,6 +25,13 @@ import Json.Encode exposing (Value)
 -}
 type alias ObserverId =
     Internal.ObserverId
+
+
+{-| Global `ObserverId`.
+-}
+global : ObserverId
+global =
+    Internal.init
 
 
 {-| Convert into `String`.

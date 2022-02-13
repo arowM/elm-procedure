@@ -15,6 +15,7 @@ module Procedure exposing
     , modify
     , push
     , await
+    , awaitChild
     , async
     , sync
     , race
@@ -73,6 +74,7 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs modify
 @docs push
 @docs await
+@docs awaitChild
 @docs async
 @docs sync
 @docs race
@@ -799,6 +801,21 @@ await (Observer { id, lifter }) f =
                     Nothing ->
                         Nothing
         ]
+
+
+{-| `await` for SPA.
+If the second argument returns `Nothing`, it awaits again.
+-}
+awaitChild : Observer memory a -> (event -> Maybe e) -> (e -> a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+awaitChild o unwrap f =
+    await o <|
+        \event a ->
+            case unwrap event of
+                Nothing ->
+                    []
+
+                Just e ->
+                    f e a
 
 
 {-| Construct a `Procedure` instance that evaluates the given `Procedure`s asynchronously:

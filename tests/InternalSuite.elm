@@ -267,17 +267,17 @@ suite =
                         o.pushRouteLogin
                             |> Procedure.update
                                 (Procedure.issue o.pageLoginOid
-                                    (PageLoginChangePass "pass")
+                                    (PageLoginEvent <| PageLoginChangePass "pass")
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue o.pageLoginOid
-                                    (PageLoginChangeId "id")
+                                    (PageLoginEvent <| PageLoginChangeId "id")
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue o.pageLoginOid
-                                    PageLoginClickSubmit
+                                    (PageLoginEvent PageLoginClickSubmit)
                                 )
                 in
                 { pageLoginOid = o.pageLoginOid
@@ -310,7 +310,7 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.pageLoginOid
-                                    (PageLoginReceiveLoginResp (Err (SomeError "Invalid ID or Pass")))
+                                    (PageLoginEvent <| PageLoginReceiveLoginResp (Err (SomeError "Invalid ID or Pass")))
                                 )
                 in
                 { pageLoginOid = o.pageLoginOid
@@ -343,23 +343,24 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.pageLoginOid
-                                    (PageLoginChangePass "pass2")
+                                    (PageLoginEvent <| PageLoginChangePass "pass2")
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
                                     o.pageLoginOid
-                                    PageLoginClickSubmit
+                                    (PageLoginEvent PageLoginClickSubmit)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
                                     o.pageLoginOid
-                                    (PageLoginReceiveLoginResp <|
-                                        Ok
-                                            { session =
-                                                { name = "Sakura-chan" }
-                                            }
+                                    (PageLoginEvent <|
+                                        PageLoginReceiveLoginResp <|
+                                            Ok
+                                                { session =
+                                                    { name = "Sakura-chan" }
+                                                }
                                     )
                                 )
                 in
@@ -612,7 +613,7 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersChangeNewUserName user5.name)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersChangeNewUserName user5.name)
                                 )
                 in
                 { user3ChangeNewUserName = model
@@ -652,13 +653,13 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersClickRegisterNewUser)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersClickRegisterNewUser)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user5)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user5)
                                 )
                 in
                 unwrapPageUsersUserOid user5.name (Procedure.memoryState model)
@@ -702,13 +703,13 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersClickRemoveUser)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersClickRemoveUser)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersReceiveRemoveUserResp (Ok ()))
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRemoveUserResp (Ok ()))
                                 )
                 in
                 { user3ClickRemoveUser = model
@@ -746,19 +747,19 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user5Oid
-                                    (PageUsersEvent <| PageUsersChangeNewUserName user6.name)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersChangeNewUserName user6.name)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user5Oid
-                                    (PageUsersEvent <| PageUsersClickRegisterNewUser)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersClickRegisterNewUser)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user5Oid
-                                    (PageUsersEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user6)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user6)
                                 )
                 in
                 { user5ClickRegisterNewUser = model

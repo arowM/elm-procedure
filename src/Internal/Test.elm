@@ -2,6 +2,7 @@ module Internal.Test exposing (..)
 
 import Procedure exposing (Observer, Procedure_, global)
 import Procedure.ObserverId exposing (ObserverId)
+import Procedure.Wrapper exposing (Wrapper)
 import Url
 import Url.Builder
 import Url.Parser exposing ((<?>))
@@ -121,11 +122,45 @@ type Event
     | UrlChanged Url
     | PageHomeEvent PageHomeEvent
     | PageUsersEvent PageUsersEvent
+    | PageLoginEvent PageLoginEvent
     | ReceiveSession (Result HttpError Session)
-    | PageLoginReceiveLoginResp (Result HttpError LoginResp)
+
+
+type PageLoginEvent
+    = PageLoginReceiveLoginResp (Result HttpError LoginResp)
     | PageLoginChangeId String
     | PageLoginChangePass String
     | PageLoginClickSubmit
+
+
+unwrapPageLoginEvent : Event -> Maybe PageLoginEvent
+unwrapPageLoginEvent e =
+    case e of
+        PageLoginEvent a ->
+            Just a
+
+        _ ->
+            Nothing
+
+
+unwrapPageHomeEvent : Event -> Maybe PageHomeEvent
+unwrapPageHomeEvent e =
+    case e of
+        PageHomeEvent a ->
+            Just a
+
+        _ ->
+            Nothing
+
+
+unwrapPageUsersEvent : Event -> Maybe PageUsersEvent
+unwrapPageUsersEvent e =
+    case e of
+        PageUsersEvent a ->
+            Just a
+
+        _ ->
+            Nothing
 
 
 type UrlRequest
@@ -371,19 +406,19 @@ assertNoGlobalPollutionOnPageLoginEvents p =
         [ Procedure.await global <|
             \event _ ->
                 case event of
-                    PageLoginReceiveLoginResp _ ->
+                    PageLoginEvent (PageLoginReceiveLoginResp _) ->
                         [ putError "Global pollution with PageLoginReceiveLoginResp"
                         ]
 
-                    PageLoginChangeId _ ->
+                    PageLoginEvent (PageLoginChangeId _) ->
                         [ putError "Global pollution with PageLoginChangeId"
                         ]
 
-                    PageLoginChangePass _ ->
+                    PageLoginEvent (PageLoginChangePass _) ->
                         [ putError "Global pollution with PageLoginChangePass"
                         ]
 
-                    PageLoginClickSubmit ->
+                    PageLoginEvent PageLoginClickSubmit ->
                         [ putError "Global pollution with PageLoginClickSubmit"
                         ]
 
@@ -443,7 +478,7 @@ assertNoGlobalPollutionOnRequestSession p =
 
 pageLoginProcedures : Observer Memory PageLogin_ -> RouteLogin_ -> List (Procedure_ Cmd Memory Event)
 pageLoginProcedures pageLogin detail =
-    [ Procedure.await pageLogin <|
+    [ Procedure.awaitChild pageLogin unwrapPageLoginEvent <|
         \event _ ->
             case event of
                 PageLoginChangeId str ->
@@ -461,7 +496,7 @@ pageLoginProcedures pageLogin detail =
                 PageLoginClickSubmit ->
                     [ Procedure.push pageLogin <|
                         \_ _ -> PageLoginRequestSubmit
-                    , Procedure.await pageLogin <|
+                    , Procedure.awaitChild pageLogin unwrapPageLoginEvent <|
                         \event2 _ ->
                             case event2 of
                                 PageLoginReceiveLoginResp (Err LoginRequired) ->
@@ -538,8 +573,9 @@ sessionPageController route session =
                     [ Procedure.doUntil global
                         (pageHomeProcedures
                             PageHomeCmd
-                            PageHomeEvent
-                            unwrapPageHomeEvent
+                            { wrap = PageHomeEvent
+                            , unwrap = unwrapPageHomeEvent
+                            }
                             pageHome
                         )
                         handleNewRoute
@@ -559,8 +595,9 @@ sessionPageController route session =
                     [ Procedure.doUntil global
                         (pageUsersProcedures
                             PageUsersCmd
-                            PageUsersEvent
-                            unwrapPageUsersEvent
+                            { wrap = PageUsersEvent
+                            , unwrap = unwrapPageUsersEvent
+                            }
                             pageUsers
                         )
                         handleNewRoute
@@ -618,26 +655,6 @@ extractSession def pv =
             detail.session
 
 
-unwrapPageHomeEvent : Event -> Maybe PageHomeEvent
-unwrapPageHomeEvent event =
-    case event of
-        PageHomeEvent content ->
-            Just content
-
-        _ ->
-            Nothing
-
-
-unwrapPageUsersEvent : Event -> Maybe PageUsersEvent
-unwrapPageUsersEvent event =
-    case event of
-        PageUsersEvent content ->
-            Just content
-
-        _ ->
-            Nothing
-
-
 
 -- Page.Home
 
@@ -665,11 +682,10 @@ type PageHomeCmd
 
 pageHomeProcedures :
     (PageHomeCmd -> cmd)
-    -> (PageHomeEvent -> event)
-    -> (event -> Maybe PageHomeEvent)
+    -> Wrapper event PageHomeEvent
     -> Observer memory PageHomeMemory
     -> List (Procedure_ cmd memory event)
-pageHomeProcedures toCmd toEvent unwrapEvent pageHome =
+pageHomeProcedures toCmd wrapper pageHome =
     [ Procedure.withResource pageHome
         { aquire = \_ memory -> ( memory, memory.session.name )
         , release =
@@ -682,41 +698,41 @@ pageHomeProcedures toCmd toEvent unwrapEvent pageHome =
         \name ->
             [ Procedure.sync
                 [ Procedure.race
-                    [ Procedure.await pageHome <|
+                    [ Procedure.awaitChild pageHome wrapper.unwrap <|
                         \event _ ->
-                            case unwrapEvent event of
-                                Just PageHomeClickButton1 ->
+                            case event of
+                                PageHomeClickButton1 ->
                                     [ putPageHomeLog toCmd pageHome "ClickButton1" ]
 
                                 _ ->
                                     []
-                    , Procedure.await pageHome <| \_ _ -> []
+                    , Procedure.awaitChild pageHome wrapper.unwrap <| \_ _ -> []
                     ]
                 , Procedure.batch
                     [ Procedure.async
-                        [ Procedure.await pageHome <|
+                        [ Procedure.awaitChild pageHome wrapper.unwrap <|
                             \event _ ->
-                                case unwrapEvent event of
-                                    Just PageHomeClickButton2 ->
+                                case event of
+                                    PageHomeClickButton2 ->
                                         [ putPageHomeLog toCmd pageHome "ClickButton2 in asynced thread" ]
 
                                     _ ->
                                         []
                         ]
-                    , Procedure.await pageHome <|
+                    , Procedure.awaitChild pageHome wrapper.unwrap <|
                         \event _ ->
-                            case unwrapEvent event of
-                                Just PageHomeClickButton1 ->
+                            case event of
+                                PageHomeClickButton1 ->
                                     [ putPageHomeLog toCmd pageHome "ClickButton1 in another thread" ]
 
                                 _ ->
                                     []
                     ]
                 ]
-            , Procedure.await pageHome <|
+            , Procedure.awaitChild pageHome wrapper.unwrap <|
                 \event _ ->
-                    case unwrapEvent event of
-                        Just (PageHomeChangeSessionName str) ->
+                    case event of
+                        PageHomeChangeSessionName str ->
                             [ Procedure.modify pageHome <|
                                 \memory ->
                                     { memory
@@ -735,7 +751,7 @@ pageHomeProcedures toCmd toEvent unwrapEvent pageHome =
             ]
     , Procedure.jump global <|
         \_ ->
-            pageHomeProcedures toCmd toEvent unwrapEvent pageHome
+            pageHomeProcedures toCmd wrapper pageHome
     ]
 
 
@@ -784,11 +800,25 @@ type alias User =
 
 type PageUsersEvent
     = PageUsersReceiveInitialUsers (Result HttpError (List User))
-    | PageUsersChangeNewUserName String
+    | PageUsersUserFormEvent PageUsersUserFormEvent
+
+
+type PageUsersUserFormEvent
+    = PageUsersChangeNewUserName String
     | PageUsersClickRegisterNewUser
     | PageUsersReceiveRegisterNewUserResp (Result HttpError User)
     | PageUsersClickRemoveUser
     | PageUsersReceiveRemoveUserResp (Result HttpError ())
+
+
+unwrapPageUsersUserFormEvent : Wrapper event PageUsersEvent -> event -> Maybe PageUsersUserFormEvent
+unwrapPageUsersUserFormEvent { unwrap } e =
+    case unwrap e of
+        Just (PageUsersUserFormEvent a) ->
+            Just a
+
+        _ ->
+            Nothing
 
 
 type PageUsersCmd
@@ -801,11 +831,10 @@ type PageUsersCmd
 
 pageUsersProcedures :
     (PageUsersCmd -> cmd)
-    -> (PageUsersEvent -> event)
-    -> (event -> Maybe PageUsersEvent)
+    -> Wrapper event PageUsersEvent
     -> Observer memory PageUsersMemory
     -> List (Procedure_ cmd memory event)
-pageUsersProcedures toCmd toEvent unwrapEvent pageUsers =
+pageUsersProcedures toCmd wrapper pageUsers =
     let
         users =
             pageUsers
@@ -816,20 +845,20 @@ pageUsersProcedures toCmd toEvent unwrapEvent pageUsers =
     in
     [ Procedure.push pageUsers <|
         \_ _ -> toCmd PageUsersRequestInitialUsers
-    , Procedure.await pageUsers <|
+    , Procedure.awaitChild pageUsers wrapper.unwrap <|
         \event _ ->
-            case unwrapEvent event of
-                Just (PageUsersReceiveInitialUsers (Err err)) ->
+            case event of
+                PageUsersReceiveInitialUsers (Err err) ->
                     [ handlePageUsersHttpError toCmd pageUsers RouteUsers err
                     , Procedure.quit
                     ]
 
-                Just (PageUsersReceiveInitialUsers (Ok resp)) ->
+                PageUsersReceiveInitialUsers (Ok resp) ->
                     List.map
                         (\user ->
                             Procedure.async
                                 [ Procedure.append users (initUserForm user) <|
-                                    pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers
+                                    pageUsersUserFormProcedures toCmd wrapper pageUsers
                                 ]
                         )
                         resp
@@ -842,12 +871,11 @@ pageUsersProcedures toCmd toEvent unwrapEvent pageUsers =
 
 pageUsersUserFormProcedures :
     (PageUsersCmd -> cmd)
-    -> (PageUsersEvent -> event)
-    -> (event -> Maybe PageUsersEvent)
+    -> Wrapper event PageUsersEvent
     -> Observer memory PageUsersMemory
     -> Observer memory UserForm
     -> List (Procedure_ cmd memory event)
-pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers userForm =
+pageUsersUserFormProcedures toCmd wrapper pageUsers userForm =
     let
         users =
             pageUsers
@@ -856,61 +884,61 @@ pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers userForm =
                     , set = \u memory -> { memory | users = u }
                     }
     in
-    [ Procedure.await userForm <|
+    [ Procedure.awaitChild userForm (unwrapPageUsersUserFormEvent wrapper) <|
         \event _ ->
-            case unwrapEvent event of
-                Just (PageUsersChangeNewUserName name) ->
+            case event of
+                PageUsersChangeNewUserName name ->
                     [ Procedure.modify userForm <|
                         \memory -> { memory | newUserName = name }
                     , Procedure.jump global <|
                         \_ ->
-                            pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers userForm
+                            pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
                     ]
 
-                Just PageUsersClickRegisterNewUser ->
+                PageUsersClickRegisterNewUser ->
                     [ Procedure.push userForm <|
                         \_ _ -> toCmd PageUsersRequestRegisterNewUser
-                    , Procedure.await userForm <|
+                    , Procedure.awaitChild userForm (unwrapPageUsersUserFormEvent wrapper) <|
                         \event2 _ ->
-                            case unwrapEvent event2 of
-                                Just (PageUsersReceiveRegisterNewUserResp (Err err)) ->
+                            case event2 of
+                                PageUsersReceiveRegisterNewUserResp (Err err) ->
                                     [ handlePageUsersHttpError toCmd pageUsers RouteUsers err
                                     , Procedure.jump global <|
                                         \_ ->
-                                            pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers userForm
+                                            pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
                                     ]
 
-                                Just (PageUsersReceiveRegisterNewUserResp (Ok user)) ->
+                                PageUsersReceiveRegisterNewUserResp (Ok user) ->
                                     [ Procedure.modify userForm <|
                                         \memory ->
                                             { memory | newUserName = "" }
                                     , Procedure.async
                                         [ Procedure.insertAfter users userForm (initUserForm user) <|
-                                            pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers
+                                            pageUsersUserFormProcedures toCmd wrapper pageUsers
                                         ]
                                     , Procedure.jump global <|
                                         \_ ->
-                                            pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers userForm
+                                            pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
                                     ]
 
                                 _ ->
                                     []
                     ]
 
-                Just PageUsersClickRemoveUser ->
+                PageUsersClickRemoveUser ->
                     [ Procedure.push userForm <|
                         \_ _ -> toCmd PageUsersRequestRemoveUser
-                    , Procedure.await userForm <|
+                    , Procedure.awaitChild userForm (unwrapPageUsersUserFormEvent wrapper) <|
                         \event2 _ ->
-                            case unwrapEvent event2 of
-                                Just (PageUsersReceiveRemoveUserResp (Err err)) ->
+                            case event2 of
+                                PageUsersReceiveRemoveUserResp (Err err) ->
                                     [ handlePageUsersHttpError toCmd pageUsers RouteUsers err
                                     , Procedure.jump global <|
                                         \_ ->
-                                            pageUsersUserFormProcedures toCmd toEvent unwrapEvent pageUsers userForm
+                                            pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
                                     ]
 
-                                Just (PageUsersReceiveRemoveUserResp (Ok ())) ->
+                                PageUsersReceiveRemoveUserResp (Ok ()) ->
                                     [ Procedure.remove users userForm
                                     , Procedure.quit
                                     ]

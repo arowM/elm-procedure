@@ -1,14 +1,15 @@
 module Procedure.VPack exposing
     ( VPack
     , issue
-    , childView
+    , child
     )
 
 {-| Helper module for building SPA.
+The `VPack` is useful for building hierarchical Views and Subscriptions.
 
 @docs VPack
 @docs issue
-@docs childView
+@docs child
 
 -}
 
@@ -31,31 +32,15 @@ issue p1 e1 =
 
 
 {-| -}
-childView :
+child :
     VPack e0 e1 m1
     -> (e2 -> e1)
     -> ( ObserverId, m2 )
     -> (VPack e0 e2 m2 -> view)
     -> view
-childView p1 wrap ( oid, m2 ) f =
+child p1 wrap ( oid, m2 ) f =
     f
         { observerId = oid
         , wrap = p1.wrap << wrap
         , memory = m2
         }
-
-
-
-{-
-   childView : VPack e0 e1 m1
-       -> (e2 -> e1)
-       -> (m1 -> m2)
-       -> (VPack e0 e1 m1 -> VPack e0 e2 m2 -> view)
-       -> view
-   childView p1 wrap get f =
-       f p1
-           { observerId = oid
-           , wrap = p1.wrap << wrap
-           , memory = get p1.memory
-           }
--}

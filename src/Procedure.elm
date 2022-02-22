@@ -32,7 +32,9 @@ module Procedure exposing
     , dig
     , setVariant
     , prepend
+    , prependList
     , append
+    , appendList
     , insertBefore
     , insertAfter
     , remove
@@ -95,7 +97,9 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs dig
 @docs setVariant
 @docs prepend
+@docs prependList
 @docs append
+@docs appendList
 @docs insertBefore
 @docs insertAfter
 @docs remove
@@ -838,6 +842,8 @@ awaitChild o unwrap f =
   - Even if the original process completed, the asynchronous process is not cancelled.
   - If the original process cancelled by `race` or `doUntil`, the asynchronous process also killed.
 
+Note: When multiple `async`s are called, there is no guarantee that the procedures of the first called `async` will be executed first.
+
 -}
 async : List (Procedure_ cmd memory event) -> Procedure_ cmd memory event
 async ps =
@@ -1356,6 +1362,26 @@ prepend observer a =
     modifyList observer (\rid xs -> ( rid, a ) :: xs)
 
 
+{-| Prepend new items, and create the `Observer` for it.
+If the given `Observer` has expired, it does nothing.
+
+For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
+
+-}
+prependList : Observer memory (List ( ObserverId, a )) -> List a -> (List (Observer memory a) -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+prependList observer ls f =
+    List.foldl
+        (\a next dls ->
+            prepend observer a <|
+                \obs ->
+                    [ next (obs :: dls)
+                    ]
+        )
+        (\obss -> f obss |> batch)
+        ls
+        []
+
+
 {-| Append new item, and create the `Observer` for it.
 If the given `Observer` has expired, it does nothing.
 
@@ -1365,6 +1391,26 @@ For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-threa
 append : Observer memory (List ( ObserverId, a )) -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 append observer a =
     modifyList observer (\rid xs -> xs ++ [ ( rid, a ) ])
+
+
+{-| Append new items, and create the `Observer` for it.
+If the given `Observer` has expired, it does nothing.
+
+For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
+
+-}
+appendList : Observer memory (List ( ObserverId, a )) -> List a -> (List (Observer memory a) -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+appendList observer ls f =
+    List.foldr
+        (\a next dls ->
+            append observer a <|
+                \obs ->
+                    [ next (obs :: dls)
+                    ]
+        )
+        (\obss -> f obss |> batch)
+        ls
+        []
 
 
 {-| Insert new item before the base `Observer`, and create the `Observer` for it.

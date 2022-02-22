@@ -568,7 +568,7 @@ suite =
                                     (PageUsersEvent <|
                                         PageUsersReceiveInitialUsers <|
                                             Ok
-                                                [ user1, user2, user3, user4 ]
+                                                [ user1, user2, user3, user4, user5 ]
                                     )
                                 )
                 in
@@ -595,9 +595,10 @@ suite =
                                     }
                                 , users =
                                     [ initUserForm user1
-                                    , initUserForm user2
+                                    , initUserForm newUser2
                                     , initUserForm user3
                                     , initUserForm user4
+                                    , initUserForm user5
                                     ]
                                 }
                         , cmds =
@@ -613,7 +614,7 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersChangeNewUserName user5.name)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersChangeNewUserName user6.name)
                                 )
                 in
                 { user3ChangeNewUserName = model
@@ -634,18 +635,19 @@ suite =
                                     }
                                 , users =
                                     [ initUserForm user1
-                                    , initUserForm user2
+                                    , initUserForm newUser2
                                     , { user = user3
-                                      , newUserName = user5.name
+                                      , newUserName = user6.name
                                       }
                                     , initUserForm user4
+                                    , initUserForm user5
                                     ]
                                 }
                         , cmds =
                             []
                         }
             )
-        |> Sequence.andThen "should have ObserverId for user5"
+        |> Sequence.andThen "should have ObserverId for user7"
             (\o ->
                 let
                     ( model, cmds ) =
@@ -659,15 +661,15 @@ suite =
                             |> Procedure.update
                                 (Procedure.issue
                                     o.user3Oid
-                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user5)
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user6)
                                 )
                 in
-                unwrapPageUsersUserOid user5.name (Procedure.memoryState model)
+                unwrapPageUsersUserOid user6.name (Procedure.memoryState model)
                     |> Maybe.map
                         (\oid ->
                             { user3ClickRegisterNewUser = model
                             , cmds = cmds
-                            , user5Oid = oid
+                            , user6Oid = oid
                             , user3Oid = o.user3Oid
                             }
                         )
@@ -685,10 +687,11 @@ suite =
                                     }
                                 , users =
                                     [ initUserForm user1
-                                    , initUserForm user2
+                                    , initUserForm newUser2
                                     , initUserForm user3
-                                    , initUserForm user5
+                                    , initUserForm user6
                                     , initUserForm user4
+                                    , initUserForm user5
                                     ]
                                 }
                         , cmds =
@@ -714,7 +717,7 @@ suite =
                 in
                 { user3ClickRemoveUser = model
                 , cmds = cmds
-                , user5Oid = o.user5Oid
+                , user6Oid = o.user6Oid
                 }
             )
         |> Sequence.assert "Click remove user on User 3"
@@ -730,9 +733,10 @@ suite =
                                     }
                                 , users =
                                     [ initUserForm user1
-                                    , initUserForm user2
-                                    , initUserForm user5
+                                    , initUserForm newUser2
+                                    , initUserForm user6
                                     , initUserForm user4
+                                    , initUserForm user5
                                     ]
                                 }
                         , cmds =
@@ -746,30 +750,30 @@ suite =
                         o.user3ClickRemoveUser
                             |> Procedure.update
                                 (Procedure.issue
-                                    o.user5Oid
+                                    o.user6Oid
                                     (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersChangeNewUserName user6.name)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
-                                    o.user5Oid
+                                    o.user6Oid
                                     (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersClickRegisterNewUser)
                                 )
                             |> Tuple.first
                             |> Procedure.update
                                 (Procedure.issue
-                                    o.user5Oid
-                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user6)
+                                    o.user6Oid
+                                    (PageUsersEvent <| PageUsersUserFormEvent <| PageUsersReceiveRegisterNewUserResp <| Ok user7)
                                 )
                 in
-                { user5ClickRegisterNewUser = model
+                { user6ClickRegisterNewUser = model
                 , cmds = cmds
-                , user5Oid = o.user5Oid
+                , user6Oid = o.user6Oid
                 }
             )
-        |> Sequence.assert "Click register new user on User 5"
+        |> Sequence.assert "Click register new user on User 6"
             (\o ->
-                { memory = unwrapPageUsers <| Procedure.memoryState o.user5ClickRegisterNewUser
+                { memory = unwrapPageUsers <| Procedure.memoryState o.user6ClickRegisterNewUser
                 , cmds = o.cmds
                 }
                     |> Expect.equal
@@ -780,10 +784,11 @@ suite =
                                     }
                                 , users =
                                     [ initUserForm user1
-                                    , initUserForm user2
-                                    , initUserForm user5
+                                    , initUserForm newUser2
                                     , initUserForm user6
+                                    , initUserForm user7
                                     , initUserForm user4
+                                    , initUserForm user5
                                     ]
                                 }
                         , cmds =

@@ -23,6 +23,13 @@ user2 =
     }
 
 
+newUser2 : User
+newUser2 =
+    { id = "2"
+    , name = "new user 2"
+    }
+
+
 user3 : User
 user3 =
     { id = "3"
@@ -48,6 +55,13 @@ user6 : User
 user6 =
     { id = "6"
     , name = "user 6"
+    }
+
+
+user7 : User
+user7 =
+    { id = "7"
+    , name = "user 7"
     }
 
 
@@ -853,18 +867,39 @@ pageUsersProcedures toCmd wrapper pageUsers =
                     , Procedure.quit
                     ]
 
-                PageUsersReceiveInitialUsers (Ok resp) ->
-                    List.map
-                        (\user ->
-                            Procedure.async
-                                [ Procedure.append users (initUserForm user) <|
-                                    pageUsersUserFormProcedures toCmd wrapper pageUsers
-                                ]
+                PageUsersReceiveInitialUsers (Ok [ u1, u2, u3, u4, u5 ]) ->
+                    [ Procedure.prepend users
+                        (initUserForm u3)
+                        (\userForm ->
+                            [ Procedure.async <|
+                                pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
+                            ]
                         )
-                        resp
+                    , Procedure.appendList users (List.map initUserForm [ u4, u5 ]) <|
+                        List.map
+                            (\userForm ->
+                                Procedure.async <|
+                                    pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
+                            )
+                    , Procedure.prependList users (List.map initUserForm [ u1, u2 ]) <|
+                        List.map
+                            (\userForm ->
+                                Procedure.async <|
+                                    pageUsersUserFormProcedures toCmd wrapper pageUsers userForm
+                            )
+                    ]
 
                 _ ->
                     []
+    , Procedure.modify users <|
+        List.map
+            (\( oid, a ) ->
+                if a.user.id == user2.id then
+                    ( oid, { a | user = { id = a.user.id, name = newUser2.name } } )
+
+                else
+                    ( oid, a )
+            )
     , putPageUsersLog toCmd pageUsers "Loaded users"
     ]
 

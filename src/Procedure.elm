@@ -15,7 +15,6 @@ module Procedure exposing
     , modify
     , push
     , await
-    , awaitChild
     , async
     , sync
     , race
@@ -69,14 +68,13 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs publish
 
 
-# Primitive Procedures
+# Procedures
 
 @docs none
 @docs batch
 @docs modify
 @docs push
 @docs await
-@docs awaitChild
 @docs async
 @docs sync
 @docs race
@@ -95,7 +93,17 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs Observer
 @docs global
 @docs dig
+
+
+## Observe variants
+
 @docs setVariant
+
+
+## Observe list elements
+
+For a sample, see [`sample/src/ListItems.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/ListItems.elm).
+
 @docs prepend
 @docs prependList
 @docs append
@@ -117,6 +125,7 @@ import Browser exposing (Document)
 import Browser.Navigation exposing (Key)
 import Html exposing (Html)
 import Internal.ObserverId as ObserverId exposing (ObserverId)
+import Internal.VPack as VPack exposing (VPack)
 import Platform
 import Procedure.Wrapper exposing (Wrapper)
 import Url exposing (Url)
@@ -143,8 +152,8 @@ type alias Document event =
 element :
     { init : memory
     , procedures : flags -> List (Procedure memory event)
-    , view : memory -> Html (Msg event)
-    , subscriptions : memory -> Sub (Msg event)
+    , view : VPack event event memory -> Html (Msg event)
+    , subscriptions : VPack event event memory -> Sub (Msg event)
     }
     -> Program flags memory event
 element option =
@@ -154,13 +163,13 @@ element option =
                 init option.init (option.procedures flags)
                     |> concatPair
         , view =
-            \model -> option.view (memoryState model)
+            \model -> option.view (VPack.global <| memoryState model)
         , update =
             \msg model ->
                 update msg model |> concatPair
         , subscriptions =
             \model ->
-                option.subscriptions (memoryState model)
+                option.subscriptions (VPack.global <| memoryState model)
         }
 
 
@@ -169,8 +178,8 @@ element option =
 document :
     { init : memory
     , procedures : flags -> List (Procedure memory event)
-    , view : memory -> Document (Msg event)
-    , subscriptions : memory -> Sub (Msg event)
+    , view : VPack event event memory -> Document (Msg event)
+    , subscriptions : VPack event event memory -> Sub (Msg event)
     }
     -> Program flags memory event
 document option =
@@ -180,13 +189,13 @@ document option =
                 init option.init (option.procedures flags)
                     |> concatPair
         , view =
-            \model -> option.view (memoryState model)
+            \model -> option.view (VPack.global <| memoryState model)
         , update =
             \msg model ->
                 update msg model |> concatPair
         , subscriptions =
             \model ->
-                option.subscriptions (memoryState model)
+                option.subscriptions (VPack.global <| memoryState model)
         }
 
 
@@ -198,8 +207,8 @@ The `onUrlRequest` and `onUrlChange` Events are issued to the `global` Observer.
 application :
     { init : memory
     , procedures : flags -> Url -> Key -> List (Procedure memory event)
-    , view : memory -> Document (Msg event)
-    , subscriptions : memory -> Sub (Msg event)
+    , view : VPack event event memory -> Document (Msg event)
+    , subscriptions : VPack event event memory -> Sub (Msg event)
     , onUrlRequest : Browser.UrlRequest -> event
     , onUrlChange : Url -> event
     }
@@ -211,13 +220,13 @@ application option =
                 init option.init (option.procedures flags url key)
                     |> concatPair
         , view =
-            \model -> option.view (memoryState model)
+            \model -> option.view (VPack.global <| memoryState model)
         , update =
             \msg model ->
                 update msg model |> concatPair
         , subscriptions =
             \model ->
-                option.subscriptions (memoryState model)
+                option.subscriptions (VPack.global <| memoryState model)
         , onUrlRequest = option.onUrlRequest >> issue ObserverId.init
         , onUrlChange = option.onUrlChange >> issue ObserverId.init
         }
@@ -301,11 +310,11 @@ issue =
     Msg
 
 
-{-| Issue an event to the global `Observer`.
+{-| `issue` for global Observer.
 -}
 publish : event -> Msg event
 publish =
-    Msg ObserverId.init
+    issue ObserverId.init
 
 
 {-| State to evaluate a thread.
@@ -793,8 +802,20 @@ Note2: Technically, all the `modify` `push` `async` written before the `await` w
 Note3: `push`s written before an `await` will not necessarily cause events in the order written. For example, if the first `push` sends a request to the server and it fires a local event with its result, and the second `push` sleeps for 0.1 seconds and then returns a local event, the first local event can fire later if the server is slow to respond. To avoid this situation, after using one `push`, catch it with `await` and use the next `push`. The `sync` can be helpfull for the situation.
 
 -}
-await : Observer memory a -> (event -> a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
-await (Observer { id, lifter }) f =
+await : Observer memory a -> (event -> Maybe e) -> (e -> a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+await o unwrap f =
+    await_ o <|
+        \event a ->
+            case unwrap event of
+                Nothing ->
+                    []
+
+                Just e ->
+                    f e a
+
+
+await_ : Observer memory a -> (event -> a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+await_ (Observer { id, lifter }) f =
     Procedure_
         [ Await <|
             \(Msg rid event) memory ->
@@ -818,21 +839,6 @@ await (Observer { id, lifter }) f =
                     Nothing ->
                         Nothing
         ]
-
-
-{-| `await` for SPA.
-If the second argument returns `Nothing`, it awaits again.
--}
-awaitChild : Observer memory a -> (event -> Maybe e) -> (e -> a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
-awaitChild o unwrap f =
-    await o <|
-        \event a ->
-            case unwrap event of
-                Nothing ->
-                    []
-
-                Just e ->
-                    f e a
 
 
 {-| Construct a `Procedure` instance that evaluates the given `Procedure`s asynchronously:
@@ -1112,10 +1118,10 @@ The most useful way is to define a function that executes the `Procedure`s for t
 doUntil : Observer memory a -> List (Procedure_ cmd memory event) -> (event -> a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 doUntil o procs handler =
     sync
-        [ await o handler
+        [ await_ o handler
         , race
             [ batch procs
-            , await o <|
+            , await_ o <|
                 \event a ->
                     case handler event a of
                         [] ->
@@ -1233,7 +1239,7 @@ All the Events issued to the original Observer can be also issued to the new Obs
                         , set = \a memory -> { memory | formB = a }
                         }
         in
-        [ Procedure.await formB <|
+        [ Procedure.await formB Just <|
             \event _ ->
                 case event of
                     ChangeFormBName name ->
@@ -1366,9 +1372,6 @@ setVariant (Observer parent) wrapper b f =
 
 {-| Prepend new item, and create the `Observer` for it.
 If the given `Observer` has expired, it does nothing.
-
-For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
-
 -}
 prepend : Observer memory (List ( ObserverId, a )) -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 prepend observer a =
@@ -1377,9 +1380,6 @@ prepend observer a =
 
 {-| Prepend new items, and create the `Observer` for it.
 If the given `Observer` has expired, it does nothing.
-
-For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
-
 -}
 prependList : Observer memory (List ( ObserverId, a )) -> List a -> (List (Observer memory a) -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 prependList observer ls f =
@@ -1397,9 +1397,6 @@ prependList observer ls f =
 
 {-| Append new item, and create the `Observer` for it.
 If the given `Observer` has expired, it does nothing.
-
-For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
-
 -}
 append : Observer memory (List ( ObserverId, a )) -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 append observer a =
@@ -1408,9 +1405,6 @@ append observer a =
 
 {-| Append new items, and create the `Observer` for it.
 If the given `Observer` has expired, it does nothing.
-
-For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
-
 -}
 appendList : Observer memory (List ( ObserverId, a )) -> List a -> (List (Observer memory a) -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 appendList observer ls f =
@@ -1429,9 +1423,6 @@ appendList observer ls f =
 {-| Insert new item before the base `Observer`, and create the `Observer` for it.
 If the `Observer` provided as the first argument has expired, it does nothing.
 If the `Observer` for the base element has expired, the call back function is called, but is passed an expired `Observer`.
-
-For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
-
 -}
 insertBefore : Observer memory (List ( ObserverId, a )) -> Observer memory a -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 insertBefore observer (Observer base) a =
@@ -1452,9 +1443,6 @@ insertBefore observer (Observer base) a =
 {-| Insert new item after the base `Observer`, and create the `Observer` for it.
 If the `Observer` provided as the first argument has expired, it does nothing.
 If the `Observer` for the base element has expired, the call back function is called, but is passed an expired `Observer`.
-
-For a sample, see [`sample/src/Advanced.elm`](https://github.com/arowM/elm-thread/tree/main/sample/src/Advanced.elm).
-
 -}
 insertAfter : Observer memory (List ( ObserverId, a )) -> Observer memory a -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 insertAfter observer (Observer base) a =

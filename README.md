@@ -2,8 +2,8 @@
 
 [![Build Status](https://app.travis-ci.com/arowM/elm-procedure.svg?branch=main)](https://app.travis-ci.com/arowM/elm-procedure)  
 [Document](https://package.elm-lang.org/packages/arowM/elm-procedure/latest/)  
-[Live demo](https://arowm.github.io/elm-procedure/)  
-[Live demo (advanced)](https://arowm.github.io/elm-procedure/advanced.html)  
+[Live demo 1](https://arowm.github.io/elm-procedure/index.html)  
+[Live demo 2](https://arowm.github.io/elm-procedure/list-items.html)  
 
 ![logo](https://user-images.githubusercontent.com/1481749/115139779-de382400-a06e-11eb-80e7-22af97774bfa.jpg)
 
@@ -72,17 +72,16 @@ procedures () =
 -- How intuitive to be able to write the result of the
 -- above request right underneath it!
 
-    , Procedure.await global <|
+    , Procedure.await global Just <|
         \event _ ->
             case event of
                 ReceiveInitialTime ( zone, time ) ->
-                    [ setVariant
-                        pageHomeWrapper
+                    [ setPage homeViewWrapper
                         { zone = zone
                         , time = time
                         , showActionButton = False
                         }
-                        pageHomeProcedures
+                        homeProcedures
                     ]
 
                 _ ->
@@ -92,13 +91,24 @@ procedures () =
     ]
 
 
-pageHomeProcedures : Observer Memory PageHome_ -> List (Procedure Memory Event)
-pageHomeProcedures pageHome =
+homeProcedures : Observer Memory HomeView_ -> List (Procedure Memory Event)
+homeProcedures home =
+    let
+        awaitHomeEvent =
+            Procedure.await home <|
+                \event ->
+                    case event of
+                        HomeEvent a ->
+                            Just a
+
+                        _ ->
+                            Nothing
+    in
     [ putLog "Asynchronous process for clock..."
 
 -- You can, of course, start and run another procedure asynchronously.
 
-    , Procedure.async <| clockProcedures pageHome
+    , Procedure.async <| clockProcedures home
 
 -- The above procedure is running asynchronously,
 -- so the following procedures will run concurrently without
@@ -108,15 +118,15 @@ pageHomeProcedures pageHome =
 -- you can modify the part of memory directly.
 -- No need to fiddle around with the record update syntax!
 
-    , Procedure.modify pageHome <|
-        \home -> { home | showActionButton = True }
+    , Procedure.modify home <|
+        \m -> { m | showActionButton = True }
     , putLog """Press "Action" button bellow."""
-    , Procedure.await pageHome <|
+    , awaitHomeEvent <|
         \event _ ->
             case event of
                 ClickActionButton ->
-                    [ Procedure.modify pageHome <|
-                        \home -> { home | showActionButton = False }
+                    [ Procedure.modify home <|
+                        \m -> { m | showActionButton = False }
                     , putLog """"Action" button has pressed."""
                     ]
 
@@ -150,20 +160,31 @@ pageHomeProcedures pageHome =
     ]
 
 
-clockProcedures : Observer Memory PageHome_ -> List (Procedure Memory Event)
-clockProcedures pageHome =
-    [ Procedure.await global <|
+clockProcedures : Observer Memory HomeView_ -> List (Procedure Memory Event)
+clockProcedures home =
+    let
+        awaitHomeEvent =
+            Procedure.await home <|
+                \event ->
+                    case event of
+                        HomeEvent a ->
+                            Just a
+
+                        _ ->
+                            Nothing
+    in
+    [ awaitHomeEvent <|
         \event _ ->
             case event of
                 ReceiveTick time ->
-                    [ Procedure.modify pageHome <|
-                        \home ->
-                            { home | time = time }
+                    [ Procedure.modify home <|
+                        \m ->
+                            { m | time = time }
                     ]
 
                 _ ->
                     []
-    , Procedure.jump global <| \_ -> clockProcedures pageHome
+    , Procedure.jump home <| \_ -> clockProcedures home
     ]
 
 
@@ -200,10 +221,16 @@ init =
 
 
 type Event
-    = ReceiveTick Posix
-    | ClickActionButton
+    = HomeEvent HomeEvent
     | ReceiveInitialTime ( Time.Zone, Posix )
     | WakeUp
+
+
+{-| For `HomeView`.
+-}
+type HomeEvent
+    = ClickActionButton
+    | ReceiveTick Posix
 
 
 
@@ -211,48 +238,61 @@ type Event
 
 
 type PageView
-    = PageLoading
-    | PageHome ( ObserverId, PageHome_ )
+    = LoadingView
+    | HomeView ( ObserverId, HomeView_ )
 
 
-view : Memory -> Document (Msg Event)
-view memory =
-    case memory.page of
-        PageLoading ->
-            pageLoadingView
+view : VPack Event Event Memory -> Document (Msg Event)
+view page =
+    case (VPack.memory page).pageView of
+        LoadingView ->
+            loadingView
 
-        PageHome ( oid, home ) ->
-            pageHomeView oid memory.log home
-
-
-pageLoadingView : Document msg
-pageLoadingView = Debug.todo "See `sample/src/Main.elm`"
+        HomeView a ->
+            VPack.child page HomeEvent a (homeView page)
 
 
-type alias PageHome_ =
+loadingView : Document msg
+loadingView = Debug.todo "See `sample/src/Main.elm`"
+
+
+type alias HomeView_ =
     { time : Posix
     , zone : Time.Zone
     , showActionButton : Bool
     }
 
 
-pageHomeView : ObserverId -> String -> PageHome_ -> Document (Msg Event)
-pageHomeView = Debug.todo "See `sample/src/Main.elm`"
+homeView :
+    VPack Event Event Memory
+    -> VPack Event HomeEvent HomeView_
+    -> Document (Msg Event)
+homeView = Debug.todo "See `sample/src/Main.elm`"
 
 
 
 -- Subsctiption
 
 
-subscriptions : Memory -> Sub (Msg Event)
-subscriptions _ =
-    Time.every 1000 (Procedure.publish << ReceiveTick)
+subscriptions : VPack Event Event Memory -> Sub (Msg Event)
+subscriptions page =
+    case (VPack.memory page).pageView of
+        LoadingView ->
+            Sub.none
+
+        HomeView a ->
+            VPack.child page HomeEvent a homeSubscriptions
+
+
+homeSubscriptions : VPack Event HomeEvent HomeView_ -> Sub (Msg Event)
+homeSubscriptions home =
+    Time.every 1000 (VPack.issue home << ReceiveTick)
 ```
 
 # List Item Example
 
-[Live demo](https://arowm.github.io/elm-procedure/advanced.html)  
-[Complete source code](https://github.com/arowM/elm-procedure/tree/main/sample/src/Advanced.elm)  
+[Live demo](https://arowm.github.io/elm-procedure/list-items.html)  
+[Complete source code](https://github.com/arowM/elm-procedure/tree/main/sample/src/ListItems.elm)  
 
 ```elm
 type alias Memory =
@@ -280,28 +320,40 @@ type alias Saved =
     }
 
 
-view : Memory -> Document (Msg Event)
-view memory =
+view : VPack Event Event Memory -> Document (Msg Event)
+view page =
     { title = "Advanced sample app"
     , body =
-        [ Html.div []
-            [ Html.div []
+        [ Html.div
+            [ style "display" "inline-block"
+            , style "padding" "0.4em"
+            , style "margin" "0"
+            ]
+            [ Html.div
+                [ style "padding" "0.4em"
+                ]
                 [ Html.button
                     [ Attributes.type_ "button"
                     , Events.onClick
                         (ClickAddGoatCard
-                            |> Procedure.publish
+                            |> VPack.issue page
                         )
                     ]
                     [ Html.text "Add new card"
                     ]
                 ]
-            , Keyed.node "div" []
-                (memory.cards
+            , Keyed.node "div"
+                [ style "padding" "0.4em"
+                ]
+                ((VPack.memory page).cards
                     |> List.map
                         (\( oid, goatCard ) ->
                             ( ObserverId.toString oid
-                            , goatCardView oid goatCard
+                            , VPack.child
+                                page
+                                GoatCardEvent
+                                (oid, goatCard)
+                                goatCardView
                             )
                         )
                 )
@@ -310,21 +362,21 @@ view memory =
     }
 
 
-goatCardView : ObserverId -> GoatCard -> Html (Msg Event)
-goatCardView oid memory =
-    if memory.onEditing then
-        editModeGoatCardView oid memory.form
+goatCardView : VPack Event GoatCardEvent GoatCard -> Html (Msg Event)
+goatCardView goatCard =
+    if (VPack.memory goatCard).onEditing then
+        editModeGoatCardView goatCard
 
     else
-        savedModeGoatCardView oid memory.saved
+        savedModeGoatCardView goatCard
 
 
-editModeGoatCardView : ObserverId -> Form -> Html (Msg Event)
-editModeGoatCardView = Debug.todo "See `sample/src/Advanced.elm`"
+editModeGoatCardView : VPack Event GoatCardEvent GoatCard -> Html (Msg Event)
+editModeGoatCardView = Debug.todo "See `sample/src/ListItems.elm`"
 
 
-savedModeGoatCardView : ObserverId -> Saved -> Html (Msg Event)
-savedModeGoatCardView = Debug.todo "See `sample/src/Advanced.elm`"
+savedModeGoatCardView : VPack Event GoatCardEvent GoatCard -> Html (Msg Event)
+savedModeGoatCardView = Debug.todo "See `sample/src/ListItems.elm`"
 
 
 
@@ -333,26 +385,28 @@ savedModeGoatCardView = Debug.todo "See `sample/src/Advanced.elm`"
 
 procedures : () -> List (Procedure Memory Event)
 procedures () =
-    [ Procedure.await global <|
+    [ Procedure.await global Just <|
         \event _ ->
             case event of
                 ClickAddGoatCard ->
-                    [ Procedure.async
-                        [ Procedure.append
+                    [ Procedure.append
                             (global
                                 |> Procedure.dig
-                                    { get = .cards >> Just
+                                    { get = .cards
                                     , set = \c memory -> { memory | cards = c }
                                     }
                             )
                             initGoatCard
-                            goatCardProcedures
-                        ]
+                            (\goatCard ->
+                                [ Procedure.async <|
+                                    goatCardProcedures goatCard
+                                , Procedure.jump global <| \_ -> procedures ()
+                                ]
+                            )
                     ]
 
                 _ ->
                     []
-    , Procedure.jump global <| \_ -> procedures ()
     ]
 
 
@@ -364,5 +418,5 @@ a procedure for another `GoatCard`.
 -}
 goatCardProcedures : Observer Memory GoatCard -> List (Procedure Memory Event)
 goatCardProcedures card =
-    Debug.todo "See `sample/src/Advanced.elm`"
+    Debug.todo "See `sample/src/ListItems.elm`"
 ```

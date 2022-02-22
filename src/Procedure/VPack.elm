@@ -6,8 +6,7 @@ module Procedure.VPack exposing
     , child
     )
 
-{-| Helper module for building SPA.
-The `VPack` is useful for building hierarchical Views and Subscriptions.
+{-| `VPack` is used for building hierarchical Views and Subscriptions.
 
 @docs VPack
 @docs global
@@ -17,21 +16,14 @@ The `VPack` is useful for building hierarchical Views and Subscriptions.
 
 -}
 
-import Internal.ObserverId
+import Internal.VPack exposing (VPack(..))
 import Procedure exposing (Msg)
 import Procedure.ObserverId exposing (ObserverId)
 
 
 {-| -}
-type VPack e0 e1 m1
-    = VPack (VPack_ e0 e1 m1)
-
-
-type alias VPack_ e0 e1 m1 =
-    { observerId : ObserverId
-    , memory : m1
-    , wrap : e1 -> e0
-    }
+type alias VPack e0 e1 m1 =
+    Internal.VPack.VPack e0 e1 m1
 
 
 {-| -}
@@ -49,12 +41,8 @@ issue (VPack r) e1 =
 {-| Global `VPack`.
 -}
 global : m -> VPack e e m
-global m =
-    VPack
-        { observerId = Internal.ObserverId.init
-        , memory = m
-        , wrap = identity
-        }
+global =
+    Internal.VPack.global
 
 
 {-| -}

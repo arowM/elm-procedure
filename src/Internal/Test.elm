@@ -295,7 +295,7 @@ procedures url =
 
 linkController : List (Procedure_ Cmd Memory Event)
 linkController =
-    [ Procedure.await global <|
+    [ Procedure.await global Just <|
         \event _ ->
             case event of
                 LinkClicked urlRequest ->
@@ -336,7 +336,7 @@ pageController route msession =
             RouteNotFound ->
                 [ Procedure.modify global <|
                     \memory -> { memory | page = PageNotFound }
-                , Procedure.await global handleNewRoute
+                , Procedure.await global Just handleNewRoute
                 ]
 
             RouteLogin detail ->
@@ -352,7 +352,7 @@ pageController route msession =
                             [ pageLoginProcedures pageLogin detail
                                 |> Procedure.batch
                                 |> assertNoGlobalPollutionOnPageLoginEvents
-                            , Procedure.await global handleNewRoute
+                            , Procedure.await global Just handleNewRoute
                             ]
                         , Procedure.jump pageLogin <|
                             \memory ->
@@ -367,19 +367,19 @@ pageController route msession =
                             Procedure.protected global <|
                                 \local ->
                                     [ Procedure.push local <| \oid _ -> RequestSession oid
-                                    , Procedure.await local <|
+                                    , Procedure.await local Just <|
                                         \event _ ->
                                             case event of
                                                 ReceiveSession (Err LoginRequired) ->
                                                     [ Procedure.push global <|
                                                         \_ _ ->
                                                             PushRoute <| RouteLogin { back = route }
-                                                    , Procedure.await global handleNewRoute
+                                                    , Procedure.await global Just handleNewRoute
                                                     ]
 
                                                 ReceiveSession (Err err) ->
                                                     [ handleHttpError route err
-                                                    , Procedure.await global handleNewRoute
+                                                    , Procedure.await global Just handleNewRoute
                                                     ]
 
                                                 ReceiveSession (Ok session) ->
@@ -417,7 +417,7 @@ handleHttpError route err =
 assertNoGlobalPollutionOnPageLoginEvents : Procedure_ Cmd Memory Event -> Procedure_ Cmd Memory Event
 assertNoGlobalPollutionOnPageLoginEvents p =
     Procedure.race
-        [ Procedure.await global <|
+        [ Procedure.await global Just <|
             \event _ ->
                 case event of
                     PageLoginEvent (PageLoginReceiveLoginResp _) ->
@@ -445,7 +445,7 @@ assertNoGlobalPollutionOnPageLoginEvents p =
 assertNoGlobalPollutionOnPageHomeEvents : Procedure_ Cmd Memory Event -> Procedure_ Cmd Memory Event
 assertNoGlobalPollutionOnPageHomeEvents p =
     Procedure.race
-        [ Procedure.await global <|
+        [ Procedure.await global Just <|
             \event _ ->
                 case event of
                     PageHomeEvent _ ->
@@ -461,7 +461,7 @@ assertNoGlobalPollutionOnPageHomeEvents p =
 assertNoGlobalPollutionOnPageUsersEvents : Procedure_ Cmd Memory Event -> Procedure_ Cmd Memory Event
 assertNoGlobalPollutionOnPageUsersEvents p =
     Procedure.race
-        [ Procedure.await global <|
+        [ Procedure.await global Just <|
             \event _ ->
                 case event of
                     PageUsersEvent _ ->
@@ -477,7 +477,7 @@ assertNoGlobalPollutionOnPageUsersEvents p =
 assertNoGlobalPollutionOnRequestSession : Procedure_ Cmd Memory Event -> Procedure_ Cmd Memory Event
 assertNoGlobalPollutionOnRequestSession p =
     Procedure.race
-        [ Procedure.await global <|
+        [ Procedure.await global Just <|
             \event _ ->
                 case event of
                     ReceiveSession _ ->
@@ -492,7 +492,7 @@ assertNoGlobalPollutionOnRequestSession p =
 
 pageLoginProcedures : Observer Memory PageLogin_ -> RouteLogin_ -> List (Procedure_ Cmd Memory Event)
 pageLoginProcedures pageLogin detail =
-    [ Procedure.awaitChild pageLogin unwrapPageLoginEvent <|
+    [ Procedure.await pageLogin unwrapPageLoginEvent <|
         \event _ ->
             case event of
                 PageLoginChangeId str ->
@@ -510,7 +510,7 @@ pageLoginProcedures pageLogin detail =
                 PageLoginClickSubmit ->
                     [ Procedure.push pageLogin <|
                         \_ _ -> PageLoginRequestSubmit
-                    , Procedure.awaitChild pageLogin unwrapPageLoginEvent <|
+                    , Procedure.await pageLogin unwrapPageLoginEvent <|
                         \event2 _ ->
                             case event2 of
                                 PageLoginReceiveLoginResp (Err LoginRequired) ->
@@ -556,7 +556,7 @@ sessionPageController route session =
         RouteNotFound ->
             [ Procedure.modify global <|
                 \memory -> { memory | page = PageNotFound }
-            , Procedure.await global handleNewRoute
+            , Procedure.await global Just handleNewRoute
             ]
 
         RouteLogin detail ->
@@ -712,7 +712,7 @@ pageHomeProcedures toCmd wrapper pageHome =
         \name ->
             [ Procedure.sync
                 [ Procedure.race
-                    [ Procedure.awaitChild pageHome wrapper.unwrap <|
+                    [ Procedure.await pageHome wrapper.unwrap <|
                         \event _ ->
                             case event of
                                 PageHomeClickButton1 ->
@@ -720,11 +720,11 @@ pageHomeProcedures toCmd wrapper pageHome =
 
                                 _ ->
                                     []
-                    , Procedure.awaitChild pageHome wrapper.unwrap <| \_ _ -> []
+                    , Procedure.await pageHome wrapper.unwrap <| \_ _ -> []
                     ]
                 , Procedure.batch
                     [ Procedure.async
-                        [ Procedure.awaitChild pageHome wrapper.unwrap <|
+                        [ Procedure.await pageHome wrapper.unwrap <|
                             \event _ ->
                                 case event of
                                     PageHomeClickButton2 ->
@@ -733,7 +733,7 @@ pageHomeProcedures toCmd wrapper pageHome =
                                     _ ->
                                         []
                         ]
-                    , Procedure.awaitChild pageHome wrapper.unwrap <|
+                    , Procedure.await pageHome wrapper.unwrap <|
                         \event _ ->
                             case event of
                                 PageHomeClickButton1 ->
@@ -743,7 +743,7 @@ pageHomeProcedures toCmd wrapper pageHome =
                                     []
                     ]
                 ]
-            , Procedure.awaitChild pageHome wrapper.unwrap <|
+            , Procedure.await pageHome wrapper.unwrap <|
                 \event _ ->
                     case event of
                         PageHomeChangeSessionName str ->
@@ -859,7 +859,7 @@ pageUsersProcedures toCmd wrapper pageUsers =
     in
     [ Procedure.push pageUsers <|
         \_ _ -> toCmd PageUsersRequestInitialUsers
-    , Procedure.awaitChild pageUsers wrapper.unwrap <|
+    , Procedure.await pageUsers wrapper.unwrap <|
         \event _ ->
             case event of
                 PageUsersReceiveInitialUsers (Err err) ->
@@ -919,7 +919,7 @@ pageUsersUserFormProcedures toCmd wrapper pageUsers userForm =
                     , set = \u memory -> { memory | users = u }
                     }
     in
-    [ Procedure.awaitChild userForm (unwrapPageUsersUserFormEvent wrapper) <|
+    [ Procedure.await userForm (unwrapPageUsersUserFormEvent wrapper) <|
         \event _ ->
             case event of
                 PageUsersChangeNewUserName name ->
@@ -933,7 +933,7 @@ pageUsersUserFormProcedures toCmd wrapper pageUsers userForm =
                 PageUsersClickRegisterNewUser ->
                     [ Procedure.push userForm <|
                         \_ _ -> toCmd PageUsersRequestRegisterNewUser
-                    , Procedure.awaitChild userForm (unwrapPageUsersUserFormEvent wrapper) <|
+                    , Procedure.await userForm (unwrapPageUsersUserFormEvent wrapper) <|
                         \event2 _ ->
                             case event2 of
                                 PageUsersReceiveRegisterNewUserResp (Err err) ->
@@ -963,7 +963,7 @@ pageUsersUserFormProcedures toCmd wrapper pageUsers userForm =
                 PageUsersClickRemoveUser ->
                     [ Procedure.push userForm <|
                         \_ _ -> toCmd PageUsersRequestRemoveUser
-                    , Procedure.awaitChild userForm (unwrapPageUsersUserFormEvent wrapper) <|
+                    , Procedure.await userForm (unwrapPageUsersUserFormEvent wrapper) <|
                         \event2 _ ->
                             case event2 of
                                 PageUsersReceiveRemoveUserResp (Err err) ->

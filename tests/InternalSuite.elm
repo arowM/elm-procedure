@@ -4,6 +4,7 @@ import Expect
 import Internal.Test exposing (..)
 import Procedure
 import Procedure.ObserverId exposing (ObserverId)
+import Procedure.VPack as VPack
 import Test exposing (Test)
 import Test.Sequence as Sequence
 
@@ -145,7 +146,7 @@ suite =
                 let
                     ( model, cmds ) =
                         Procedure.update
-                            (Procedure.publish
+                            (publish
                                 (UrlChanged <| encodeUrl <| RouteLogin { back = RouteHome })
                             )
                             o.loginRequired
@@ -183,7 +184,7 @@ suite =
                 let
                     ( model, cmds ) =
                         Procedure.update
-                            (Procedure.publish
+                            (publish
                                 (LinkClicked <| External "https://example.com/foo")
                             )
                             o.pushRouteLogin
@@ -203,7 +204,7 @@ suite =
                 let
                     ( model, cmds ) =
                         Procedure.update
-                            (Procedure.publish
+                            (publish
                                 (LinkClicked <| Internal <| Url "/")
                             )
                             o.pushRouteLogin
@@ -231,7 +232,7 @@ suite =
                 let
                     ( memory, cmds ) =
                         Procedure.update
-                            (Procedure.publish
+                            (publish
                                 (UrlChanged <| encodeUrl <| RouteHome)
                             )
                             o.cancelLogin
@@ -524,7 +525,7 @@ suite =
                     ( model, cmds ) =
                         o.pageHomeChangeSessionName
                             |> Procedure.update
-                                (Procedure.publish
+                                (publish
                                     (UrlChanged <| encodeUrl <| RouteUsers)
                                 )
                 in
@@ -848,3 +849,8 @@ unwrapPageUsersUserOid name memory =
 
         _ ->
             Nothing
+
+
+publish : Event -> Procedure.Msg Event
+publish =
+    VPack.issue (VPack.global init)

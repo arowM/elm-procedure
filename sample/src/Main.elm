@@ -5,6 +5,8 @@ import Html.Attributes as Attributes exposing (style)
 import Html.Events as Events
 import Procedure exposing (Document, Msg, Observer, Procedure, Program, global)
 import Procedure.ObserverId exposing (ObserverId)
+import Procedure.VPack as VPack exposing (VPack)
+import Procedure.Wrapper exposing (Wrapper)
 import Process
 import Task
 import Time exposing (Posix)
@@ -21,23 +23,27 @@ main =
 
 
 type alias Memory =
-    { page : PageView
+    { pageView : PageView
     , log : String
     }
 
 
 init : Memory
 init =
-    { page = PageLoading
+    { pageView = LoadingView
     , log = ""
     }
 
 
 type Event
-    = ReceiveTick Posix
-    | ClickActionButton
+    = HomeEvent HomeEvent
     | ReceiveInitialTime ( Time.Zone, Posix )
     | WakeUp
+
+
+type HomeEvent
+    = ClickActionButton
+    | ReceiveTick Posix
 
 
 
@@ -45,22 +51,22 @@ type Event
 
 
 type PageView
-    = PageLoading
-    | PageHome ( ObserverId, PageHome_ )
+    = LoadingView
+    | HomeView ( ObserverId, HomeView_ )
 
 
-view : Memory -> Document (Msg Event)
-view memory =
-    case memory.page of
-        PageLoading ->
-            pageLoadingView
+view : VPack Event Event Memory -> Document (Msg Event)
+view page =
+    case (VPack.memory page).pageView of
+        LoadingView ->
+            loadingView
 
-        PageHome ( oid, home ) ->
-            pageHomeView oid memory.log home
+        HomeView a ->
+            VPack.child page HomeEvent a (homeView page)
 
 
-pageLoadingView : Document msg
-pageLoadingView =
+loadingView : Document msg
+loadingView =
     { title = "Sample application -- Loading"
     , body =
         [ Html.div
@@ -73,18 +79,23 @@ pageLoadingView =
     }
 
 
-type alias PageHome_ =
+type alias HomeView_ =
     { time : Posix
     , zone : Time.Zone
     , showActionButton : Bool
     }
 
 
-pageHomeView : ObserverId -> String -> PageHome_ -> Document (Msg Event)
-pageHomeView oid log home =
+homeView :
+    VPack Event Event Memory
+    -> VPack Event HomeEvent HomeView_
+    -> Document (Msg Event)
+homeView page home =
     let
-        toMsg =
-            Procedure.issue oid
+        param =
+            { log = (VPack.memory page).log
+            , home = VPack.memory home
+            }
     in
     { title = "Sample application -- Home"
     , body =
@@ -97,7 +108,7 @@ pageHomeView oid log home =
                 , style "margin" "0"
                 ]
                 [ Html.span []
-                    [ Html.text <| "Current time: " ++ formatTime home.zone home.time
+                    [ Html.text <| "Current time: " ++ formatTime param.home.zone param.home.time
                     ]
                 ]
             , Html.div
@@ -112,17 +123,17 @@ pageHomeView oid log home =
                     , style "overflow-y" "auto"
                     , style "border" "solid black 1px"
                     ]
-                    [ Html.text log
+                    [ Html.text param.log
                     ]
                 ]
-            , if home.showActionButton then
+            , if param.home.showActionButton then
                 Html.div
                     [ style "padding" "0.3em"
                     , style "margin" "0"
                     ]
                     [ Html.button
                         [ Attributes.type_ "button"
-                        , Events.onClick (toMsg ClickActionButton)
+                        , Events.onClick (VPack.issue home ClickActionButton)
                         ]
                         [ Html.text "Action"
                         ]
@@ -156,9 +167,19 @@ formatTime zone time =
 -- Subsctiption
 
 
-subscriptions : Memory -> Sub (Msg Event)
-subscriptions _ =
-    Time.every 1000 (Procedure.publish << ReceiveTick)
+subscriptions : VPack Event Event Memory -> Sub (Msg Event)
+subscriptions page =
+    case (VPack.memory page).pageView of
+        LoadingView ->
+            Sub.none
+
+        HomeView a ->
+            VPack.child page HomeEvent a homeSubscriptions
+
+
+homeSubscriptions : VPack Event HomeEvent HomeView_ -> Sub (Msg Event)
+homeSubscriptions home =
+    Time.every 1000 (VPack.issue home << ReceiveTick)
 
 
 
@@ -169,19 +190,16 @@ procedures : () -> List (Procedure Memory Event)
 procedures () =
     [ sleep 2000
     , requestInitialTime
-    , Procedure.await global <|
+    , Procedure.await global Just <|
         \event _ ->
             case event of
                 ReceiveInitialTime ( zone, time ) ->
-                    [ setPage
-                        { wrap = PageHome
-                        , unwrap = unwrapPageHome
-                        }
+                    [ setPage homeViewWrapper
                         { zone = zone
                         , time = time
                         , showActionButton = False
                         }
-                        pageHomeProcedures
+                        homeProcedures
                     ]
 
                 _ ->
@@ -190,19 +208,44 @@ procedures () =
     ]
 
 
-pageHomeProcedures : Observer Memory PageHome_ -> List (Procedure Memory Event)
-pageHomeProcedures pageHome =
+homeViewWrapper : Wrapper PageView ( ObserverId, HomeView_ )
+homeViewWrapper =
+    { wrap = HomeView
+    , unwrap =
+        \m ->
+            case m of
+                HomeView a ->
+                    Just a
+
+                _ ->
+                    Nothing
+    }
+
+
+homeProcedures : Observer Memory HomeView_ -> List (Procedure Memory Event)
+homeProcedures home =
+    let
+        awaitHomeEvent =
+            Procedure.await home <|
+                \event ->
+                    case event of
+                        HomeEvent a ->
+                            Just a
+
+                        _ ->
+                            Nothing
+    in
     [ putLog "Asynchronous process for clock..."
-    , Procedure.async <| clockProcedures pageHome
-    , Procedure.modify pageHome <|
-        \home -> { home | showActionButton = True }
+    , Procedure.async <| clockProcedures home
+    , Procedure.modify home <|
+        \m -> { m | showActionButton = True }
     , putLog """Press "Action" button bellow."""
-    , Procedure.await pageHome <|
+    , awaitHomeEvent <|
         \event _ ->
             case event of
                 ClickActionButton ->
-                    [ Procedure.modify pageHome <|
-                        \home -> { home | showActionButton = False }
+                    [ Procedure.modify home <|
+                        \m -> { m | showActionButton = False }
                     , putLog """"Action" button has pressed."""
                     ]
 
@@ -215,13 +258,13 @@ pageHomeProcedures pageHome =
             |> Procedure.batch
         ]
     , putLog "All processes have been completed."
-    , Procedure.modify pageHome <| \home -> { home | showActionButton = True }
+    , Procedure.modify home <| \m -> { m | showActionButton = True }
     , putLog """Press "Action" button bellow."""
-    , Procedure.await pageHome <|
+    , awaitHomeEvent <|
         \event _ ->
             case event of
                 ClickActionButton ->
-                    [ Procedure.modify pageHome <| \home -> { home | showActionButton = False }
+                    [ Procedure.modify home <| \m -> { m | showActionButton = False }
                     , putLog """"Action" button has pressed."""
                     ]
 
@@ -237,30 +280,31 @@ pageHomeProcedures pageHome =
     ]
 
 
-unwrapPageHome : PageView -> Maybe ( ObserverId, PageHome_ )
-unwrapPageHome pv =
-    case pv of
-        PageHome a ->
-            Just a
+clockProcedures : Observer Memory HomeView_ -> List (Procedure Memory Event)
+clockProcedures home =
+    let
+        awaitHomeEvent =
+            Procedure.await home <|
+                \event ->
+                    case event of
+                        HomeEvent a ->
+                            Just a
 
-        _ ->
-            Nothing
-
-
-clockProcedures : Observer Memory PageHome_ -> List (Procedure Memory Event)
-clockProcedures pageHome =
-    [ Procedure.await global <|
+                        _ ->
+                            Nothing
+    in
+    [ awaitHomeEvent <|
         \event _ ->
             case event of
                 ReceiveTick time ->
-                    [ Procedure.modify pageHome <|
-                        \home ->
-                            { home | time = time }
+                    [ Procedure.modify home <|
+                        \m ->
+                            { m | time = time }
                     ]
 
                 _ ->
                     []
-    , Procedure.jump global <| \_ -> clockProcedures pageHome
+    , Procedure.jump home <| \_ -> clockProcedures home
     ]
 
 
@@ -305,7 +349,7 @@ sleep msec =
                 \oid _ ->
                     Process.sleep msec
                         |> Task.perform (\() -> Procedure.issue oid WakeUp)
-            , Procedure.await priv <|
+            , Procedure.await priv Just <|
                 \event _ ->
                     case event of
                         WakeUp ->
@@ -330,7 +374,7 @@ setPage =
     Procedure.setVariant
         (global
             |> Procedure.dig
-                { get = .page
-                , set = \p memory -> { memory | page = p }
+                { get = .pageView
+                , set = \a m -> { m | pageView = a }
                 }
         )

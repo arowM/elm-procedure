@@ -330,7 +330,7 @@ setPage =
     Procedure.setVariant
         (global
             |> Procedure.dig
-                { get = .page >> Just
+                { get = .page
                 , set = \p memory -> { memory | page = p }
                 }
         )

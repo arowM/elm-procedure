@@ -84,7 +84,7 @@ page : Observer Memory PageView
 page =
     global
         |> Procedure.dig
-            { get = .page >> Just
+            { get = .page
             , set = \p memory -> { memory | page = p }
             }
 
@@ -853,7 +853,7 @@ pageUsersProcedures toCmd wrapper pageUsers =
         users =
             pageUsers
                 |> Procedure.dig
-                    { get = .users >> Just
+                    { get = .users
                     , set = \u memory -> { memory | users = u }
                     }
     in
@@ -915,7 +915,7 @@ pageUsersUserFormProcedures toCmd wrapper pageUsers userForm =
         users =
             pageUsers
                 |> Procedure.dig
-                    { get = .users >> Just
+                    { get = .users
                     , set = \u memory -> { memory | users = u }
                     }
     in

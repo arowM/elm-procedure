@@ -261,7 +261,7 @@ procedures () =
                         [ Procedure.append
                             (global
                                 |> Procedure.dig
-                                    { get = .cards >> Just
+                                    { get = .cards
                                     , set = \c memory -> { memory | cards = c }
                                     }
                             )
@@ -299,7 +299,7 @@ editModeGoatCardProcedures card opt =
         form =
             card
                 |> Procedure.dig
-                    { get = .form >> Just
+                    { get = .form
                     , set = \a memory -> { memory | form = a }
                     }
 
@@ -307,7 +307,7 @@ editModeGoatCardProcedures card opt =
         cards =
             global
                 |> Procedure.dig
-                    { get = .cards >> Just
+                    { get = .cards
                     , set = \c memory -> { memory | cards = c }
                     }
     in
@@ -367,7 +367,7 @@ savedModeGoatCardProcedures card =
         cards =
             global
                 |> Procedure.dig
-                    { get = .cards >> Just
+                    { get = .cards
                     , set = \c memory -> { memory | cards = c }
                     }
     in

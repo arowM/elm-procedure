@@ -1229,7 +1229,7 @@ All the Events issued to the original Observer can be also issued to the new Obs
             formB =
                 pageHome
                     |> Procedure.dig
-                        { get = .formB >> Just
+                        { get = .formB
                         , set = \a memory -> { memory | formB = a }
                         }
         in
@@ -1248,12 +1248,25 @@ All the Events issued to the original Observer can be also issued to the new Obs
 
 -}
 dig :
+    { get : b -> a
+    , set : a -> b -> b
+    }
+    -> Observer memory b
+    -> Observer memory a
+dig { get, set } =
+    dig_
+        { get = get >> Just
+        , set = set
+        }
+
+
+dig_ :
     { get : b -> Maybe a
     , set : a -> b -> b
     }
     -> Observer memory b
     -> Observer memory a
-dig lifter (Observer observer) =
+dig_ lifter (Observer observer) =
     Observer
         { id = observer.id
         , lifter =
@@ -1471,7 +1484,7 @@ modifyList o modifier f =
             , batch <|
                 f
                     (new
-                        |> dig
+                        |> dig_
                             { get = getListItem id
                             , set = setListItem id
                             }

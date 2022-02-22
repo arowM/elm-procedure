@@ -369,6 +369,7 @@ type ProcedureItem cmd memory event
               -> ( memory, List cmd ) -- Evaluated when the second element of this tuple ends.
             )
         )
+    | Protected (ObserverId -> List (ProcedureItem cmd memory event))
     | Sync (List (List (ProcedureItem cmd memory event)))
     | Race (List (List (ProcedureItem cmd memory event)))
       -- Ignore subsequent `Procedure`s and run given `Procedure`s in current thread.
@@ -434,6 +435,18 @@ fromProcedure state procs =
             fromProcedure state1 ps1
                 |> applyFinally finally
                 |> andThen (\s -> fromProcedure s ps2)
+
+        (Protected f) :: ps2 ->
+            let
+                ps1 =
+                    f state.nextObserverId
+
+                state1 =
+                    { state
+                        | nextObserverId = ObserverId.inc state.nextObserverId
+                    }
+            in
+            fromProcedure state1 (ps1 ++ ps2)
 
         (Sync ps) :: ps2 ->
             fromProcDeps state ps
@@ -868,16 +881,20 @@ The callback function takes brand-new `Observer` just for it, so it can be used 
 -}
 protected : Observer memory a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 protected (Observer observer) f =
-    observe <|
-        \oid memory ->
-            ( memory
-            , f <|
-                Observer
-                    { id = oid
-                    , lifter = observer.lifter
-                    }
-            , \m -> ( m, [] )
-            )
+    Procedure_
+        [ Protected <|
+            \oid ->
+                let
+                    (Procedure_ items) =
+                        batch <|
+                            f <|
+                                Observer
+                                    { id = oid
+                                    , lifter = observer.lifter
+                                    }
+                in
+                items
+        ]
 
 
 {-| Aquire a resource, do some work with it, and then release the resource.

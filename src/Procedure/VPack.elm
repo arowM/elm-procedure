@@ -3,6 +3,7 @@ module Procedure.VPack exposing
     , global
     , issue
     , memory
+    , dig
     , child
     )
 
@@ -12,6 +13,7 @@ module Procedure.VPack exposing
 @docs global
 @docs issue
 @docs memory
+@docs dig
 @docs child
 
 -}
@@ -43,6 +45,21 @@ issue (VPack r) e1 =
 global : m -> VPack e e m
 global =
     Internal.VPack.global
+
+
+{-| -}
+dig :
+    { get : m1 -> m2
+    , wrap : e2 -> e1
+    }
+    -> VPack e0 e1 m1
+    -> VPack e0 e2 m2
+dig o (VPack r) =
+    VPack
+        { observerId = r.observerId
+        , memory = o.get r.memory
+        , wrap = o.wrap >> r.wrap
+        }
 
 
 {-| -}

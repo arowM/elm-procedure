@@ -743,7 +743,7 @@ type alias Lifter a b =
 
 
 {-| Construct a `Procedure` instance that modifies the memory state.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 
 Note that the update operation, passed as the second argument, is performed atomically; it means the state of the memory is not updated by another process during it is read and written by the `modify`.
 
@@ -763,7 +763,7 @@ modify (Observer { lifter }) f =
 
 
 {-| Construct a `Procedure` instance that issues a `Cmd`.
-If the given `Observer` has expire, it does nothing.
+If the given `Observer` has already expire, it does nothing.
 
 The callback function takes `ObserverId`, which can be used to return an `Event` for the target `Observer`:
 
@@ -790,7 +790,7 @@ push (Observer { id, lifter }) f =
 
 
 {-| Construct a `Procedure` instance that awaits the local events for the thread.
-If the given `Observer` has expired, it awaits again.
+If the given `Observer` has already expired, it awaits again.
 
 If the second argument returns empty list, it awaits again.
 Otherwise, it evaluates the returned `Procedure`.
@@ -863,7 +863,7 @@ async ps =
 
 
 {-| Construct a `Procedure` instance that runs private process.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 
 The callback function takes brand-new `Observer` just for it, so it can be used to issue and await private `Event`s for itself:
 
@@ -910,7 +910,7 @@ protected (Observer observer) f =
 
 
 {-| Aquire a resource, do some work with it, and then release the resource.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 
   - aquire: Evaluated immediately.
       - arg1: new `ObserverId` for the aquired resource `r`
@@ -994,7 +994,7 @@ quit =
 
 
 {-| Ignore subsequent `Procedure`s, and evaluate given `Block` in the current thread. It is convenient for following two situations.
-If the given `Observer` has expired, it acts as the `quit`.
+If the given `Observer` has already expired, it acts as the `quit`.
 
 
 ## Make recursive Procedure
@@ -1090,7 +1090,7 @@ jump (Observer { lifter }) f =
 
 
 {-| Evaluate the `Procedure`s provided as the second argument until it the callback function returns non-empty list.
-If the given `Observer` has expired, it evaluates given `Procedures`, but it awaits again.
+If the given `Observer` has already expired, it evaluates given `Procedures`, but it awaits again.
 
 The most useful way is to define a function that executes the `Procedure`s for the appropreate SPA page until the URL changes:
 
@@ -1300,7 +1300,7 @@ andCompose l2 l1 =
 
 
 {-| Set new variant value, and create the `Observer` for it.
-If the given `Observer` has expired, the call back function is called, but is passed an expired `Observer`.
+If the given `Observer` has already expired, the call back function is called, but is passed an expired `Observer`.
 
     type Memory
         = PageLoading
@@ -1371,7 +1371,7 @@ setVariant (Observer parent) wrapper b f =
 
 
 {-| Prepend new item, and create the `Observer` for it.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 -}
 prepend : Observer memory (List ( ObserverId, a )) -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 prepend observer a =
@@ -1379,7 +1379,7 @@ prepend observer a =
 
 
 {-| Prepend new items, and create the `Observer` for it.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 -}
 prependList : Observer memory (List ( ObserverId, a )) -> List a -> (List (Observer memory a) -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 prependList observer ls f =
@@ -1396,7 +1396,7 @@ prependList observer ls f =
 
 
 {-| Append new item, and create the `Observer` for it.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 -}
 append : Observer memory (List ( ObserverId, a )) -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 append observer a =
@@ -1404,7 +1404,7 @@ append observer a =
 
 
 {-| Append new items, and create the `Observer` for it.
-If the given `Observer` has expired, it does nothing.
+If the given `Observer` has already expired, it does nothing.
 -}
 appendList : Observer memory (List ( ObserverId, a )) -> List a -> (List (Observer memory a) -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 appendList observer ls f =
@@ -1421,8 +1421,8 @@ appendList observer ls f =
 
 
 {-| Insert new item before the base `Observer`, and create the `Observer` for it.
-If the `Observer` provided as the first argument has expired, it does nothing.
-If the `Observer` for the base element has expired, the call back function is called, but is passed an expired `Observer`.
+If the `Observer` provided as the first argument has already expired, it does nothing.
+If the `Observer` for the base element has already expired, the call back function is called, but is passed an expired `Observer`.
 -}
 insertBefore : Observer memory (List ( ObserverId, a )) -> Observer memory a -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 insertBefore observer (Observer base) a =
@@ -1441,8 +1441,8 @@ insertBefore observer (Observer base) a =
 
 
 {-| Insert new item after the base `Observer`, and create the `Observer` for it.
-If the `Observer` provided as the first argument has expired, it does nothing.
-If the `Observer` for the base element has expired, the call back function is called, but is passed an expired `Observer`.
+If the `Observer` provided as the first argument has already expired, it does nothing.
+If the `Observer` for the base element has already expired, the call back function is called, but is passed an expired `Observer`.
 -}
 insertAfter : Observer memory (List ( ObserverId, a )) -> Observer memory a -> a -> (Observer memory a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
 insertAfter observer (Observer base) a =

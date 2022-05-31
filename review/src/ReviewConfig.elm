@@ -45,7 +45,9 @@ config =
     -- , NoMissingTypeExpose.rule
     , NoUnused.CustomTypeConstructorArgs.rule
         |> Rule.ignoreErrorsForFiles
-            [ "src/Internal/Test.elm" ]
+            [ "src/Internal/Test.elm"
+            , "src/Internal.elm"
+            ]
     , NoUnused.CustomTypeConstructors.rule []
     , NoUnused.Dependencies.rule
     -- , NoUnused.Exports.rule

@@ -1,76 +1,88 @@
 module Procedure.VPack exposing
     ( VPack
-    , global
+    , root
     , issue
     , memory
-    , dig
+    , inherit
     , child
     )
 
 {-| `VPack` is used for building hierarchical Views and Subscriptions.
 
 @docs VPack
-@docs global
+@docs root
 @docs issue
 @docs memory
-@docs dig
+@docs inherit
 @docs child
 
 -}
 
-import Internal.VPack exposing (VPack(..))
-import Procedure exposing (Msg)
-import Procedure.ObserverId exposing (ObserverId)
+import Internal exposing (Msg(..), ObserverId, initObserverId)
 
 
 {-| -}
-type alias VPack e0 e1 m1 =
-    Internal.VPack.VPack e0 e1 m1
+type VPack e m1 e1
+    = VPack
+        { observerId : ObserverId
+        , memory : m1
+        , wrap : e1 -> e
+        }
 
 
 {-| -}
-memory : VPack e0 e1 m1 -> m1
+memory : VPack e m1 e1 -> m1
 memory (VPack r) =
     r.memory
 
 
-{-| -}
-issue : VPack e0 e1 m1 -> e1 -> Msg e0
-issue (VPack r) e1 =
-    Procedure.issue r.observerId (r.wrap e1)
-
-
-{-| Global `VPack`.
+{-| Issue event to the given `VPack`.
 -}
-global : m -> VPack e e m
-global =
-    Internal.VPack.global
+issue : VPack e m1 e1 -> e1 -> Msg e
+issue (VPack r) e1 =
+    Msg r.observerId (r.wrap e1)
 
 
-{-| -}
-dig :
+{-| Root `VPack`, which is for your application root.
+-}
+root : m -> VPack e m e
+root m =
+    VPack
+        { observerId = initObserverId
+        , memory = m
+        , wrap = identity
+        }
+
+
+{-| Build a new `VPack` that inherits the parent `ObserverId`. See [`Page.Home` in `spa-sample`](https://github.com/arowM/elm-procedure-architecture/blob/main/spa-sample/src/Page/Home.elm) for real use case.
+
+  - get: function to get the memory state from its parent
+  - wrap: function to wrap the Event into its parent Event
+
+-}
+inherit :
     { get : m1 -> m2
     , wrap : e2 -> e1
     }
-    -> VPack e0 e1 m1
-    -> VPack e0 e2 m2
-dig o (VPack r) =
+    -> VPack e m1 e1
+    -> VPack e m2 e2
+inherit r (VPack p) =
     VPack
-        { observerId = r.observerId
-        , memory = o.get r.memory
-        , wrap = o.wrap >> r.wrap
+        { observerId = p.observerId
+        , memory = r.get p.memory
+        , wrap = r.wrap >> p.wrap
         }
 
 
 {-| -}
 child :
-    VPack e0 e1 m1
+    VPack e m1 e1
     -> (e2 -> e1)
+    -> (ObserverId -> VPack e m2 e2 -> view)
     -> ( ObserverId, m2 )
-    -> (VPack e0 e2 m2 -> view)
     -> view
-child (VPack p1) wrap ( oid, m2 ) f =
-    f <|
+child (VPack p1) wrap f ( oid, m2 ) =
+    f oid <|
         VPack
             { observerId = oid
             , wrap = p1.wrap << wrap

@@ -1,0 +1,20 @@
+{
+  "private": true,
+  "scripts": {
+    "format": "elm-format src tests",
+    "start": "elm reactor --port=8012",
+    "start:doc": "elm-doc-preview --port=8111",
+    "review": "elm-review --fix",
+    "test:spa-sample": "elm-verify-examples -r -w --fail-on-warn && elm-test && elm-review && elm-format --validate src && elm make src/SampleApp.elm --output=/dev/null"
+  },
+  "devDependencies": {
+    "elm-doc-preview": "^5.0.3",
+    "elm-format": "^0.8.3",
+    "elm-review": "^2.6.1",
+    "elm-verify-examples": "^5.2.0",
+    "rimraf": "^2.7.1"
+  },
+  "dependencies": {
+    "elm": "^0.19.1-5"
+  }
+}

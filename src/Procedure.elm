@@ -29,6 +29,7 @@ module Procedure exposing
     , Observer
     , global
     , dig
+    , digMaybe
     , setVariant
     , prepend
     , prependList
@@ -93,6 +94,7 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs Observer
 @docs global
 @docs dig
+@docs digMaybe
 
 
 ## Observe variants
@@ -1264,6 +1266,17 @@ dig { get, set } =
         { get = get >> Just
         , set = set
         }
+
+
+{-| -}
+digMaybe :
+    { get : b -> Maybe a
+    , set : a -> b -> b
+    }
+    -> Observer memory b
+    -> Observer memory a
+digMaybe =
+    dig_
 
 
 dig_ :

@@ -1,6 +1,6 @@
 {
     "type": "package",
-    "name": "arowM/elm-procedure",
+    "name": "arowM/elm-procedure-architecture",
     "summary": "Extend TEA so that complex processing procedures can be written as they are.",
     "license": "MIT",
     "version": "1.0.0",

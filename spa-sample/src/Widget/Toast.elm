@@ -291,13 +291,17 @@ view :
 view widget =
     let
         (Memory param) = VPack.memory widget
+
+        toastItem pair = VPack.child ToastItemEvent pair widget
     in
     Html.keyed "div"
         [ localClass "toast"
         , Mixin.style "--zindex" <| String.fromInt ZIndex.toast
         ]
         ( List.map
-            (VPack.child widget ToastItemEvent toastItemView)
+            (\(oid, item) ->
+                toastItemView oid (toastItem (oid, item))
+            )
             param.items
         )
 

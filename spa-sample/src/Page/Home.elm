@@ -129,11 +129,14 @@ mainPageView session mainPage =
                         ]
                     ]
             Just editAccountFormCore ->
-                VPack.child
-                    mainPage
-                    EditAccountFormEvent
-                    (\_ -> editAccountFormView)
-                    editAccountFormCore
+                let
+                    editAccountForm =
+                        VPack.child
+                            EditAccountFormEvent
+                            editAccountFormCore
+                            mainPage
+                in
+                editAccountFormView editAccountForm
         , Html.div
             [ localClass "dashboard_links"
             ]

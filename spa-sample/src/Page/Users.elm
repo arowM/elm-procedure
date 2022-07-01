@@ -21,6 +21,7 @@ import Procedure.Observer as Observer exposing (Observer)
 import Procedure.ObserverId exposing (ObserverId)
 import Procedure.VPack as VPack exposing (VPack)
 import Widget.Toast as Toast
+import Html
 
 
 {-| -}
@@ -100,7 +101,7 @@ loadingPageView =
 
 
 
--- -- LoginFormPage
+-- -- UsersPage
 
 
 type alias UsersPageMemory =
@@ -129,40 +130,34 @@ usersPageView session usersPage =
     let
         param =
             VPack.memory usersPage
+
+        newUserForm =
+            VPack.inherit
+                NewUserFormEvent
+                param.newUserForm
+                usersPage
+
+        userField pair =
+            VPack.child
+                UserFieldEvent
+                pair
+                usersPage
     in
     Html.div
         [ localClass "users"
         ]
-        [ case param.editAccountForm of
-            Nothing ->
-                Html.div
-                    [ localClass "users_account"
-                    ]
-                    [ Html.text <| "Hello, " ++ session.id
-                    , Html.node "button"
-                        [ localClass "users_account_editButton"
-                        , Events.onClick
-                            (VPack.issue usersPage <| ClickShowEditAccountForm)
-                        ]
-                        [ Html.text "🖉"
-                        ]
-                    ]
-            Just editAccountFormCore ->
-                VPack.child
-                    usersPage
-                    EditAccountFormEvent
-                    (\_ -> editAccountFormView)
-                    editAccountFormCore
+        [ newUserFormView newUserForm
         , Html.div
             [ localClass "users_links"
             ]
-            [ Html.a
-                [ localClass "users_links_linkButton-users"
-                , Mixin.attribute "href" <| Route.toPath Route.Users
-                ]
-                [ Html.text "Users"
-                ]
-            ]
+            ( List.map
+                (\(oid, item) ->
+                    (ObserverId.toString oid
+                    , userFieldView (userField (oid, item))
+                    )
+                )
+                param.users
+            )
         ]
 
 
@@ -288,14 +283,76 @@ userFieldView userField =
                         [ Html.text "🗙"
                         ]
                     ]
-                Just editUserFormCore ->
-                    VPack.child
-                        userField
-                        EditUserFormEvent
-                        (\_ -> editUserFormView)
-                        editUserFormCore
+            Just editUserFormCore ->
+                let
+                    editUserForm =
+                        VPack.child
+                            EditUserFormEvent
+                            editUserFormCore
+                            userField
+                in
+                editUserFormView editUserForm
         ]
 
+
+-- -- EditUserForm
+
+type alias EditUserForm =
+    { name : String
+    }
+
+
+initEditUserForm : EditUserForm
+initEditUserForm =
+    { name = ""
+    }
+
+
+type EditUserFormEvent
+    = ChangeUserName
+    | ClickSaveEditedUserName
+    | ClickCancelEditUserName
+
+
+editUserFormView :
+    VPack e EditUserFormMemory EditUserFormEvent
+    -> Html (Msg e)
+editUserFormView editUserForm =
+    let
+        param = VPack.memory editUserForm
+    in
+    Html.div
+        [ localClass "editUserForm"
+        ]
+        [ Html.node "label"
+            [ localClass "editUserForm_name"
+            ]
+            [ Html.span
+                [ localClass "editUserForm_name_label"
+                ]
+                [ Html.text "Name: "
+                ]
+            , Html.input
+                [ localClass "editUserForm_name_input"
+                , Mixin.attribute "type" "text"
+                , Events.onChange ChangeUserName
+                ]
+                []
+            ]
+        , Html.div
+            [ localClass "editUserForm_buttonGroup"
+            ]
+            [ Html.node "button"
+
+
+
+            Html.button
+                
+
+            case editUserForm of
+            Nothing ->
+                Html.div
+                    [ localClass "editUserForm"
 
 -- Procedures
 

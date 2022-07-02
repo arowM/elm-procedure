@@ -4,6 +4,7 @@ module Widget.Toast exposing
     , view
     , Event
     , Command(..)
+    , mapCommand
     , runCommand
     , pushWarning
     , pushError
@@ -20,6 +21,7 @@ module Widget.Toast exposing
 @docs view
 @docs Event
 @docs Command
+@docs mapCommand
 @docs runCommand
 
 
@@ -36,17 +38,16 @@ module Widget.Toast exposing
 -}
 
 import App.ZIndex as ZIndex
+import Html.Attributes exposing (target)
 import Http
 import Mixin exposing (Mixin)
-import Mixin.Html as Html exposing (Html)
 import Mixin.Events as Events
-import Procedure.Advanced as Procedure exposing (Procedure, Msg)
+import Mixin.Html as Html exposing (Html)
+import Procedure.Advanced as Procedure exposing (Msg, Procedure)
 import Procedure.Observer as Observer exposing (Observer)
 import Procedure.ObserverId as ObserverId exposing (ObserverId)
-import Procedure.VPack as VPack exposing (VPack)
 import Process
 import Task
-import Html.Attributes exposing (target)
 
 
 
@@ -104,18 +105,27 @@ init =
         }
 
 
+
 -- Event
 
 
 {-| -}
 type Event
-    = ToastItemEvent ToastItemEvent
+    = CloseToastItem
     | WakeUp
 
 
 {-| -}
 type Command e
     = Sleep Float (Msg e)
+
+
+{-| -}
+mapCommand : (e1 -> e0) -> Command e1 -> Command e0
+mapCommand f cmd =
+    case cmd of
+        Sleep msec msg ->
+            Sleep msec (Procedure.mapMsg f msg)
 
 
 {-| -}
@@ -130,19 +140,21 @@ runCommand cmd =
 -- Methods
 
 
-{-| -}
-pushWarning : String -> Observer m e Memory Event -> Procedure (Command e) m e
+{-| Show warning message.
+-}
+pushWarning : String -> Observer m Memory -> Procedure (Command Event) m Event
 pushWarning =
     pushItem WarningMessage
 
 
-{-| -}
-pushError : String -> Observer m e Memory Event -> Procedure (Command e) m e
+{-| Show error message.
+-}
+pushError : String -> Observer m Memory -> Procedure (Command Event) m Event
 pushError =
     pushItem ErrorMessage
 
 
-pushItem : MessageType -> String -> Observer m e Memory Event -> Procedure (Command e) m e
+pushItem : MessageType -> String -> Observer m Memory -> Procedure (Command Event) m Event
 pushItem type_ str widget =
     let
         newItem =
@@ -152,38 +164,34 @@ pushItem type_ str widget =
             }
     in
     Procedure.observe newItem <|
-        \(oid, newItemMemory) ->
+        \( oid, newItemMemory ) ->
             let
-                toastItem = toastItemObserver oid widget
+                toastItem =
+                    toastItemObserver oid widget
             in
             [ Procedure.modify widget <|
                 \(Memory m) ->
                     Memory
                         { m
-                            | items = m.items ++ [ (oid, newItemMemory) ]
+                            | items = m.items ++ [ ( oid, newItemMemory ) ]
                         }
-            , Procedure.jump toastItem <| \_ ->
-                toastItemProcedures oid widget toastItem
+            , Procedure.jump toastItem <|
+                \_ ->
+                    toastItemProcedures oid widget toastItem
             ]
 
 
 toastItemObserver :
     ObserverId
-    -> Observer m e Memory Event
-    -> Observer m e ToastItemMemory ToastItemEvent
+    -> Observer m Memory
+    -> Observer m ToastItemMemory
 toastItemObserver target =
     Observer.digListElem
         { id = target
         , get = \(Memory m) -> m.items
         , set = \items (Memory m) -> Memory { m | items = items }
-        , unwrap = \e1 ->
-            case e1 of
-                ToastItemEvent e2 ->
-                    Just e2
-                _ ->
-                    Nothing
-        , wrap = ToastItemEvent
         }
+
 
 
 -- ToastItem
@@ -196,46 +204,45 @@ type alias ToastItemMemory =
     }
 
 
-type ToastItemEvent
-    = CloseItem
-
-
 toastItemProcedures :
     ObserverId
-    -> Observer m e Memory Event
-    -> Observer m e ToastItemMemory ToastItemEvent
-    -> List (Procedure (Command e) m e)
+    -> Observer m Memory
+    -> Observer m ToastItemMemory
+    -> List (Procedure (Command Event) m Event)
 toastItemProcedures oid widget toastItem =
     [ Procedure.race
         [ sleep toastTimeout widget
         , Procedure.await toastItem <|
             \event _ ->
                 case event of
-                    CloseItem ->
+                    CloseToastItem ->
                         [ Procedure.none
                         ]
 
+                    _ ->
+                        []
         ]
     , Procedure.modify toastItem <|
         \m -> { m | isHidden = True }
     , sleep toastDisappearingDuration widget
     , Procedure.modify widget <|
-        \(Memory m) -> Memory
-            { m |
-                items = List.filter (\(id, _) -> id /= oid) m.items
-            }
+        \(Memory m) ->
+            Memory
+                { m
+                    | items = List.filter (\( id, _ ) -> id /= oid) m.items
+                }
     ]
 
 
 sleep :
     Float
-    -> Observer m e Memory Event
-    -> Procedure (Command e) m e
-sleep msec widget =
-    Procedure.protected widget <|
+    -> Observer m Memory
+    -> Procedure (Command Event) m Event
+sleep msec =
+    Procedure.protected <|
         \priv ->
             [ Procedure.push priv <|
-                \_ issue -> Sleep msec (issue WakeUp)
+                \(oid, _) -> Sleep msec (Procedure.issue oid WakeUp)
             , Procedure.await priv <|
                 \event _ ->
                     case event of
@@ -252,11 +259,12 @@ sleep msec widget =
 -- Utilities
 
 
-{-| -}
+{-| Helper function to show HTTP errors.
+-}
 pushHttpError :
     Http.Error
-    -> Observer m e Memory Event
-    -> Procedure (Command e) m e
+    -> Observer m Memory
+    -> Procedure (Command Event) m Event
 pushHttpError err widget =
     case err of
         Http.BadStatus 401 ->
@@ -285,35 +293,19 @@ pushHttpError err widget =
 
 
 {-| -}
-view :
-    VPack e Memory Event
-    -> Html (Msg e)
-view widget =
-    let
-        (Memory param) = VPack.memory widget
-
-        toastItem pair = VPack.child ToastItemEvent pair widget
-    in
+view : Memory -> Html (Msg Event)
+view (Memory param) =
     Html.keyed "div"
         [ localClass "toast"
         , Mixin.style "--zindex" <| String.fromInt ZIndex.toast
         ]
-        ( List.map
-            (\(oid, item) ->
-                toastItemView oid (toastItem (oid, item))
-            )
-            param.items
-        )
+        (List.map toastItemView param.items)
 
 
 toastItemView :
-    ObserverId
-    -> VPack e ToastItemMemory ToastItemEvent
-    -> (String, Html (Msg e))
-toastItemView oid toastItem =
-    let
-        param = VPack.memory toastItem
-    in
+    ( ObserverId, ToastItemMemory )
+    -> ( String, Html (Msg Event) )
+toastItemView ( oid, param ) =
     ( ObserverId.toString oid
     , Html.div
         [ localClass "toast_item"
@@ -329,7 +321,7 @@ toastItemView oid toastItem =
             ]
         , Html.div
             [ localClass "toast_item_close"
-            , Events.onClick (VPack.issue toastItem CloseItem)
+            , Events.onClick (Procedure.issue oid CloseToastItem)
             ]
             [ Html.text "×"
             ]
@@ -337,7 +329,9 @@ toastItemView oid toastItem =
     )
 
 
+
 -- Helper functions
+
 
 localClass : String -> Mixin msg
 localClass name =

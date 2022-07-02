@@ -2,9 +2,9 @@ module Page.Login exposing
     ( Command(..)
     , Event
     , Memory
-    , Procedures
     , init
     , procedures
+    , mapCommand
     , runCommand
     , view
     )
@@ -16,16 +16,15 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
+import Procedure.Advanced as Procedure exposing (Msg, ObserverId, Procedure)
 import Procedure.Observer as Observer exposing (Observer)
-import Procedure.VPack as VPack exposing (VPack)
 import Url exposing (Url)
 import Widget.Toast as Toast
 
 
 {-| -}
 type alias Memory =
-    { pageView : MainPageMemory
+    { loginForm : LoginFormMemory
     , msession : Maybe Session
     , toast : Toast.Memory
     }
@@ -34,7 +33,7 @@ type alias Memory =
 {-| -}
 init : Memory
 init =
-    { pageView = initMainPage
+    { loginForm = initLoginForm
     , msession = Nothing
     , toast = Toast.init
     }
@@ -43,7 +42,10 @@ init =
 {-| -}
 type Event
     = ToastEvent Toast.Event
-    | MainPageEvent MainPageEvent
+    | ChangeLoginId String
+    | ChangeLoginPass String
+    | ClickSubmitLogin
+    | ReceiveLoginResp (Result Http.Error Login.Response)
 
 
 
@@ -51,73 +53,17 @@ type Event
 
 
 {-| -}
-view :
-    VPack e Memory Event
-    -> Html (Msg e)
-view page =
-    let
-        mainPage =
-            VPack.inherit
-                { get = .pageView
-                , wrap = MainPageEvent
-                }
-                page
-
-        toast =
-            VPack.inherit
-                { get = .toast
-                , wrap = ToastEvent
-                }
-                page
-    in
+view : (ObserverId, Memory) -> Html (Msg Event)
+view (oid, param) =
     Html.div
         [ localClass "page"
         ]
-        [ mainPageView mainPage
-        , Toast.view toast
+        [ loginFormView (oid, param.loginForm)
+        , Toast.view param.toast
+            |> Html.map (Procedure.mapMsg ToastEvent)
         ]
 
 
-
--- -- MainPage
-
-
-type alias MainPageMemory =
-    { loginForm : LoginFormMemory
-    }
-
-
-initMainPage : MainPageMemory
-initMainPage =
-    { loginForm = initLoginForm
-    }
-
-
-type MainPageEvent
-    = LoginFormEvent LoginFormEvent
-
-
-mainPageView :
-    VPack e MainPageMemory MainPageEvent
-    -> Html (Msg e)
-mainPageView mainPage =
-    let
-        loginForm =
-            VPack.inherit
-                { get = .loginForm
-                , wrap = LoginFormEvent
-                }
-                mainPage
-    in
-    Html.div
-        [ localClass "page"
-        ]
-        [ loginFormView loginForm
-        ]
-
-
-
--- View Elements
 -- -- LoginForm
 
 
@@ -140,21 +86,10 @@ initLoginForm =
     }
 
 
-type LoginFormEvent
-    = ChangeLoginId String
-    | ChangeLoginPass String
-    | ClickSubmitLogin
-    | ReceiveLoginResp (Result Http.Error Login.Response)
-
-
-loginFormView :
-    VPack e LoginFormMemory LoginFormEvent
-    -> Html (Msg e)
-loginFormView loginForm =
+loginFormView : (ObserverId, LoginFormMemory) -> Html (Msg Event)
+loginFormView (oid, param) =
     let
-        param =
-            VPack.memory loginForm
-
+        issue = Procedure.issue oid
         errors =
             Login.toFormErrors param.form
     in
@@ -171,8 +106,7 @@ loginFormView loginForm =
                 [ Mixin.attribute "type" "text"
                 , Mixin.attribute "value" param.form.id
                 , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onChange
-                    (VPack.issue loginForm << ChangeLoginId)
+                , Events.onChange (issue << ChangeLoginId)
                 ]
                 []
             ]
@@ -184,15 +118,13 @@ loginFormView loginForm =
                 [ Mixin.attribute "type" "password"
                 , Mixin.attribute "value" param.form.pass
                 , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onChange
-                    (VPack.issue loginForm << ChangeLoginPass)
+                , Events.onChange (issue << ChangeLoginPass)
                 ]
                 []
             ]
         , Html.node "button"
             [ localClass "loginForm_submitLogin"
-            , Events.onClick
-                (VPack.issue loginForm ClickSubmitLogin)
+            , Events.onClick (issue ClickSubmitLogin)
             , Mixin.boolAttribute "disabled" param.isBusy
             ]
             [ Html.text "Login"
@@ -258,8 +190,20 @@ runCommand cmd =
 
 
 {-| -}
-type alias Procedures m e =
-    List (Procedure (Command e) m e)
+mapCommand : (e1 -> e0) -> Command e1 -> Command e0
+mapCommand f cmd =
+    case cmd of
+        ToastCommand toastCommand ->
+            ToastCommand <|
+                Toast.mapCommand f toastCommand
+
+        LoginCommand loginCommand ->
+            LoginCommand <|
+                Login.mapCommand f loginCommand
+
+        PushUrl key url ->
+            PushUrl key url
+
 
 
 
@@ -270,101 +214,55 @@ type alias Procedures m e =
 procedures :
     Url
     -> Key
-    -> Observer m e Memory Event
-    -> Procedures m e
+    -> Observer m Memory
+    -> List (Procedure (Command Event) m Event)
 procedures url key page =
-    let
-        toast =
-            Observer.inherit
-                { get = .toast
-                , set = \m2 m1 -> { m1 | toast = m2 }
-                , unwrap =
-                    \e1 ->
-                        case e1 of
-                            ToastEvent e2 ->
-                                Just e2
-
-                            _ ->
-                                Nothing
-                , wrap = ToastEvent
-                }
-                page
-
-        mainPage =
-            Observer.inherit
-                { get = .pageView
-                , set = \m2 m1 -> { m1 | pageView = m2 }
-                , unwrap =
-                    \e1 ->
-                        case e1 of
-                            MainPageEvent e2 ->
-                                Just e2
-
-                            _ ->
-                                Nothing
-                , wrap = MainPageEvent
-                }
-                page
-    in
-    [ Procedure.jump mainPage <|
-        \_ -> mainPageProcedures url key page toast mainPage
-    ]
-
-
-mainPageProcedures :
-    Url
-    -> Key
-    -> Observer m e Memory Event
-    -> Observer m e Toast.Memory Toast.Event
-    -> Observer m e MainPageMemory MainPageEvent
-    -> Procedures m e
-mainPageProcedures url key page toast mainPage =
-    let
-        loginForm =
-            Observer.inherit
-                { get = .loginForm
-                , set = \m2 m1 -> { m1 | loginForm = m2 }
-                , unwrap =
-                    \e1 ->
-                        case e1 of
-                            LoginFormEvent e2 ->
-                                Just e2
-                , wrap = LoginFormEvent
-                }
-                mainPage
-    in
     [ Procedure.async <|
-        loginFormProcedures url key page toast loginForm
+        loginFormProcedures url key page
     ]
 
 
 loginFormProcedures :
     Url
     -> Key
-    -> Observer m e Memory Event
-    -> Observer m e Toast.Memory Toast.Event
-    -> Observer m e LoginFormMemory LoginFormEvent
-    -> Procedures m e
-loginFormProcedures url key page toast loginForm =
+    -> Observer m Memory
+    -> List (Procedure (Command Event) m Event)
+loginFormProcedures url key page =
+    let
+        loginForm : Observer m LoginFormMemory
+        loginForm =
+            Observer.inherit
+                { get = .loginForm
+                , set = \a m -> { m | loginForm = a }
+                }
+                page
+        form : Observer m Login.Form
+        form =
+            Observer.inherit
+                { get = .form
+                , set = \a m -> { m | form = a }
+                }
+                loginForm
+    in
     [ Procedure.await loginForm <|
         \event _ ->
             case event of
                 ChangeLoginId str ->
-                    [ modifyLoginForm loginForm <|
-                        \form -> { form | id = str }
-                    , Procedure.jump loginForm <| \_ -> loginFormProcedures url key page toast loginForm
+                    [ Procedure.modify form <|
+                        \m -> { m | id = str }
+                    , Procedure.jump page <| \_ -> loginFormProcedures url key page
                     ]
 
                 ChangeLoginPass str ->
-                    [ modifyLoginForm loginForm <|
-                        \form -> { form | pass = str }
-                    , Procedure.jump loginForm <| \_ -> loginFormProcedures url key page toast loginForm
+                    [ Procedure.modify form <|
+                        \m -> { m | pass = str }
+                    , Procedure.jump page <| \_ -> loginFormProcedures url key page
                     ]
 
                 ClickSubmitLogin ->
-                    [ Procedure.jump loginForm <|
-                        \memoryOnClick ->
-                            submitLoginProcedures memoryOnClick url key page toast loginForm
+                    [ Procedure.jump form <|
+                        \formState ->
+                            submitLoginProcedures url key formState page
                     ]
 
                 _ ->
@@ -373,17 +271,32 @@ loginFormProcedures url key page toast loginForm =
 
 
 submitLoginProcedures :
-    LoginFormMemory
-    -> Url
+    Url
     -> Key
-    -> Observer m e Memory Event
-    -> Observer m e Toast.Memory Toast.Event
-    -> Observer m e LoginFormMemory LoginFormEvent
-    -> Procedures m e
-submitLoginProcedures memoryOnClick url key page toast loginForm =
+    -> Login.Form
+    -> Observer m Memory
+    -> List (Procedure (Command Event) m Event)
+submitLoginProcedures url key formState page =
+    let
+        loginForm : Observer m LoginFormMemory
+        loginForm =
+            Observer.inherit
+                { get = .loginForm
+                , set = \a m -> { m | loginForm = a }
+                }
+                page
+
+        toast : Observer m Toast.Memory
+        toast =
+            Observer.inherit
+                { get = .toast
+                , set = \a m -> { m | toast = a }
+                }
+                page
+    in
     [ Procedure.modify loginForm <|
         \m -> { m | isBusy = True }
-    , case Login.fromForm memoryOnClick.form of
+    , case Login.fromForm formState of
         Err _ ->
             [ Procedure.modify loginForm <|
                 \m ->
@@ -391,25 +304,27 @@ submitLoginProcedures memoryOnClick url key page toast loginForm =
                         | isBusy = False
                         , showError = True
                     }
-            , Procedure.jump loginForm <| \_ -> loginFormProcedures url key page toast loginForm
+            , Procedure.jump page <| \_ -> loginFormProcedures url key page
             ]
                 |> Procedure.batch
 
         Ok login ->
-            [ Login.request login ReceiveLoginResp loginForm
-                |> Procedure.mapCmd LoginCommand
+            [ Login.request login
+                loginForm
+                LoginCommand
+                ReceiveLoginResp
             , Procedure.await loginForm <|
                 \event _ ->
                     case event of
                         ReceiveLoginResp (Err err) ->
                             [ Toast.pushHttpError err toast
-                                |> Procedure.mapCmd ToastCommand
+                                |> runToastProcedure
                             , Procedure.modify loginForm <|
                                 \m ->
                                     { m | isBusy = False }
-                            , Procedure.jump loginForm <|
+                            , Procedure.jump page <|
                                 \_ ->
-                                    loginFormProcedures url key page toast loginForm
+                                    loginFormProcedures url key page
                             ]
 
                         ReceiveLoginResp (Ok resp) ->
@@ -418,7 +333,7 @@ submitLoginProcedures memoryOnClick url key page toast loginForm =
                             , Procedure.modify page <|
                                 \m -> { m | msession = Just resp.session }
                             , Procedure.push page <|
-                                \_ _ -> PushUrl key <| Url.toString url
+                                \_ -> PushUrl key <| Url.toString url
                             , Procedure.quit
                             ]
 
@@ -429,15 +344,24 @@ submitLoginProcedures memoryOnClick url key page toast loginForm =
     ]
 
 
-modifyLoginForm :
-    Observer m e LoginFormMemory LoginFormEvent
-    -> (Login.Form -> Login.Form)
-    -> Procedure (Command e) m e
-modifyLoginForm loginForm f =
-    Procedure.modify loginForm <|
-        \memory ->
-            { memory | form = f memory.form }
 
+-- Toast
+
+
+runToastProcedure : Procedure (Toast.Command Toast.Event) m Toast.Event
+    -> Procedure (Command Event) m Event
+runToastProcedure =
+    Procedure.wrapEvent
+        { wrap = ToastEvent
+        , unwrap =
+            \e ->
+                case e of
+                    ToastEvent e1 ->
+                        Just e1
+                    _ ->
+                        Nothing
+        }
+        >> Procedure.mapCmd (ToastCommand << Toast.mapCommand ToastEvent)
 
 
 -- Helper functions

@@ -27,21 +27,18 @@ import Internal
         )
 
 
-{-| Represent an _Observer_, which is a concept that links Views to Procedures. By specifying a view with its Observer, you can update the memory state of the view or capture events that occur on that view.
--}
-type alias Observer m e m1 e1 =
-    Internal.Observer m e m1 e1
+{-| -}
+type alias Observer m m1 =
+    Internal.Observer m m1
 
 
 {-| Root Observer, from which you can _dig_ up some interesting Observers.
 -}
-root : Observer m e m e
+root : Observer m m
 root =
     Internal.Observer
         { mget = Just
         , set = \x _ -> x
-        , unwrap = Just
-        , wrap = identity
         , id = initObserverId
         }
 
@@ -50,19 +47,15 @@ root =
 
   - mget: function to get the memory state from its parent
   - set: function to set the memory state on its parent
-  - unwrap: function to unwrap parent Event
-  - wrap: function to wrap the Event into its parent Event
 
 -}
 dig :
     { mget : m1 -> Maybe ( ObserverId, m2 )
     , set : ( ObserverId, m2 ) -> m1 -> m1
-    , unwrap : e1 -> Maybe e2
-    , wrap : e2 -> e1
     , id : ObserverId
     }
-    -> Observer m e m1 e1
-    -> Observer m e m2 e2
+    -> Observer m m1
+    -> Observer m m2
 dig r (Internal.Observer o) =
     Internal.Observer
         { mget =
@@ -85,12 +78,6 @@ dig r (Internal.Observer o) =
 
                     Just m1 ->
                         o.set (r.set ( r.id, m2 ) m1) m0
-        , unwrap =
-            \e0 ->
-                o.unwrap e0
-                    |> Maybe.andThen r.unwrap
-        , wrap =
-            r.wrap >> o.wrap
         , id = r.id
         }
 
@@ -100,20 +87,16 @@ dig r (Internal.Observer o) =
   - arg1:
       - get: function to get the list from its parent
       - set: function to set the list on its parent
-      - unwrap: function to unwrap parent Event
-      - wrap: function to wrap the Event into its parent Event
   - arg2: ObserverId for the list element
 
 -}
 digListElem :
     { get : m1 -> List ( ObserverId, m2 )
     , set : List ( ObserverId, m2 ) -> m1 -> m1
-    , unwrap : e1 -> Maybe e2
-    , wrap : e2 -> e1
     , id : ObserverId
     }
-    -> Observer m e m1 e1
-    -> Observer m e m2 e2
+    -> Observer m m1
+    -> Observer m m2
 digListElem r =
     dig
         { id = r.id
@@ -140,8 +123,6 @@ digListElem r =
 
                 else
                     m1
-        , unwrap = r.unwrap
-        , wrap = r.wrap
         }
 
 
@@ -149,18 +130,14 @@ digListElem r =
 
   - get: function to get the memory state from its parent
   - set: function to set the memory state on its parent
-  - unwrap: function to unwrap parent Event
-  - wrap: function to wrap the Event into its parent Event
 
 -}
 inherit :
     { get : m1 -> m2
     , set : m2 -> m1 -> m1
-    , unwrap : e1 -> Maybe e2
-    , wrap : e2 -> e1
     }
-    -> Observer m e m1 e1
-    -> Observer m e m2 e2
+    -> Observer m m1
+    -> Observer m m2
 inherit r (Internal.Observer o) =
     Internal.Observer
         { id = o.id
@@ -176,10 +153,4 @@ inherit r (Internal.Observer o) =
 
                     Just m1 ->
                         o.set (r.set m2 m1) m0
-        , unwrap =
-            \e0 ->
-                o.unwrap e0
-                    |> Maybe.andThen r.unwrap
-        , wrap =
-            r.wrap >> o.wrap
         }

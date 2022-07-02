@@ -18,26 +18,26 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
-import Procedure.Observer exposing (Observer)
+import Procedure.Advanced as Procedure exposing (Msg, Observer, Request)
 import Url.Builder as Url
 
 
-{-| -}
+{-| Data for logged in user.
+-}
 type alias Session =
     { id : String
     }
 
 
-{-| -}
+{-| Fetch user information from the server.
+-}
 fetch :
-    (Result Http.Error Session -> e1)
-    -> Observer m e m1 e1
-    -> Procedure (Command e) m e
-fetch toEvent observer =
-    Procedure.push observer <|
+    Observer m m1
+    -> Request cmd m e (Command e) (Result Http.Error Session)
+fetch =
+    Procedure.request <|
         \_ issue ->
-            FetchSession (issue << toEvent)
+            FetchSession issue
 
 
 {-| -}

@@ -17,14 +17,13 @@ import Http
 import Json.Encode exposing (Value)
 import Mixin.Html as Html exposing (Html)
 import Page.Catalog as PageCatalog
-import Page.Home as PageHome
-import Page.Login as PageLogin
-import Page.Users as PageUsers
+-- import Page.Home as PageHome
+-- import Page.Login as PageLogin
+-- import Page.Users as PageUsers
 import Procedure as AppProcedure
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
 import Procedure.Observer as Observer exposing (Observer)
 import Procedure.ObserverId exposing (ObserverId)
-import Procedure.VPack as VPack
 import Url exposing (Url)
 
 
@@ -72,8 +71,8 @@ type Page
     | PageNotFound
     | PageLogin ( ObserverId, PageLogin.Memory )
     | PageCatalog ( ObserverId, PageCatalog.Memory )
-    | PageHome ( ObserverId, PageHome.Memory )
-    | PageUsers ( ObserverId, PageUsers.Memory )
+    -- | PageHome ( ObserverId, PageHome.Memory )
+    -- | PageUsers ( ObserverId, PageUsers.Memory )
 
 
 
@@ -118,6 +117,7 @@ view memory =
                     (\_ -> PageCatalog.view)
                     pageCatalog
 
+            {-
             PageHome pageHome ->
                 VPack.child
                     app
@@ -131,6 +131,7 @@ view memory =
                     PageUsersEvent
                     (\_ -> PageUsers.view)
                     pageUsers
+            -}
         ]
     }
 
@@ -168,8 +169,8 @@ type Event
     | UrlChanged Url
     | PageLoginEvent PageLogin.Event
     | PageCatalogEvent PageCatalog.Event
-    | PageHomeEvent PageHome.Event
-    | PageUsersEvent PageUsers.Event
+    -- | PageHomeEvent PageHome.Event
+    -- | PageUsersEvent PageUsers.Event
     | ReceiveSession (Result Http.Error Session)
 
 
@@ -178,8 +179,8 @@ type Event
 type Command e
     = PageLoginCommand (PageLogin.Command e)
     | PageCatalogCommand (PageCatalog.Command e)
-    | PageHomeCommand (PageHome.Command e)
-    | PageUsersCommand (PageUsers.Command e)
+    -- | PageHomeCommand (PageHome.Command e)
+    -- | PageUsersCommand (PageUsers.Command e)
     | SessionCommand (Session.Command e)
     | PushUrl Key String
     | Load String
@@ -196,11 +197,11 @@ runCommand cmd =
         PageCatalogCommand c ->
             PageCatalog.runCommand c
 
-        PageHomeCommand c ->
-            PageHome.runCommand c
+        -- PageHomeCommand c ->
+        --     PageHome.runCommand c
 
-        PageUsersCommand c ->
-            PageUsers.runCommand c
+        -- PageUsersCommand c ->
+        --     PageUsers.runCommand c
 
         SessionCommand c ->
             Session.runCommand c
@@ -369,6 +370,7 @@ pageControllProcedures url key msession app =
                             []
             ]
 
+        {-
         ( Route.Home, Just session ) ->
             [ Procedure.observe (PageHome.init session) <|
                 \pageHomeCore ->
@@ -426,6 +428,7 @@ pageControllProcedures url key msession app =
                                     []
                     ]
             ]
+            -}
 
 
 pageLoginObserver :
@@ -502,6 +505,7 @@ pageCatalogObserver oid =
         }
 
 
+{-
 pageHomeObserver :
     ObserverId
     -> Observer m e Memory Event
@@ -574,6 +578,7 @@ pageUsersObserver oid =
         , wrap = PageUsersEvent
         , id = oid
         }
+-}
 
 
 extractSession : Memory -> Maybe Session
@@ -591,8 +596,8 @@ extractSession memory =
         PageCatalog _ ->
             Nothing
 
-        PageHome ( _, { session } ) ->
-            Just session
+        -- PageHome ( _, { session } ) ->
+        --     Just session
 
-        PageUsers ( _, { session } ) ->
-            Just session
+        -- PageUsers ( _, { session } ) ->
+        --     Just session

@@ -20,8 +20,7 @@ import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE exposing (Value)
 
 
-{-| ID to determine `Observer`.
--}
+{-| -}
 type alias ObserverId =
     Internal.ObserverId
 

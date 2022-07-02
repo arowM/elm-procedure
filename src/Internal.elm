@@ -11,12 +11,10 @@ module Internal exposing
 import Internal.SafeInt as SafeInt exposing (SafeInt)
 
 
-type Observer m0 e0 m1 e1
+type Observer m0 m1
     = Observer
         { mget : m0 -> Maybe m1
         , set : m1 -> m0 -> m0
-        , unwrap : e0 -> Maybe e1
-        , wrap : e1 -> e0
         , id : ObserverId
         }
 

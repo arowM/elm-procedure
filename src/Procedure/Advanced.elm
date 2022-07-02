@@ -2,11 +2,16 @@ module Procedure.Advanced exposing
     ( Procedure
     , none
     , batch
+    , wrapEvent
+    , Observer
+    , ObserverId
+    , issue
     , mapCmd
     , mapCmds
     , update
     , init
     , Msg
+    , mapMsg
     , Model
     , memoryState
     , modify
@@ -18,10 +23,11 @@ module Procedure.Advanced exposing
     , quit
     , jump
     , protected
-    , withResource
     , when
     , unless
     , withMaybe
+    , Request
+    , request
     , observe
     , observeList
     )
@@ -34,8 +40,16 @@ module Procedure.Advanced exposing
 @docs Procedure
 @docs none
 @docs batch
+@docs wrapEvent
 @docs mapCmd
 @docs mapCmds
+
+
+# Observer
+
+@docs Observer
+@docs ObserverId
+@docs issue
 
 
 # Connect to TEA app
@@ -43,6 +57,7 @@ module Procedure.Advanced exposing
 @docs update
 @docs init
 @docs Msg
+@docs mapMsg
 @docs Model
 @docs memoryState
 
@@ -58,11 +73,12 @@ module Procedure.Advanced exposing
 @docs quit
 @docs jump
 @docs protected
-@docs withResource
 
 
 # Helper procedures
 
+@docs request
+@docs Request
 @docs when
 @docs unless
 @docs withMaybe
@@ -84,6 +100,25 @@ import Internal
         )
 import Internal.SafeInt as SafeInt exposing (SafeInt)
 
+
+
+-- Observer
+
+
+{-| Same as `Procedure.Observer`.
+-}
+type alias Observer m m1 = Internal.Observer m m1
+
+
+{-| Same as `Procedure.ObserverId`.
+-}
+type alias ObserverId = Internal.ObserverId
+
+
+{-| Same as `Procedure.issue`.
+-}
+issue : ObserverId -> e -> Msg e
+issue = Internal.Msg
 
 
 -- Procedure
@@ -135,6 +170,82 @@ batch : List (Procedure c m e) -> Procedure c m e
 batch procs =
     List.concatMap (\(Procedure ps) -> ps) procs
         |> Procedure
+
+
+{-| Just like `Procedure.wrapEvent`.
+-}
+wrapEvent :
+   { wrap : e1 -> e0
+   , unwrap : e0 -> Maybe e1
+   }
+   -> Procedure c m e1 -> Procedure c m e0
+wrapEvent wrapper (Procedure ps) =
+    List.map (wrapEvent_ wrapper) ps
+        |> Procedure
+
+
+wrapEvent_ :
+   { wrap : e1 -> e0
+   , unwrap : e0 -> Maybe e1
+   }
+   -> ProcedureItem c m e1 -> ProcedureItem c m e0
+wrapEvent_ wrapper item =
+    case item of
+        Do g -> Do g
+
+        Await g ->
+            Await <|
+                \(Msg oid e0) m ->
+                    wrapper.unwrap e0
+                        |> Maybe.andThen
+                            (\e1 ->
+                                g (Msg oid e1) m
+                                    |> Maybe.map
+                                        (List.map (wrapEvent_ wrapper))
+                            )
+
+        Async ls ->
+            Async <|
+                List.map (wrapEvent_ wrapper) ls
+
+        Observe g ->
+            Observe <|
+                \oid m ->
+                    let
+                        ( mNew, ps, h ) =
+                            g oid m
+                    in
+                    ( mNew
+                    , List.map (wrapEvent_ wrapper) ps
+                    , h
+                    )
+
+        Protected g ->
+            Protected <|
+                \oid ->
+                    g oid
+                        |> List.map (wrapEvent_ wrapper)
+
+        Sync pss ->
+            Sync <|
+                List.map
+                    (List.map (wrapEvent_ wrapper))
+                    pss
+
+        Race pss ->
+            Race <|
+                List.map
+                    (List.map (wrapEvent_ wrapper))
+                    pss
+
+        Jump g ->
+            Jump <|
+                \m ->
+                    g m
+                        |> List.map (wrapEvent_ wrapper)
+
+        Quit ->
+            Quit
 
 
 {-| Transform the command produced by an `Procedure`.
@@ -217,7 +328,7 @@ mapCmd_ f item =
 
 {-| Just like `Procedure.modify`.
 -}
-modify : Observer m e m1 e1 -> (m1 -> m1) -> Procedure c m e
+modify : Observer m m1 -> (m1 -> m1) -> Procedure c m e
 modify (Observer { mget, set }) f =
     Procedure
         [ Do <|
@@ -233,8 +344,8 @@ modify (Observer { mget, set }) f =
 
 {-| Just like `Procedure.push`.
 -}
-push : Observer m e m1 e1 -> (( ObserverId, m1 ) -> (e1 -> Msg e) -> cmd) -> Procedure cmd m e
-push (Observer { mget, id, wrap }) f =
+push : Observer m m1 -> (( ObserverId, m1 ) -> cmd) -> Procedure cmd m e
+push (Observer { mget, id }) f =
     Procedure
         [ Do <|
             \m0 ->
@@ -243,32 +354,17 @@ push (Observer { mget, id, wrap }) f =
                         ( m0, [] )
 
                     Just m1 ->
-                        ( m0, [ f ( id, m1 ) (Msg id << wrap) ] )
+                        ( m0, [ f ( id, m1 ) ] )
         ]
 
 
 {-| Just like `Procedure.await`.
 -}
 await :
-    Observer m e m1 e1
-    -> (e1 -> m1 -> List (Procedure c m e))
-    -> Procedure c m e
-await (Observer o) f =
-    await_ (Observer o) <|
-        \e0 m1 ->
-            case o.unwrap e0 of
-                Nothing ->
-                    []
-
-                Just e1 ->
-                    f e1 m1
-
-
-await_ :
-    Observer m e m1 e1
+    Observer m m1
     -> (e -> m1 -> List (Procedure c m e))
     -> Procedure c m e
-await_ (Observer { mget, id }) f =
+await (Observer { mget, id }) f =
     Procedure
         [ Await
             (\(Msg targetId e0) m0 ->
@@ -310,10 +406,10 @@ async ps =
 {-| Just like `Procedure.protected`.
 -}
 protected :
-    Observer m e m1 e1
-    -> (Observer m e m1 e1 -> List (Procedure c m e))
+    (Observer m m1 -> List (Procedure c m e))
+    -> Observer m m1
     -> Procedure c m e
-protected (Observer observer) f =
+protected f (Observer observer) =
     Procedure
         [ Protected <|
             \priv ->
@@ -328,42 +424,43 @@ protected (Observer observer) f =
         ]
 
 
-{-| Just like `Procedure.withResource`.
--}
-withResource :
-    Observer m e m1 e1
-    ->
-        { aquire : ObserverId -> m1 -> ( m1, r )
-        , release : r -> m1 -> ( m1, List cmd )
-        }
-    -> (r -> List (Procedure cmd m e))
-    -> Procedure cmd m e
-withResource (Observer { mget, set }) { aquire, release } f =
-    observe_ <|
-        \rid m0 ->
-            case mget m0 of
-                Nothing ->
-                    ( m0, [], \m -> ( m, [] ) )
 
-                Just m1 ->
-                    let
-                        ( m1New, r ) =
-                            aquire rid m1
-                    in
-                    ( set m1New m0
-                    , f r
-                    , \finalM0 ->
-                        case mget finalM0 of
-                            Nothing ->
-                                ( finalM0, [] )
-
-                            Just finalM1 ->
-                                let
-                                    ( m1Released, cmds ) =
-                                        release r finalM1
-                                in
-                                ( set m1Released finalM0, cmds )
-                    )
+-- {-| Just like `Procedure.withResource`.
+-- -}
+-- withResource :
+--     Observer m m1
+--     ->
+--         { aquire : ObserverId -> m1 -> ( m1, r )
+--         , release : r -> m1 -> ( m1, List cmd )
+--         }
+--     -> (r -> List (Procedure cmd m e))
+--     -> Procedure cmd m e
+-- withResource (Observer { mget, set }) { aquire, release } f =
+--     observe_ <|
+--         \rid m0 ->
+--             case mget m0 of
+--                 Nothing ->
+--                     ( m0, [], \m -> ( m, [] ) )
+--
+--                 Just m1 ->
+--                     let
+--                         ( m1New, r ) =
+--                             aquire rid m1
+--                     in
+--                     ( set m1New m0
+--                     , f r
+--                     , \finalM0 ->
+--                         case mget finalM0 of
+--                             Nothing ->
+--                                 ( finalM0, [] )
+--
+--                             Just finalM1 ->
+--                                 let
+--                                     ( m1Released, cmds ) =
+--                                         release r finalM1
+--                                 in
+--                                 ( set m1Released finalM0, cmds )
+--                     )
 
 
 {-| Just like `Procedure.sync`.
@@ -396,7 +493,7 @@ quit =
 {-| Just like `Procedure.jump`.
 -}
 jump :
-    Observer m e m1 e1
+    Observer m m1
     -> (m1 -> List (Procedure c m e))
     -> Procedure c m e
 jump (Observer { mget }) f =
@@ -441,29 +538,29 @@ jump (Observer { mget }) f =
 --         ]
 
 
-observe_ :
-    (ObserverId
-     -> m
-     ->
-        ( m
-        , List (Procedure cmd m e)
-        , m -> ( m, List cmd )
-        )
-    )
-    -> Procedure cmd m e
-observe_ f =
-    Procedure
-        [ Observe <|
-            \rid m0 ->
-                let
-                    ( finalM0, ps, finally ) =
-                        f rid m0
-
-                    (Procedure items) =
-                        batch ps
-                in
-                ( finalM0, items, finally )
-        ]
+-- observe_ :
+--     (ObserverId
+--      -> m
+--      ->
+--         ( m
+--         , List (Procedure cmd m e)
+--         , m -> ( m, List cmd )
+--         )
+--     )
+--     -> Procedure cmd m e
+-- observe_ f =
+--     Procedure
+--         [ Observe <|
+--             \rid m0 ->
+--                 let
+--                     ( finalM0, ps, finally ) =
+--                         f rid m0
+-- 
+--                     (Procedure items) =
+--                         batch ps
+--                 in
+--                 ( finalM0, items, finally )
+--         ]
 
 
 {-| Just like `Procedure.when`.
@@ -498,7 +595,24 @@ withMaybe ma f =
 
 
 
--- Observe variants
+-- Local procedures
+
+
+{-| Just like `Procedure.request`.
+-}
+request : (( ObserverId, m1 ) -> (a -> Msg e) -> cmd1) -> Observer m m1 -> Request cmd m e cmd1 a
+request f observer toCmd toEvent =
+    push observer <| \(id, state) ->
+        toCmd <| f (id, state) (toEvent >> issue id)
+
+
+{-| Just like `Procedure.Request`.
+-}
+type alias Request cmd m e cmd1 a =
+    (cmd1 -> cmd) -> (a -> e) -> Procedure cmd m e
+
+
+-- Observing
 
 
 {-| Just like `Procedure.observe`.
@@ -960,20 +1074,21 @@ andNextRaceDep f (FromProcedure fp1) =
                 }
 
 
-{-| Just like `Procedure.Msg`.
+{-| Same as `Procedure.Msg`.
 -}
 type alias Msg event =
     Internal.Msg event
 
 
+{-| Same as `Procedure.mapMsg`.
+-}
+mapMsg : (a -> b) -> Msg a -> Msg b
+mapMsg f (Msg id a) =
+    Msg id (f a)
+
+
 
 -- ObserverId
-
-
-{-| ID to determine to which thread a local message is addressed.
--}
-type alias ObserverId =
-    Internal.ObserverId
 
 
 {-| Next `ObserverId`.

@@ -2,6 +2,10 @@ module Procedure exposing
     ( Procedure
     , none
     , batch
+    , wrapEvent
+    , Observer
+    , ObserverId
+    , issue
     , element
     , document
     , application
@@ -16,7 +20,8 @@ module Procedure exposing
     , quit
     , jump
     , protected
-    , withResource
+    , request
+    , Request
     , when
     , unless
     , withMaybe
@@ -25,6 +30,7 @@ module Procedure exposing
     , update
     , init
     , Msg
+    , mapMsg
     , rootMsg
     , Model
     , memoryState
@@ -38,6 +44,14 @@ module Procedure exposing
 @docs Procedure
 @docs none
 @docs batch
+@docs wrapEvent
+
+
+# Observer
+
+@docs Observer
+@docs ObserverId
+@docs issue
 
 
 # Entry point
@@ -51,6 +65,8 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs application
 @docs Program
 @docs Document
+@docs Msg
+@docs mapMsg
 
 
 # Constructors
@@ -64,11 +80,12 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs quit
 @docs jump
 @docs protected
-@docs withResource
 
 
 # Helper procedures
 
+@docs request
+@docs Request
 @docs when
 @docs unless
 @docs withMaybe
@@ -84,7 +101,6 @@ The [low level API](#low-level-api) is also available for more advanced use case
 
 @docs update
 @docs init
-@docs Msg
 @docs rootMsg
 @docs Model
 @docs memoryState
@@ -130,6 +146,36 @@ batch : List (Procedure memory event) -> Procedure memory event
 batch =
     Advanced.batch
 
+
+{-| -}
+wrapEvent :
+   { wrap : e1 -> e0
+   , unwrap : e0 -> Maybe e1
+   }
+   -> Procedure m e1 -> Procedure m e0
+wrapEvent wrapper proc =
+    Advanced.wrapEvent wrapper proc
+        |> Advanced.mapCmd
+            (Cmd.map (mapMsg wrapper.wrap))
+
+
+-- Observer
+
+
+{-| The _Observer_ is the concept to observe a partial memory. You can issue an event to the Observer in views, and you can modify the partial memory state or capture events for the Observer in procedures.
+-}
+type alias Observer m m1 = Internal.Observer m m1
+
+
+{-| ID for the Observer.
+-}
+type alias ObserverId = Internal.ObserverId
+
+
+{-| Issue an event to the Observer.
+-}
+issue : ObserverId -> e -> Msg e
+issue = Internal.Msg
 
 
 -- Entry point
@@ -242,7 +288,7 @@ If the given `Observer` has already expired, it does nothing and is just skipped
 Note that the update operation, passed as the second argument, is performed atomically; it means the state of the memory is not updated by another process during it is read and written by the `modify`.
 
 -}
-modify : Observer m e m1 e1 -> (m1 -> m1) -> Procedure m e
+modify : Observer m m1 -> (m1 -> m1) -> Procedure m e
 modify =
     Advanced.modify
 
@@ -260,7 +306,7 @@ The `ObserverId` value provided to the callback function is used to `issue` even
                 }
 
 -}
-push : Observer m e m1 e1 -> (( ObserverId, m1 ) -> (e1 -> Msg e) -> Cmd (Msg e)) -> Procedure m e
+push : Observer m m1 -> (( ObserverId, m1 ) -> Cmd (Msg e)) -> Procedure m e
 push =
     Advanced.push
 
@@ -279,8 +325,8 @@ Note3: `push`s written before an `await` will not necessarily cause events in th
 
 -}
 await :
-    Observer m e m1 e1
-    -> (e1 -> m1 -> List (Procedure m e))
+    Observer m m1
+    -> (e -> m1 -> List (Procedure m e))
     -> Procedure m e
 await =
     Advanced.await
@@ -414,7 +460,7 @@ It appears to be nice, but it does not work as intended. Actually, the above `Pr
 
 -}
 jump :
-    Observer m e m1 e1
+    Observer m m1
     -> (m1 -> List (Procedure m e))
     -> Procedure m e
 jump =
@@ -489,40 +535,40 @@ If the given `Observer` has already expired, it does nothing and is just skipped
 
 -}
 protected :
-    Observer m e m1 e1
-    -> (Observer m e m1 e1 -> List (Procedure m e))
+    (Observer m m1 -> List (Procedure m e))
+    -> Observer m m1
     -> Procedure m e
 protected =
     Advanced.protected
 
 
-{-| Aquire a resource, do some work with it, and then release the resource.
-
-  - aquire: Evaluated immediately.
-      - arg1: new `ObserverId` for the aquired resource `r`
-      - arg2: current memory state
-      - returns: ( new memory state, aquired resource )
-  - release: Evaluated when `Procedure`s returned by the callback function, provided as the third argument, are completed or cancelled by `race` or `doUntil`.
-
-If the given `Observer` has already expired, it does nothing and just skipped.
-
--}
-withResource :
-    Observer m e m1 e1
-    ->
-        { aquire : ObserverId -> m1 -> ( m1, r )
-        , release : r -> m1 -> ( m1, Cmd (Msg e) )
-        }
-    -> (r -> List (Procedure m e))
-    -> Procedure m e
-withResource o c =
-    Advanced.withResource o
-        { aquire = c.aquire
-        , release =
-            \r m1 ->
-                c.release r m1
-                    |> Tuple.mapSecond List.singleton
-        }
+-- {-| Aquire a resource, do some work with it, and then release the resource.
+-- 
+--   - aquire: Evaluated immediately.
+--       - arg1: new `ObserverId` for the aquired resource `r`
+--       - arg2: current memory state
+--       - returns: ( new memory state, aquired resource )
+--   - release: Evaluated when `Procedure`s returned by the callback function, provided as the third argument, are completed or cancelled by `race` or `doUntil`.
+-- 
+-- If the given `Observer` has already expired, it does nothing and just skipped.
+-- 
+-- -}
+-- withResource :
+--     Observer m m1
+--     ->
+--         { aquire : ObserverId -> m1 -> ( m1, r )
+--         , release : r -> m1 -> ( m1, Cmd (Msg e) )
+--         }
+--     -> (r -> List (Procedure m e))
+--     -> Procedure m e
+-- withResource o c =
+--     Advanced.withResource o
+--         { aquire = c.aquire
+--         , release =
+--             \r m1 ->
+--                 c.release r m1
+--                     |> Tuple.mapSecond List.singleton
+--         }
 
 
 
@@ -548,6 +594,21 @@ unless =
 withMaybe : Maybe a -> (a -> List (Procedure m e)) -> Procedure m e
 withMaybe =
     Advanced.withMaybe
+
+
+-- Local procedures
+
+{-| Helper function to issue an request via HTTP, port, etc.
+An example use case can be found on `App.Session` module in [spa-sample](https://github.com/arowM/elm-procedure/tree/main/spa-sample).
+-}
+request : (( ObserverId, m1 ) -> (a -> Msg e) -> (Cmd (Msg e))) -> Observer m m1 -> Request m e a
+request f observer =
+    Advanced.request f observer identity
+
+
+{-| -}
+type alias Request m e a =
+    (a -> e) -> Procedure m e
 
 
 
@@ -601,6 +662,12 @@ init initialMemory procs =
 -}
 type alias Msg event =
     Advanced.Msg event
+
+
+{-| -}
+mapMsg : (a -> b) -> Msg a -> Msg b
+mapMsg =
+    Advanced.mapMsg
 
 
 {-| TEA Model that stores your Procedure state.

@@ -5,6 +5,7 @@
     "exposed-modules": [
         "App.Session",
         "App.ZIndex",
-        "Page.Login.Login"
+        "Page.Login.Login",
+        "Widget.Toast"
     ]
 }

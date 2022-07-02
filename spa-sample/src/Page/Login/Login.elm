@@ -3,6 +3,7 @@ module Page.Login.Login exposing
     , Login
     , Response
     , Command(..)
+    , mapCommand
     , runCommand
     , Form
     , initForm
@@ -21,6 +22,7 @@ module Page.Login.Login exposing
 @docs Login
 @docs Response
 @docs Command
+@docs mapCommand
 @docs runCommand
 
 
@@ -43,8 +45,7 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
-import Procedure.Observer exposing (Observer)
+import Procedure.Advanced as Procedure exposing (Msg, Observer, Request)
 import Url.Builder as Url
 
 
@@ -56,13 +57,12 @@ import Url.Builder as Url
 -}
 request :
     Login
-    -> (Result Http.Error Response -> e1)
-    -> Observer m e m1 e1
-    -> Procedure (Command e) m e
-request login toEvent observer =
-    Procedure.push observer <|
+    -> Observer m m1
+    -> Request cmd m e (Command e) (Result Http.Error Response)
+request login =
+    Procedure.request <|
         \_ issue ->
-            RequestLogin login (issue << toEvent)
+            RequestLogin login issue
 
 
 {-| Validated request-ready data.
@@ -87,6 +87,15 @@ type alias Response =
 {-| -}
 type Command e
     = RequestLogin Login (Result Http.Error Response -> Msg e)
+
+
+{-| -}
+mapCommand : (e1 -> e0) -> Command e1 -> Command e0
+mapCommand f cmd =
+    case cmd of
+        RequestLogin login toMsg ->
+            RequestLogin login
+                <| Procedure.mapMsg f << toMsg
 
 
 {-| -}

@@ -3,6 +3,7 @@ module Page.Home.EditAccount exposing
     , EditAccount
     , Response
     , Command(..)
+    , mapCommand
     , runCommand
     , Form
     , initForm
@@ -21,6 +22,7 @@ module Page.Home.EditAccount exposing
 @docs EditAccount
 @docs Response
 @docs Command
+@docs mapCommand
 @docs runCommand
 
 
@@ -43,7 +45,7 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
+import Procedure.Advanced as Procedure exposing (Msg)
 import Procedure.Observer exposing (Observer)
 import Url.Builder as Url
 
@@ -56,13 +58,12 @@ import Url.Builder as Url
 -}
 request :
     EditAccount
-    -> (Result Http.Error Response -> e1)
-    -> Observer m e m1 e1
-    -> Procedure (Command e) m e
-request login toEvent observer =
-    Procedure.push observer <|
-        \_ issue ->
-            RequestEditAccount login (issue << toEvent)
+    -> Observer m m1
+    -> Request cmd m e1 (Command e1) (Result Http.Error Response)
+request editAccount =
+    Procedure.request <|
+        \_ ->
+            RequestEditAccount editAccount
 
 
 {-| Validated request-ready data.
@@ -89,6 +90,15 @@ type Command e
 
 
 {-| -}
+mapCommand : (e1 -> e0) -> Command e1 -> Command e0
+mapCommand f cmd =
+    case cmd of
+        RequestEditAccount editAccount toMsg ->
+            RequestEditAccount editAccount
+                <| Procedure.mapMsg f << toMsg
+
+
+{-| -}
 runCommand : Command e -> Cmd (Msg e)
 runCommand cmd =
     case cmd of
@@ -97,7 +107,7 @@ runCommand cmd =
 
 
 requestEditAccount : EditAccount -> (Result Http.Error Response -> Msg e) -> Cmd (Msg e)
-requestEditAccount (EditAccount login) toEvent =
+requestEditAccount (EditAccount editAccount) toEvent =
     let
         decoder : JD.Decoder Response
         decoder =
@@ -119,7 +129,7 @@ requestEditAccount (EditAccount login) toEvent =
         , body =
             Http.jsonBody <|
                 JE.object
-                    [ ( "id", JE.string login.id )
+                    [ ( "id", JE.string editAccount.id )
                     ]
         , expect =
             Http.expectJson toEvent decoder

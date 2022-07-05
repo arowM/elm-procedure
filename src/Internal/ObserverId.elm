@@ -2,7 +2,6 @@ module Internal.ObserverId exposing
     ( ObserverId
     , init
     , inc
-    , coerce
     , decoder
     , toString
     , toValue
@@ -14,7 +13,6 @@ module Internal.ObserverId exposing
 @docs ObserverId
 @docs init
 @docs inc
-@docs coerce
 @docs decoder
 @docs toString
 @docs toValue
@@ -28,25 +26,19 @@ import Json.Encode as JE exposing (Value)
 
 
 {-| -}
-type ObserverId e
+type ObserverId
     = ObserverId (List SafeInt)
-
-
-{-| -}
-coerce : ObserverId e1 -> ObserverId e0
-coerce (ObserverId ls) =
-    ObserverId ls
 
 
 {-| Initial value.
 -}
-init : ObserverId e
+init : ObserverId
 init =
     ObserverId [ SafeInt.minBound ]
 
 
 {-| -}
-inc : ObserverId e -> ObserverId e
+inc : ObserverId -> ObserverId
 inc (ObserverId ls) =
     case incList ls of
         ( True, new ) ->
@@ -72,7 +64,7 @@ incList =
 
 
 {-| -}
-toString : ObserverId e -> String
+toString : ObserverId -> String
 toString (ObserverId ls) =
     List.map SafeInt.toString ls
         |> String.join "_"
@@ -80,13 +72,13 @@ toString (ObserverId ls) =
 
 
 {-| -}
-decoder : Decoder (ObserverId e)
+decoder : Decoder ObserverId
 decoder =
     JD.list SafeInt.decoder
         |> JD.map ObserverId
 
 
 {-| -}
-toValue : (ObserverId e) -> Value
+toValue : ObserverId -> Value
 toValue (ObserverId ls) =
     JE.list SafeInt.toValue ls

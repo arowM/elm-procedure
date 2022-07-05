@@ -36,7 +36,7 @@ main =
         { init = init
         , procedures =
             \flags url key ->
-                procedures flags url key
+                procedures flags url key Observer.root
                     |> Procedure.mapCmds runCommand
         , view = view
         , subscriptions = subscriptions
@@ -164,12 +164,11 @@ type Command e
 
 {-| Run abstructed Commands as actual application Commands.
 -}
-runCommand : Command e -> Cmd (Msg e)
+runCommand : Command Event -> Cmd (Msg Event)
 runCommand cmd =
     case cmd of
         PageLoginCommand c ->
             PageLogin.runCommand c
-                |> Cmd.map (Procedure.mapMsg PageLoginEvent)
 
         -- PageHomeCommand c ->
         --     PageHome.runCommand c
@@ -179,7 +178,6 @@ runCommand cmd =
 
         SessionCommand c ->
             Session.runCommand c
-                |> Cmd.map (Procedure.mapMsg PageLoginEvent)
 
         PushUrl key url ->
             Nav.pushUrl key url
@@ -193,12 +191,8 @@ runCommand cmd =
 
 
 {-| -}
-procedures : Value -> Url -> Key -> List (Procedure (Command e) m e)
-procedures _ url key =
-    let
-        app =
-            Observer.root
-    in
+procedures : Value -> Url -> Key -> Observer m Memory -> List (Procedure (Command Event) m Event)
+procedures _ url key app =
     [ Procedure.async <| linkControllProcedures key app
     , Procedure.async <| pageControllProcedures url key Nothing app
     ]
@@ -213,7 +207,7 @@ procedures _ url key =
 linkControllProcedures :
     Key
     -> Observer m Memory
-    -> List (Procedure (Command e) m e)
+    -> List (Procedure (Command Event) m Event)
 linkControllProcedures key app =
     [ Procedure.await app <|
         \event _ ->
@@ -222,14 +216,14 @@ linkControllProcedures key app =
                     case urlRequest of
                         Browser.Internal url ->
                             [ Procedure.push app <|
-                                \_ _ ->
+                                \_ ->
                                     Url.toString url
                                         |> PushUrl key
                             ]
 
                         Browser.External href ->
                             [ Procedure.push app <|
-                                \_ _ ->
+                                \_ ->
                                     Load href
                             ]
 
@@ -251,7 +245,7 @@ pageControllProcedures :
     -> Key
     -> Maybe Session
     -> Observer m Memory
-    -> List (Procedure (Command e) m e)
+    -> List (Procedure (Command Event) m Event)
 pageControllProcedures url key msession app =
     case ( Route.fromUrl url, msession ) of
         ( Route.NotFound, _ ) ->
@@ -272,8 +266,9 @@ pageControllProcedures url key msession app =
             ]
 
         ( _, Nothing ) ->
-            [ Session.fetch ReceiveSession app
-                |> Procedure.mapCmd SessionCommand
+            [ Session.fetch app
+                SessionCommand
+                ReceiveSession
             , Procedure.await app <|
                 \event _ ->
                     case event of
@@ -289,9 +284,8 @@ pageControllProcedures url key msession app =
                                     [ Procedure.modify app <|
                                         \m -> { m | page = PageLogin pageLoginCore }
                                     , Procedure.async
-                                        (PageLogin.procedures url key pageLogin
-                                            |> Procedure.mapCmds PageLoginCommand
-                                        )
+                                        (PageLogin.procedures url key pageLogin)
+                                            |> runPageLoginProcedure
                                     , Procedure.await app <|
                                         \event2 appMemory ->
                                             case event2 of
@@ -316,6 +310,7 @@ pageControllProcedures url key msession app =
                             []
             ]
 
+        _ -> Debug.todo ""
         {-
         ( Route.Home, Just session ) ->
             [ Procedure.observe (PageHome.init session) <|
@@ -377,13 +372,29 @@ pageControllProcedures url key msession app =
             -}
 
 
+runPageLoginProcedure : Procedure (PageLogin.Command PageLogin.Event) m PageLogin.Event
+    -> Procedure (Command Event) m Event
+runPageLoginProcedure =
+    Procedure.wrapEvent
+        { wrap = PageLoginEvent
+        , unwrap =
+            \e ->
+                case e of
+                    PageLoginEvent e1 ->
+                        Just e1
+                    _ ->
+                        Nothing
+        }
+        >> Procedure.mapCmd (PageLoginCommand << PageLogin.mapCommand PageLoginEvent)
+
+
 pageLoginObserver :
     ObserverId
-    -> Observer m e Memory Event
-    -> Observer m e PageLogin.Memory PageLogin.Event
+    -> Observer m Memory
+    -> Observer m PageLogin.Memory
 pageLoginObserver oid =
-    Observer.dig
-        { get =
+    Observer.child
+        { mget =
             \m1 ->
                 case m1.page of
                     PageLogin m2 ->
@@ -395,23 +406,12 @@ pageLoginObserver oid =
             \m2 m1 ->
                 case m1.page of
                     PageLogin _ ->
-                        { m1
-                            | page = PageLogin m2
-                        }
+                        { m1 | page = PageLogin m2 }
 
                     _ ->
                         m1
-        , unwrap =
-            \e1 ->
-                case e1 of
-                    PageLoginEvent e2 ->
-                        Just e2
-
-                    _ ->
-                        Nothing
-        , wrap = PageLoginEvent
-        , id = oid
         }
+        oid
 
 
 {-

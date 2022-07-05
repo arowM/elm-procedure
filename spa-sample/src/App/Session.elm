@@ -32,7 +32,7 @@ type alias Session =
 {-| Fetch user information from the server.
 -}
 fetch :
-    Observer m e1 m1
+    Observer m m1
     -> Request cmd m e1 (Command e1) (Result Http.Error Session)
 fetch =
     Procedure.request <|

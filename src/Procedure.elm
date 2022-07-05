@@ -11,6 +11,8 @@ module Procedure exposing
     , application
     , Program
     , Document
+    , Msg
+    , mapMsg
     , modify
     , push
     , await
@@ -29,8 +31,6 @@ module Procedure exposing
     , observeList
     , update
     , init
-    , Msg
-    , mapMsg
     , rootMsg
     , Model
     , memoryState
@@ -110,13 +110,7 @@ The [low level API](#low-level-api) is also available for more advanced use case
 import Browser exposing (Document)
 import Browser.Navigation exposing (Key)
 import Html exposing (Html)
-import Internal
-    exposing
-        ( Msg(..)
-        , Observer
-        , ObserverId
-        , initObserverId
-        )
+import Internal.ObserverId as ObserverId
 import Platform
 import Procedure.Advanced as Advanced exposing (Msg)
 import Procedure.Observer exposing (Observer)
@@ -149,14 +143,16 @@ batch =
 
 {-| -}
 wrapEvent :
-   { wrap : e1 -> e0
-   , unwrap : e0 -> Maybe e1
-   }
-   -> Procedure m e1 -> Procedure m e0
+    { wrap : e1 -> e0
+    , unwrap : e0 -> Maybe e1
+    }
+    -> Procedure m e1
+    -> Procedure m e0
 wrapEvent wrapper proc =
     Advanced.wrapEvent wrapper proc
         |> Advanced.mapCmd
             (Cmd.map (mapMsg wrapper.wrap))
+
 
 
 -- Observer
@@ -164,18 +160,22 @@ wrapEvent wrapper proc =
 
 {-| The _Observer_ is the concept to observe a partial memory. You can issue an event to the Observer in views, and you can modify the partial memory state or capture events for the Observer in procedures.
 -}
-type alias Observer m m1 = Internal.Observer m m1
+type alias Observer m m1 =
+    Advanced.Observer m m1
 
 
 {-| ID for the Observer.
 -}
-type alias ObserverId = Internal.ObserverId
+type alias ObserverId =
+    Advanced.ObserverId
 
 
 {-| Issue an event to the Observer.
 -}
 issue : ObserverId -> e -> Msg e
-issue = Internal.Msg
+issue =
+    Advanced.issue
+
 
 
 -- Entry point
@@ -263,7 +263,7 @@ You can use it for building your own `Browser.application`:
 -}
 rootMsg : event -> Msg event
 rootMsg =
-    Msg initObserverId
+    issue ObserverId.init
 
 
 {-| An alias for [Platform.Program](https://package.elm-lang.org/packages/elm/core/latest/Platform#Program).
@@ -542,16 +542,17 @@ protected =
     Advanced.protected
 
 
+
 -- {-| Aquire a resource, do some work with it, and then release the resource.
--- 
+--
 --   - aquire: Evaluated immediately.
 --       - arg1: new `ObserverId` for the aquired resource `r`
 --       - arg2: current memory state
 --       - returns: ( new memory state, aquired resource )
 --   - release: Evaluated when `Procedure`s returned by the callback function, provided as the third argument, are completed or cancelled by `race` or `doUntil`.
--- 
+--
 -- If the given `Observer` has already expired, it does nothing and just skipped.
--- 
+--
 -- -}
 -- withResource :
 --     Observer m m1
@@ -569,9 +570,6 @@ protected =
 --                 c.release r m1
 --                     |> Tuple.mapSecond List.singleton
 --         }
-
-
-
 -- Helper procedures
 
 
@@ -596,12 +594,14 @@ withMaybe =
     Advanced.withMaybe
 
 
+
 -- Local procedures
+
 
 {-| Helper function to issue an request via HTTP, port, etc.
 An example use case can be found on `App.Session` module in [spa-sample](https://github.com/arowM/elm-procedure/tree/main/spa-sample).
 -}
-request : (( ObserverId, m1 ) -> (a -> Msg e) -> (Cmd (Msg e))) -> Observer m m1 -> Request m e a
+request : (( ObserverId, m1 ) -> (a -> Msg e) -> Cmd (Msg e)) -> Observer m m1 -> Request m e a
 request f observer =
     Advanced.request f observer identity
 

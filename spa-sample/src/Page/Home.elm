@@ -2,9 +2,9 @@ module Page.Home exposing
     ( Command(..)
     , Event
     , Memory
-    , Procedures
     , init
     , procedures
+    , mapCommand
     , runCommand
     , view
     )
@@ -17,25 +17,24 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
+import Procedure.Advanced as Procedure exposing (Msg, ObserverId, Procedure)
 import Procedure.Observer as Observer exposing (Observer)
-import Procedure.ObserverId exposing (ObserverId)
-import Procedure.VPack as VPack exposing (VPack)
 import Widget.Toast as Toast
 
 
 {-| -}
 type alias Memory =
-    { pageView : MainPageMemory
+    { editAccountForm : Maybe ( ObserverId, EditAccountFormMemory )
     , session : Session
     , toast : Toast.Memory
     }
 
 
+
 {-| -}
 init : Session -> Memory
 init session =
-    { pageView = initMainPage
+    { editAccountForm = Nothing
     , session = session
     , toast = Toast.init
     }
@@ -44,7 +43,11 @@ init session =
 {-| -}
 type Event
     = ToastEvent Toast.Event
-    | MainPageEvent MainPageEvent
+    | ClickShowEditAccountForm
+    | ChangeEditAccountFormAccountId String
+    | ClickSubmitEditAccount
+    | ClickCancelEditAccount
+    | ReceiveEditAccountResp (Result Http.Error EditAccount.Response)
 
 
 
@@ -52,67 +55,10 @@ type Event
 
 
 {-| -}
-view :
-    VPack e Memory Event
-    -> Html (Msg e)
-view page =
-    let
-        param =
-            VPack.memory page
-
-        mainPage =
-            VPack.inherit
-                { get = .pageView
-                , wrap = MainPageEvent
-                }
-                page
-
-        toast =
-            VPack.inherit
-                { get = .toast
-                , wrap = ToastEvent
-                }
-                page
-    in
+view : (ObserverId, Memory) -> Html (Msg Event)
+view (oid, param) =
     Html.div
         [ localClass "page"
-        ]
-        [ mainPageView param.session mainPage
-        , Toast.view toast
-        ]
-
-
-
--- -- MainPage
-
-
-type alias MainPageMemory =
-    { editAccountForm : Maybe ( ObserverId, EditAccountFormMemory )
-    }
-
-
-initMainPage : MainPageMemory
-initMainPage =
-    { editAccountForm = Nothing
-    }
-
-
-type MainPageEvent
-    = EditAccountFormEvent EditAccountFormEvent
-    | ClickShowEditAccountForm
-
-
-mainPageView :
-    Session
-    -> VPack e MainPageMemory MainPageEvent
-    -> Html (Msg e)
-mainPageView session mainPage =
-    let
-        param =
-            VPack.memory mainPage
-    in
-    Html.div
-        [ localClass "dashboard"
         ]
         [ case param.editAccountForm of
             Nothing ->
@@ -147,7 +93,10 @@ mainPageView session mainPage =
                 [ Html.text "Users"
                 ]
             ]
+        , Toast.view param.toast
+            |> Html.map (Procedure.mapMsg ToastEvent)
         ]
+
 
 
 -- -- EditAccountForm
@@ -170,20 +119,11 @@ initEditAccountForm =
     }
 
 
-type EditAccountFormEvent
-    = ChangeAccountId String
-    | ClickSubmitAccount
-    | ClickCancel
-    | ReceiveEditAccountResp (Result Http.Error EditAccount.Response)
 
-
-editAccountFormView :
-    VPack e EditAccountFormMemory EditAccountFormEvent
-    -> Html (Msg e)
-editAccountFormView editAccountForm =
+editAccountFormView : (ObserverId, EditAccountFormMemory) -> Html (Msg Event)
+editAccountFormView (oid, param) =
     let
-        param =
-            VPack.memory editAccountForm
+        issue = Procedure.issue oid
 
         errors =
             EditAccount.toFormErrors param.form
@@ -194,15 +134,14 @@ editAccountFormView editAccountForm =
             (param.showError && not (List.isEmpty errors))
         ]
         [ Html.node "label"
-            [ localClass "editAccountForm_idLabel"
+            [ localClass "editAccountForm_label-id"
             ]
             [ Html.text "New Account ID:"
             , Html.node "input"
                 [ Mixin.attribute "type" "text"
                 , Mixin.attribute "value" param.form.id
                 , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onChange
-                    (VPack.issue editAccountForm << ChangeAccountId)
+                , Events.onChange (issue << ChangeEditAccountFormAccountId)
                 ]
                 []
             ]
@@ -211,17 +150,15 @@ editAccountFormView editAccountForm =
             ]
             [ Html.node "button"
                 [ localClass "editAccountForm_buttonGroup_button-cancel"
-                , Events.onClick
-                    (VPack.issue editAccountForm ClickCancel)
                 , Mixin.boolAttribute "disabled" param.isBusy
+                , Events.onClick (issue ClickCancelEditAccount)
                 ]
                 [ Html.text "Cancel"
                 ]
             , Html.node "button"
                 [ localClass "editAccountForm_buttonGroup_button-submit"
-                , Events.onClick
-                    (VPack.issue editAccountForm ClickSubmitAccount)
                 , Mixin.boolAttribute "disabled" param.isBusy
+                , Events.onClick (issue ClickSubmitEditAccount)
                 ]
                 [ Html.text "Save"
                 ]

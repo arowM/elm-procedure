@@ -31,11 +31,11 @@ type alias Memory =
 
 
 {-| -}
-init : Memory
-init =
+init : ObserverId Event -> Memory
+init oid =
     { loginForm = initLoginForm
     , msession = Nothing
-    , toast = Toast.init
+    , toast = Toast.init (ObserverId.child ToastEvent oid)
     }
 
 
@@ -53,7 +53,7 @@ type Event
 
 
 {-| -}
-view : (ObserverId, Memory) -> Html (Msg Event)
+view : (ObserverId Event, Memory) -> Html (Msg Event)
 view (oid, param) =
     Html.div
         [ localClass "page"
@@ -86,7 +86,7 @@ initLoginForm =
     }
 
 
-loginFormView : (ObserverId, LoginFormMemory) -> Html (Msg Event)
+loginFormView : (ObserverId Event, LoginFormMemory) -> Html (Msg Event)
 loginFormView (oid, param) =
     let
         issue = Procedure.issue oid
@@ -214,7 +214,7 @@ mapCommand f cmd =
 procedures :
     Url
     -> Key
-    -> Observer m Memory
+    -> Observer m Event Memory
     -> List (Procedure (Command Event) m Event)
 procedures url key page =
     [ Procedure.async <|
@@ -225,18 +225,18 @@ procedures url key page =
 loginFormProcedures :
     Url
     -> Key
-    -> Observer m Memory
+    -> Observer m Event Memory
     -> List (Procedure (Command Event) m Event)
 loginFormProcedures url key page =
     let
-        loginForm : Observer m LoginFormMemory
+        loginForm : Observer m Event LoginFormMemory
         loginForm =
             Observer.inherit
                 { get = .loginForm
                 , set = \a m -> { m | loginForm = a }
                 }
                 page
-        form : Observer m Login.Form
+        form : Observer m Event Login.Form
         form =
             Observer.inherit
                 { get = .form
@@ -274,11 +274,11 @@ submitLoginProcedures :
     Url
     -> Key
     -> Login.Form
-    -> Observer m Memory
+    -> Observer m Event Memory
     -> List (Procedure (Command Event) m Event)
 submitLoginProcedures url key formState page =
     let
-        loginForm : Observer m LoginFormMemory
+        loginForm : Observer m Event LoginFormMemory
         loginForm =
             Observer.inherit
                 { get = .loginForm

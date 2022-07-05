@@ -3,7 +3,6 @@ module SampleApp exposing
     , Event(..)
     , Memory
     , Page(..)
-    , Procedures
     , init
     , main
     , procedures
@@ -16,9 +15,8 @@ import Browser.Navigation as Nav exposing (Key)
 import Http
 import Json.Encode exposing (Value)
 import Mixin.Html as Html exposing (Html)
-import Page.Catalog as PageCatalog
 -- import Page.Home as PageHome
--- import Page.Login as PageLogin
+import Page.Login as PageLogin
 -- import Page.Users as PageUsers
 import Procedure as AppProcedure
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
@@ -70,7 +68,6 @@ type Page
     = PageLoading
     | PageNotFound
     | PageLogin ( ObserverId, PageLogin.Memory )
-    | PageCatalog ( ObserverId, PageCatalog.Memory )
     -- | PageHome ( ObserverId, PageHome.Memory )
     -- | PageUsers ( ObserverId, PageUsers.Memory )
 
@@ -90,10 +87,6 @@ subscriptions _ =
 
 view : Memory -> Document (Msg Event)
 view memory =
-    let
-        app =
-            VPack.root memory
-    in
     { title = "Sample App"
     , body =
         [ case memory.page of
@@ -104,18 +97,8 @@ view memory =
                 pageNotFoundView
 
             PageLogin pageLogin ->
-                VPack.child
-                    app
-                    PageLoginEvent
-                    (\_ -> PageLogin.view)
-                    pageLogin
-
-            PageCatalog pageCatalog ->
-                VPack.child
-                    app
-                    PageCatalogEvent
-                    (\_ -> PageCatalog.view)
-                    pageCatalog
+                PageLogin.view pageLogin
+                    |> Html.map (Procedure.mapMsg PageLoginEvent)
 
             {-
             PageHome pageHome ->
@@ -159,16 +142,10 @@ pageNotFoundView =
 
 
 {-| -}
-type alias Procedures m e =
-    List (Procedure (Command e) m e)
-
-
-{-| -}
 type Event
     = LinkClicked Browser.UrlRequest
     | UrlChanged Url
     | PageLoginEvent PageLogin.Event
-    | PageCatalogEvent PageCatalog.Event
     -- | PageHomeEvent PageHome.Event
     -- | PageUsersEvent PageUsers.Event
     | ReceiveSession (Result Http.Error Session)
@@ -178,7 +155,6 @@ type Event
 -}
 type Command e
     = PageLoginCommand (PageLogin.Command e)
-    | PageCatalogCommand (PageCatalog.Command e)
     -- | PageHomeCommand (PageHome.Command e)
     -- | PageUsersCommand (PageUsers.Command e)
     | SessionCommand (Session.Command e)
@@ -193,9 +169,7 @@ runCommand cmd =
     case cmd of
         PageLoginCommand c ->
             PageLogin.runCommand c
-
-        PageCatalogCommand c ->
-            PageCatalog.runCommand c
+                |> Cmd.map (Procedure.mapMsg PageLoginEvent)
 
         -- PageHomeCommand c ->
         --     PageHome.runCommand c
@@ -205,6 +179,7 @@ runCommand cmd =
 
         SessionCommand c ->
             Session.runCommand c
+                |> Cmd.map (Procedure.mapMsg PageLoginEvent)
 
         PushUrl key url ->
             Nav.pushUrl key url
@@ -218,7 +193,7 @@ runCommand cmd =
 
 
 {-| -}
-procedures : Value -> Url -> Key -> Procedures Memory Event
+procedures : Value -> Url -> Key -> List (Procedure (Command e) m e)
 procedures _ url key =
     let
         app =
@@ -237,8 +212,8 @@ procedures _ url key =
 -}
 linkControllProcedures :
     Key
-    -> Observer m e Memory Event
-    -> Procedures m e
+    -> Observer m Memory
+    -> List (Procedure (Command e) m e)
 linkControllProcedures key app =
     [ Procedure.await app <|
         \event _ ->
@@ -275,8 +250,8 @@ pageControllProcedures :
     Url
     -> Key
     -> Maybe Session
-    -> Observer m e Memory Event
-    -> Procedures m e
+    -> Observer m Memory
+    -> List (Procedure (Command e) m e)
 pageControllProcedures url key msession app =
     case ( Route.fromUrl url, msession ) of
         ( Route.NotFound, _ ) ->
@@ -294,35 +269,6 @@ pageControllProcedures url key msession app =
 
                         _ ->
                             []
-            ]
-
-        ( Route.Catalog, _ ) ->
-            [ Procedure.observe PageCatalog.init <|
-                \pageCatalogCore ->
-                    let
-                        pageCatalog =
-                            pageCatalogObserver
-                                (Tuple.first pageCatalogCore)
-                                app
-                    in
-                    [ Procedure.modify app <|
-                        \m -> { m | page = PageCatalog pageCatalogCore }
-                    , Procedure.async
-                        (PageCatalog.procedures key pageCatalog
-                            |> Procedure.mapCmds PageCatalogCommand
-                        )
-                    , Procedure.await app <|
-                        \event _ ->
-                            case event of
-                                UrlChanged newUrl ->
-                                    [ Procedure.jump app <|
-                                        \_ ->
-                                            pageControllProcedures newUrl key msession app
-                                    ]
-
-                                _ ->
-                                    []
-                    ]
             ]
 
         ( _, Nothing ) ->
@@ -468,43 +414,6 @@ pageLoginObserver oid =
         }
 
 
-pageCatalogObserver :
-    ObserverId
-    -> Observer m e Memory Event
-    -> Observer m e PageCatalog.Memory PageCatalog.Event
-pageCatalogObserver oid =
-    Observer.dig
-        { get =
-            \m1 ->
-                case m1.page of
-                    PageCatalog m2 ->
-                        Just m2
-
-                    _ ->
-                        Nothing
-        , set =
-            \m2 m1 ->
-                case m1.page of
-                    PageCatalog _ ->
-                        { m1
-                            | page = PageCatalog m2
-                        }
-
-                    _ ->
-                        m1
-        , unwrap =
-            \e1 ->
-                case e1 of
-                    PageCatalogEvent e2 ->
-                        Just e2
-
-                    _ ->
-                        Nothing
-        , wrap = PageCatalogEvent
-        , id = oid
-        }
-
-
 {-
 pageHomeObserver :
     ObserverId
@@ -592,9 +501,6 @@ extractSession memory =
 
         PageLogin ( _, { msession } ) ->
             msession
-
-        PageCatalog _ ->
-            Nothing
 
         -- PageHome ( _, { session } ) ->
         --     Just session

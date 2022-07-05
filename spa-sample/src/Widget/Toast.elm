@@ -38,7 +38,6 @@ module Widget.Toast exposing
 -}
 
 import App.ZIndex as ZIndex
-import Html.Attributes exposing (target)
 import Http
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
@@ -74,11 +73,11 @@ toastDisappearingDuration =
 
 {-| -}
 type Memory
-    = Memory Memory_
+    = Memory (ObserverId Event, Memory_)
 
 
 type alias Memory_ =
-    { items : List ( ObserverId, ToastItemMemory )
+    { items : List ( ObserverId Event, ToastItemMemory )
     }
 
 
@@ -98,11 +97,13 @@ messageTypeCode type_ =
 
 
 {-| -}
-init : Memory
-init =
+init : ObserverId Event -> Memory
+init oid =
     Memory
-        { items = []
-        }
+        ( oid
+        , { items = []
+          }
+        )
 
 
 
@@ -142,19 +143,19 @@ runCommand cmd =
 
 {-| Show warning message.
 -}
-pushWarning : String -> Observer m Memory -> Procedure (Command Event) m Event
+pushWarning : String -> Observer m Event Memory -> Procedure (Command Event) m Event
 pushWarning =
     pushItem WarningMessage
 
 
 {-| Show error message.
 -}
-pushError : String -> Observer m Memory -> Procedure (Command Event) m Event
+pushError : String -> Observer m Event Memory -> Procedure (Command Event) m Event
 pushError =
     pushItem ErrorMessage
 
 
-pushItem : MessageType -> String -> Observer m Memory -> Procedure (Command Event) m Event
+pushItem : MessageType -> String -> Observer m Event Memory -> Procedure (Command Event) m Event
 pushItem type_ str widget =
     let
         newItem =
@@ -182,15 +183,15 @@ pushItem type_ str widget =
 
 
 toastItemObserver :
-    ObserverId
-    -> Observer m Memory
-    -> Observer m ToastItemMemory
-toastItemObserver target =
-    Observer.digListElem
-        { id = target
-        , get = \(Memory m) -> m.items
+    ObserverId Event
+    -> Observer m Event Memory
+    -> Observer m Event ToastItemMemory
+toastItemObserver expected =
+    Observer.listItem
+        { get = \(Memory m) -> m.items
         , set = \items (Memory m) -> Memory { m | items = items }
         }
+        expected
 
 
 
@@ -205,9 +206,9 @@ type alias ToastItemMemory =
 
 
 toastItemProcedures :
-    ObserverId
-    -> Observer m Memory
-    -> Observer m ToastItemMemory
+    ObserverId Event
+    -> Observer m Event Memory
+    -> Observer m Event ToastItemMemory
     -> List (Procedure (Command Event) m Event)
 toastItemProcedures oid widget toastItem =
     [ Procedure.race
@@ -236,7 +237,7 @@ toastItemProcedures oid widget toastItem =
 
 sleep :
     Float
-    -> Observer m Memory
+    -> Observer m Event ToastItemMemory
     -> Procedure (Command Event) m Event
 sleep msec =
     Procedure.protected <|
@@ -263,7 +264,7 @@ sleep msec =
 -}
 pushHttpError :
     Http.Error
-    -> Observer m Memory
+    -> Observer m Event Memory
     -> Procedure (Command Event) m Event
 pushHttpError err widget =
     case err of
@@ -303,7 +304,7 @@ view (Memory param) =
 
 
 toastItemView :
-    ( ObserverId, ToastItemMemory )
+    ( ObserverId Event, ToastItemMemory )
     -> ( String, Html (Msg Event) )
 toastItemView ( oid, param ) =
     ( ObserverId.toString oid

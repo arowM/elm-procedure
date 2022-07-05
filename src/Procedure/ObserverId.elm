@@ -1,5 +1,6 @@
 module Procedure.ObserverId exposing
     ( ObserverId
+    , child
     , decoder
     , toString
     , toValue
@@ -8,43 +9,42 @@ module Procedure.ObserverId exposing
 {-|
 
 @docs ObserverId
+@docs child
 @docs decoder
 @docs toString
 @docs toValue
 
 -}
 
-import Internal exposing (ObserverId)
-import Internal.SafeInt as SafeInt
-import Json.Decode as JD exposing (Decoder)
-import Json.Encode as JE exposing (Value)
+import Internal.ObserverId as Internal
+import Json.Decode exposing (Decoder)
+import Json.Encode exposing (Value)
 
 
 {-| -}
-type alias ObserverId =
-    Internal.ObserverId
+type alias ObserverId e =
+    Internal.ObserverId e
 
+
+{-| Make Observer ID to observe child Events.
+-}
+child : (e1 -> e0) -> ObserverId e0 -> ObserverId e1
+child _ = Internal.coerce
 
 {-| Convert into `String`.
 Different `ObserverId`s are supposed to be converted to different strings, and the same `ObserverId`s to the same string.
 -}
-toString : ObserverId -> String
-toString (Internal.ObserverId ls) =
-    List.map SafeInt.toString ls
-        |> String.join "_"
-        |> (\str -> "tid_" ++ str)
+toString : ObserverId e -> String
+toString = Internal.toString
 
 
 {-| JSON decoder.
 -}
-decoder : Decoder ObserverId
-decoder =
-    JD.list SafeInt.decoder
-        |> JD.map Internal.ObserverId
+decoder : Decoder (ObserverId e)
+decoder = Internal.decoder
 
 
 {-| Convert into JSON `Value`.
 -}
-toValue : ObserverId -> Value
-toValue (Internal.ObserverId ls) =
-    JE.list SafeInt.toValue ls
+toValue : (ObserverId e) -> Value
+toValue = Internal.toValue

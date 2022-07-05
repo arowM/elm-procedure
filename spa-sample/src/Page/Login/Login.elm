@@ -57,12 +57,11 @@ import Url.Builder as Url
 -}
 request :
     Login
-    -> Observer m m1
-    -> Request cmd m e (Command e) (Result Http.Error Response)
+    -> Observer m e1 m1
+    -> Request cmd m e1 (Command e1) (Result Http.Error Response)
 request login =
     Procedure.request <|
-        \_ issue ->
-            RequestLogin login issue
+        \_ -> RequestLogin login
 
 
 {-| Validated request-ready data.

@@ -91,14 +91,8 @@ module Procedure.Advanced exposing
 
 -}
 
-import Internal
-    exposing
-        ( Msg(..)
-        , Observer(..)
-        , ObserverId
-        , initObserverId
-        )
-import Internal.SafeInt as SafeInt exposing (SafeInt)
+import Internal.Observer as Observer
+import Internal.ObserverId as ObserverId
 
 
 
@@ -107,18 +101,18 @@ import Internal.SafeInt as SafeInt exposing (SafeInt)
 
 {-| Same as `Procedure.Observer`.
 -}
-type alias Observer m m1 = Internal.Observer m m1
+type alias Observer m e1 m1 = Observer.Observer m e1 m1
 
 
 {-| Same as `Procedure.ObserverId`.
 -}
-type alias ObserverId = Internal.ObserverId
+type alias ObserverId e = ObserverId.ObserverId e
 
 
 {-| Same as `Procedure.issue`.
 -}
-issue : ObserverId -> e -> Msg e
-issue = Internal.Msg
+issue : ObserverId e -> e -> Msg e
+issue = Msg
 
 
 -- Procedure
@@ -140,7 +134,7 @@ type ProcedureItem cmd memory event
       -- The parent thread keep alive if the new thread alives.
     | Async (List (ProcedureItem cmd memory event))
     | Observe
-        (ObserverId
+        (ObserverId event
          -> memory
          ->
             ( memory -- new memory state after resource assignment.
@@ -149,7 +143,7 @@ type ProcedureItem cmd memory event
               -> ( memory, List cmd ) -- Evaluated when the second element of this tuple ends.
             )
         )
-    | Protected (ObserverId -> List (ProcedureItem cmd memory event))
+    | Protected (ObserverId event -> List (ProcedureItem cmd memory event))
     | Sync (List (List (ProcedureItem cmd memory event)))
     | Race (List (List (ProcedureItem cmd memory event)))
       -- Ignore subsequent `Procedure`s and run given `Procedure`s in current thread.
@@ -199,7 +193,7 @@ wrapEvent_ wrapper item =
                     wrapper.unwrap e0
                         |> Maybe.andThen
                             (\e1 ->
-                                g (Msg oid e1) m
+                                g (Msg (ObserverId.coerce oid) e1) m
                                     |> Maybe.map
                                         (List.map (wrapEvent_ wrapper))
                             )
@@ -213,7 +207,7 @@ wrapEvent_ wrapper item =
                 \oid m ->
                     let
                         ( mNew, ps, h ) =
-                            g oid m
+                            g (ObserverId.coerce oid) m
                     in
                     ( mNew
                     , List.map (wrapEvent_ wrapper) ps
@@ -223,7 +217,7 @@ wrapEvent_ wrapper item =
         Protected g ->
             Protected <|
                 \oid ->
-                    g oid
+                    g (ObserverId.coerce oid)
                         |> List.map (wrapEvent_ wrapper)
 
         Sync pss ->
@@ -328,50 +322,50 @@ mapCmd_ f item =
 
 {-| Just like `Procedure.modify`.
 -}
-modify : Observer m m1 -> (m1 -> m1) -> Procedure c m e
-modify (Observer { mget, set }) f =
+modify : Observer m e1 m1 -> (m1 -> m1) -> Procedure c m e1
+modify o f =
     Procedure
         [ Do <|
             \m0 ->
-                case mget m0 of
+                case Observer.mget o m0 of
                     Nothing ->
                         ( m0, [] )
 
-                    Just m1 ->
-                        ( set (f m1) m0, [] )
+                    Just (oid1, m1) ->
+                        ( Observer.set o (oid1, f m1) m0, [] )
         ]
 
 
 {-| Just like `Procedure.push`.
 -}
-push : Observer m m1 -> (( ObserverId, m1 ) -> cmd) -> Procedure cmd m e
-push (Observer { mget, id }) f =
+push : Observer m e1 m1 -> (( ObserverId e1, m1 ) -> cmd) -> Procedure cmd m e1
+push o f =
     Procedure
         [ Do <|
             \m0 ->
-                case mget m0 of
+                case Observer.mget o m0 of
                     Nothing ->
                         ( m0, [] )
 
-                    Just m1 ->
-                        ( m0, [ f ( id, m1 ) ] )
+                    Just ( oid1, m1) ->
+                        ( m0, [ f ( oid1, m1 ) ] )
         ]
 
 
 {-| Just like `Procedure.await`.
 -}
 await :
-    Observer m m1
-    -> (e -> m1 -> List (Procedure c m e))
-    -> Procedure c m e
-await (Observer { mget, id }) f =
+    Observer m e1 m1
+    -> (e1 -> m1 -> List (Procedure c m e1))
+    -> Procedure c m e1
+await o f =
     Procedure
         [ Await
             (\(Msg targetId e0) m0 ->
-                mget m0
+                Observer.mget o m0
                     |> Maybe.andThen
-                        (\m1 ->
-                            if targetId == id then
+                        (\(oid1, m1) ->
+                            if targetId == oid1 then
                                 case f e0 m1 of
                                     [] ->
                                         Nothing
@@ -406,17 +400,16 @@ async ps =
 {-| Just like `Procedure.protected`.
 -}
 protected :
-    (Observer m m1 -> List (Procedure c m e))
-    -> Observer m m1
-    -> Procedure c m e
-protected f (Observer observer) =
+    (Observer m e1 m1 -> List (Procedure c m e1))
+    -> Observer m e1 m1
+    -> Procedure c m e1
+protected f o =
     Procedure
         [ Protected <|
-            \priv ->
+            \expected ->
                 let
                     (Procedure items) =
-                        Observer
-                            { observer | id = priv }
+                        Observer.setExpect expected o
                             |> f
                             |> batch
                 in
@@ -493,18 +486,18 @@ quit =
 {-| Just like `Procedure.jump`.
 -}
 jump :
-    Observer m m1
-    -> (m1 -> List (Procedure c m e))
-    -> Procedure c m e
-jump (Observer { mget }) f =
+    Observer m e1 m1
+    -> (m1 -> List (Procedure c m e1))
+    -> Procedure c m e1
+jump o f =
     Procedure
         [ Jump <|
             \m0 ->
-                case mget m0 of
+                case Observer.mget o m0 of
                     Nothing ->
                         []
 
-                    Just m1 ->
+                    Just (_, m1) ->
                         let
                             (Procedure items) =
                                 batch (f m1)
@@ -600,7 +593,7 @@ withMaybe ma f =
 
 {-| Just like `Procedure.request`.
 -}
-request : (( ObserverId, m1 ) -> (a -> Msg e) -> cmd1) -> Observer m m1 -> Request cmd m e cmd1 a
+request : (( ObserverId e1, m1 ) -> (a -> Msg e1) -> cmd1) -> Observer m e1 m1 -> Request cmd m e1 cmd1 a
 request f observer toCmd toEvent =
     push observer <| \(id, state) ->
         toCmd <| f (id, state) (toEvent >> issue id)
@@ -618,16 +611,16 @@ type alias Request cmd m e cmd1 a =
 {-| Just like `Procedure.observe`.
 -}
 observe :
-    r
-    -> (( ObserverId, r ) -> List (Procedure c m e))
-    -> Procedure c m e
+    (ObserverId e1 -> r)
+    -> (( ObserverId e1, r ) -> List (Procedure c m e1))
+    -> Procedure c m e1
 observe r f =
     Procedure
         [ Protected <|
             \priv ->
                 let
                     (Procedure ps) =
-                        f ( priv, r ) |> batch
+                        f ( priv, r priv ) |> batch
                 in
                 ps
         ]
@@ -636,9 +629,9 @@ observe r f =
 {-| Just like `Procedure.observeList`.
 -}
 observeList :
-    List r
-    -> (List ( ObserverId, r ) -> List (Procedure c m e))
-    -> Procedure c m e
+    List (ObserverId e1 -> r)
+    -> (List ( ObserverId e1, r ) -> List (Procedure c m e1))
+    -> Procedure c m e1
 observeList rs f =
     List.foldr
         (\r acc ps ->
@@ -656,13 +649,13 @@ observeList rs f =
 type Model cmd memory event
     = Thread
         -- New thread state after the evaluation.
-        { newState : ThreadState memory
+        { newState : ThreadState event memory
 
         -- Side effects caused by the evaluation.
         , cmds : List cmd
 
         -- New thread to evaluate next time.
-        , next : Msg event -> ThreadState memory -> Thread cmd memory event
+        , next : Msg event -> ThreadState event memory -> Thread cmd memory event
         }
 
 
@@ -703,7 +696,7 @@ init initialMemory procs =
             toThread <|
                 fromProcedure
                     { memory = initialMemory
-                    , nextObserverId = incObserverId initObserverId
+                    , nextObserverId = ObserverId.inc ObserverId.init
                     }
                     items
     in
@@ -712,9 +705,9 @@ init initialMemory procs =
 
 {-| State to evaluate a thread.
 -}
-type alias ThreadState memory =
+type alias ThreadState e memory =
     { memory : memory
-    , nextObserverId : ObserverId
+    , nextObserverId : ObserverId e
     }
 
 
@@ -722,11 +715,11 @@ type alias ThreadState memory =
 -}
 type FromProcedure cmd memory event
     = FromProcedure
-        { newState : ThreadState memory
+        { newState : ThreadState event memory
         , cmds : List cmd
         , next :
             Maybe
-                { procedure : Msg event -> ThreadState memory -> FromProcedure cmd memory event
+                { procedure : Msg event -> ThreadState event memory -> FromProcedure cmd memory event
                 , onKilled : memory -> ( memory, List cmd )
                 }
         }
@@ -750,7 +743,7 @@ toThread (FromProcedure fp) =
                 }
 
 
-endOfThread : Msg event -> ThreadState memory -> Thread cmd memory event
+endOfThread : Msg event -> ThreadState event memory -> Thread cmd memory event
 endOfThread _ state =
     Thread
         { newState = state
@@ -759,7 +752,7 @@ endOfThread _ state =
         }
 
 
-fromProcedure : ThreadState memory -> List (ProcedureItem cmd memory event) -> FromProcedure cmd memory event
+fromProcedure : ThreadState event memory -> List (ProcedureItem cmd memory event) -> FromProcedure cmd memory event
 fromProcedure state procs =
     case procs of
         [] ->
@@ -811,7 +804,7 @@ fromProcedure state procs =
 
                 state1 =
                     { memory = memory1
-                    , nextObserverId = incObserverId state.nextObserverId
+                    , nextObserverId = ObserverId.inc state.nextObserverId
                     }
             in
             fromProcedure state1 ps1
@@ -825,7 +818,7 @@ fromProcedure state procs =
 
                 state1 =
                     { state
-                        | nextObserverId = incObserverId state.nextObserverId
+                        | nextObserverId = ObserverId.inc state.nextObserverId
                     }
             in
             fromProcedure state1 (ps1 ++ ps2)
@@ -845,7 +838,7 @@ fromProcedure state procs =
             endOfProcedure state
 
 
-endOfProcedure : ThreadState memory -> FromProcedure cmd memory event
+endOfProcedure : ThreadState event memory -> FromProcedure cmd memory event
 endOfProcedure s =
     FromProcedure
         { newState = s
@@ -902,7 +895,7 @@ mergeUpdates f g memory =
 
 {-| Run a function after the given `FromProcedure` ends.
 -}
-andThen : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andThen : (ThreadState event memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andThen f (FromProcedure fp) =
     case fp.next of
         Nothing ->
@@ -927,7 +920,7 @@ andThen f (FromProcedure fp) =
                 }
 
 
-andAsync : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andAsync : (ThreadState event memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andAsync f (FromProcedure fp1) =
     let
         (FromProcedure fp2) =
@@ -966,7 +959,7 @@ andAsync f (FromProcedure fp1) =
 
 {-| Merge dependent procedures for `Sync` into one procedure.
 -}
-fromProcDeps : ThreadState memory -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
+fromProcDeps : ThreadState event memory -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
 fromProcDeps state ps =
     List.foldl
         (\p acc ->
@@ -982,7 +975,7 @@ fromProcDeps state ps =
         ps
 
 
-andNextDep : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andNextDep : (ThreadState event memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andNextDep =
     andAsync
 
@@ -990,7 +983,7 @@ andNextDep =
 {-| Merge dependent procedures for `Race` into one procedure.
 If given empty list, it skips to next `Procedure`.
 -}
-fromProcRaceDeps : ThreadState memory -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
+fromProcRaceDeps : ThreadState event memory -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
 fromProcRaceDeps state ps =
     case ps of
         [] ->
@@ -1010,7 +1003,7 @@ fromProcRaceDeps state ps =
                 qs
 
 
-andNextRaceDep : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andNextRaceDep : (ThreadState event memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andNextRaceDep f (FromProcedure fp1) =
     let
         (FromProcedure fp2) =
@@ -1076,42 +1069,12 @@ andNextRaceDep f (FromProcedure fp1) =
 
 {-| Same as `Procedure.Msg`.
 -}
-type alias Msg event =
-    Internal.Msg event
+type Msg event
+    = Msg (ObserverId event) event
 
 
 {-| Same as `Procedure.mapMsg`.
 -}
 mapMsg : (a -> b) -> Msg a -> Msg b
 mapMsg f (Msg id a) =
-    Msg id (f a)
-
-
-
--- ObserverId
-
-
-{-| Next `ObserverId`.
--}
-incObserverId : ObserverId -> ObserverId
-incObserverId (Internal.ObserverId ls) =
-    case incList ls of
-        ( True, new ) ->
-            Internal.ObserverId <| SafeInt.minBound :: new
-
-        ( False, new ) ->
-            Internal.ObserverId new
-
-
-incList : List SafeInt -> ( Bool, List SafeInt )
-incList =
-    List.foldr
-        (\a ( carry, ls ) ->
-            if carry then
-                SafeInt.inc a
-                    |> Tuple.mapSecond (\new -> new :: ls)
-
-            else
-                ( False, a :: ls )
-        )
-        ( True, [] )
+    Msg (ObserverId.coerce id) (f a)

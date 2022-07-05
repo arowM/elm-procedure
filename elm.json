@@ -5,7 +5,6 @@
     "license": "MIT",
     "version": "1.0.0",
     "exposed-modules": [
-        "Procedure",
         "Procedure.Advanced",
         "Procedure.Observer",
         "Procedure.ObserverId"

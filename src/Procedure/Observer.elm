@@ -2,8 +2,8 @@ module Procedure.Observer exposing
     ( Observer
     , root
     , inherit
-    , dig
-    , digListElem
+    , child
+    , listItem
     )
 
 {-|
@@ -14,119 +14,116 @@ module Procedure.Observer exposing
 @docs Observer
 @docs root
 @docs inherit
-@docs dig
-@docs digListElem
+@docs child
+@docs listItem
 
 -}
 
-import Internal
-    exposing
-        ( Observer
-        , ObserverId
-        , initObserverId
-        )
+import Internal.Observer as Observer
+import Internal.ObserverId as ObserverId exposing (ObserverId)
 
 
 {-| -}
-type alias Observer m m1 =
-    Internal.Observer m m1
+type alias Observer m e m1 =
+    Observer.Observer m e m1
 
 
 {-| Root Observer, from which you can _dig_ up some interesting Observers.
 -}
-root : Observer m m
+root : Observer m e m
 root =
-    Internal.Observer
-        { mget = Just
-        , set = \x _ -> x
-        , id = initObserverId
+    Observer.fromRecord
+        { mget = \m0 -> Just (ObserverId.init, m0)
+        , set = \(_, m1) _ -> m1
+        , expected = ObserverId.init
         }
 
 
-{-| Dig up a new `Observer` for the specific element.
+{-| Build a child Observer from its parent.
 
-  - mget: function to get the memory state from its parent
-  - set: function to set the memory state on its parent
+  - arg1:
+    - mget: function to get the memory state from its parent
+    - set: function to set the memory state on its parent
+  - arg2: expected Observer ID for the child
 
 -}
-dig :
-    { mget : m1 -> Maybe ( ObserverId, m2 )
-    , set : ( ObserverId, m2 ) -> m1 -> m1
-    , id : ObserverId
+child :
+    { mget : m1 -> Maybe ( ObserverId e2, m2 )
+    , set : ( ObserverId e2, m2 ) -> m1 -> m1
     }
-    -> Observer m m1
-    -> Observer m m2
-dig r (Internal.Observer o) =
-    Internal.Observer
+    -> ObserverId e2
+    -> Observer m e1 m1
+    -> Observer m e2 m2
+child r expected o =
+    Observer.fromRecord
         { mget =
             \m0 ->
-                o.mget m0
-                    |> Maybe.andThen r.mget
+                Observer.mget o m0
                     |> Maybe.andThen
-                        (\( oid2, m2 ) ->
-                            if oid2 == o.id then
-                                Just m2
-
-                            else
-                                Nothing
-                        )
+                        (\(_, m1) -> r.mget m1)
         , set =
-            \m2 m0 ->
-                case o.mget m0 of
+            \p2 m0 ->
+                case Observer.mget o m0 of
                     Nothing ->
                         m0
 
-                    Just m1 ->
-                        o.set (r.set ( r.id, m2 ) m1) m0
-        , id = r.id
+                    Just (oid1, m1) ->
+                        Observer.set o (oid1, r.set p2 m1) m0
+        , expected = expected
         }
 
 
-{-| Dig up a new Observer for the specific list element.
+{-| Build a new list item Observer from its parent.
 
   - arg1:
-      - get: function to get the list from its parent
-      - set: function to set the list on its parent
-  - arg2: ObserverId for the list element
+    - get: function to get the memory state from its parent
+    - set: function to set the memory state on its parent
+  - arg2: expected Observer ID for the list item
 
 -}
-digListElem :
-    { get : m1 -> List ( ObserverId, m2 )
-    , set : List ( ObserverId, m2 ) -> m1 -> m1
-    , id : ObserverId
+listItem :
+    { get : m1 -> List ( ObserverId e2, m2 )
+    , set : List ( ObserverId e2, m2 ) -> m1 -> m1
     }
-    -> Observer m m1
-    -> Observer m m2
-digListElem r =
-    dig
-        { id = r.id
-        , mget =
-            \m1 ->
-                r.get m1
-                    |> List.filter (\( oid, _ ) -> oid == r.id)
-                    |> List.head
-        , set =
-            \( oid2, m2 ) m1 ->
-                if oid2 == r.id then
-                    r.set
-                        (r.get m1
-                            |> List.map
-                                (\( oid, a ) ->
-                                    if oid == r.id then
-                                        ( oid, m2 )
-
-                                    else
-                                        ( oid, a )
-                                )
+    -> ObserverId e2
+    -> Observer m e1 m1
+    -> Observer m e2 m2
+listItem r expected o =
+    Observer.fromRecord
+        { mget =
+            \m0 ->
+                Observer.mget o m0
+                    |> Maybe.andThen
+                        (\(_, m1) ->
+                            r.get m1
+                                |> List.filter
+                                    (\(oid2, _) -> oid2 == expected)
+                                |> List.head
                         )
-                        m1
+        , set =
+            \p2 m0 ->
+                case Observer.mget o m0 of
+                    Nothing ->
+                        m0
 
-                else
-                    m1
+                    Just (oid1, m1) ->
+                        let
+                            p2s = List.map
+                                (\(oid2, m2) ->
+                                    if oid2 == Tuple.first p2 then
+                                        (oid2, Tuple.second p2)
+                                    else
+                                        (oid2, m2)
+                                )
+                                (r.get m1)
+
+                        in
+                        Observer.set o (oid1, r.set p2s m1) m0
+        , expected = expected
         }
 
 
-{-| Build a new `Observer` that inherits the parent `ObserverId`. See [`Page.Login` in `spa-sample`](https://github.com/arowM/elm-procedure-architecture/blob/main/spa-sample/src/Page/Login.elm) for real use case.
+{-| Build a new Observer that inherits the parent Observer Id. See [`Page.Login` in `spa-sample`](https://github.com/arowM/elm-procedure-architecture/blob/main/spa-sample/src/Page/Login.elm) for real use case.
 
   - get: function to get the memory state from its parent
   - set: function to set the memory state on its parent
@@ -136,21 +133,22 @@ inherit :
     { get : m1 -> m2
     , set : m2 -> m1 -> m1
     }
-    -> Observer m m1
-    -> Observer m m2
-inherit r (Internal.Observer o) =
-    Internal.Observer
-        { id = o.id
-        , mget =
+    -> Observer m e m1
+    -> Observer m e m2
+inherit r o =
+    Observer.fromRecord
+        { mget =
             \m0 ->
-                o.mget m0
-                    |> Maybe.map r.get
+                Observer.mget o m0
+                    |> Maybe.map
+                        (\(oid1, m1) -> (oid1, r.get m1))
         , set =
-            \m2 m0 ->
-                case o.mget m0 of
+            \(_, m2) m0 ->
+                case Observer.mget o m0 of
                     Nothing ->
                         m0
 
-                    Just m1 ->
-                        o.set (r.set m2 m1) m0
+                    Just (oid1, m1) ->
+                        Observer.set o (oid1, r.set m2 m1) m0
+        , expected = Observer.expected o
         }

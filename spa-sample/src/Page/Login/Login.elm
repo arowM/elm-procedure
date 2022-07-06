@@ -45,7 +45,7 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg, Observer, Request)
+import Procedure.Advanced as Procedure exposing (Modifier, Msg, Request)
 import Url.Builder as Url
 
 
@@ -57,7 +57,7 @@ import Url.Builder as Url
 -}
 request :
     Login
-    -> Observer m m1
+    -> Modifier m m1
     -> Request cmd m e1 (Command e1) (Result Http.Error Response)
 request login =
     Procedure.request <|
@@ -93,8 +93,9 @@ mapCommand : (e1 -> e0) -> Command e1 -> Command e0
 mapCommand f cmd =
     case cmd of
         RequestLogin login toMsg ->
-            RequestLogin login
-                <| Procedure.mapMsg f << toMsg
+            RequestLogin login <|
+                Procedure.mapMsg f
+                    << toMsg
 
 
 {-| -}

@@ -18,7 +18,7 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg, Observer, Request)
+import Procedure.Advanced as Procedure exposing (Modifier, Msg, Request)
 import Url.Builder as Url
 
 
@@ -32,12 +32,12 @@ type alias Session =
 {-| Fetch user information from the server.
 -}
 fetch :
-    Observer m m1
+    Modifier m m1
     -> Request cmd m e1 (Command e1) (Result Http.Error Session)
 fetch =
     Procedure.request <|
-        \_ issue ->
-            FetchSession issue
+        \_ publish ->
+            FetchSession publish
 
 
 {-| -}
@@ -76,8 +76,7 @@ fetchSession toEvent =
         , body =
             Http.jsonBody <|
                 JE.object
-                    [
-                    ]
+                    []
         , expect =
             Http.expectJson toEvent decoder
         }

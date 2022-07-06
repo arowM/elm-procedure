@@ -1,5 +1,5 @@
-module Internal.ObserverId exposing
-    ( ObserverId
+module Internal.Channel exposing
+    ( Channel
     , init
     , inc
     , decoder
@@ -7,10 +7,9 @@ module Internal.ObserverId exposing
     , toValue
     )
 
-
 {-|
 
-@docs ObserverId
+@docs Channel
 @docs init
 @docs inc
 @docs decoder
@@ -19,33 +18,32 @@ module Internal.ObserverId exposing
 
 -}
 
-
 import Internal.SafeInt as SafeInt exposing (SafeInt)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE exposing (Value)
 
 
 {-| -}
-type ObserverId
-    = ObserverId (List SafeInt)
+type Channel
+    = Channel (List SafeInt)
 
 
 {-| Initial value.
 -}
-init : ObserverId
+init : Channel
 init =
-    ObserverId [ SafeInt.minBound ]
+    Channel [ SafeInt.minBound ]
 
 
 {-| -}
-inc : ObserverId -> ObserverId
-inc (ObserverId ls) =
+inc : Channel -> Channel
+inc (Channel ls) =
     case incList ls of
         ( True, new ) ->
-            ObserverId <| SafeInt.minBound :: new
+            Channel <| SafeInt.minBound :: new
 
         ( False, new ) ->
-            ObserverId new
+            Channel new
 
 
 incList : List SafeInt -> ( Bool, List SafeInt )
@@ -62,23 +60,22 @@ incList =
         ( True, [] )
 
 
-
 {-| -}
-toString : ObserverId -> String
-toString (ObserverId ls) =
+toString : Channel -> String
+toString (Channel ls) =
     List.map SafeInt.toString ls
         |> String.join "_"
         |> (\str -> "tid_" ++ str)
 
 
 {-| -}
-decoder : Decoder ObserverId
+decoder : Decoder Channel
 decoder =
     JD.list SafeInt.decoder
-        |> JD.map ObserverId
+        |> JD.map Channel
 
 
 {-| -}
-toValue : ObserverId -> Value
-toValue (ObserverId ls) =
+toValue : Channel -> Value
+toValue (Channel ls) =
     JE.list SafeInt.toValue ls

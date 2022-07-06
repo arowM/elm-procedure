@@ -43,8 +43,8 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
-import Procedure.Observer as Observer exposing (Observer)
-import Procedure.ObserverId as ObserverId exposing (ObserverId)
+import Procedure.Channel as Channel exposing (Channel)
+import Procedure.Modifier as Modifier exposing (Modifier)
 import Process
 import Task
 
@@ -77,7 +77,7 @@ type Memory
 
 
 type alias Memory_ =
-    { items : List ( ObserverId, ToastItemMemory )
+    { items : List ( Channel, ToastItemMemory )
     }
 
 
@@ -142,19 +142,19 @@ runCommand cmd =
 
 {-| Show warning message.
 -}
-pushWarning : String -> Observer m Memory -> Procedure (Command Event) m Event
+pushWarning : String -> Modifier m Memory -> Procedure (Command Event) m Event
 pushWarning =
     pushItem WarningMessage
 
 
 {-| Show error message.
 -}
-pushError : String -> Observer m Memory -> Procedure (Command Event) m Event
+pushError : String -> Modifier m Memory -> Procedure (Command Event) m Event
 pushError =
     pushItem ErrorMessage
 
 
-pushItem : MessageType -> String -> Observer m Memory -> Procedure (Command Event) m Event
+pushItem : MessageType -> String -> Modifier m Memory -> Procedure (Command Event) m Event
 pushItem type_ str widget =
     let
         newItem =
@@ -164,29 +164,29 @@ pushItem type_ str widget =
             }
     in
     Procedure.observe newItem <|
-        \( oid, newItemMemory ) ->
+        \( channel, newItemMemory ) ->
             let
                 toastItem =
-                    toastItemObserver oid widget
+                    toastItemModifier channel widget
             in
             [ Procedure.modify widget <|
                 \(Memory m) ->
                     Memory
                         { m
-                            | items = m.items ++ [ ( oid, newItemMemory ) ]
+                            | items = m.items ++ [ ( channel, newItemMemory ) ]
                         }
             , Procedure.jump toastItem <|
                 \_ ->
-                    toastItemProcedures oid widget toastItem
+                    toastItemProcedures channel widget toastItem
             ]
 
 
-toastItemObserver :
-    ObserverId
-    -> Observer m Memory
-    -> Observer m ToastItemMemory
-toastItemObserver expected =
-    Observer.listItem
+toastItemModifier :
+    Channel
+    -> Modifier m Memory
+    -> Modifier m ToastItemMemory
+toastItemModifier expected =
+    Modifier.listItem
         { get = \(Memory m) -> m.items
         , set = \items (Memory m) -> Memory { m | items = items }
         }
@@ -205,11 +205,11 @@ type alias ToastItemMemory =
 
 
 toastItemProcedures :
-    ObserverId
-    -> Observer m Memory
-    -> Observer m ToastItemMemory
+    Channel
+    -> Modifier m Memory
+    -> Modifier m ToastItemMemory
     -> List (Procedure (Command Event) m Event)
-toastItemProcedures oid widget toastItem =
+toastItemProcedures channel widget toastItem =
     [ Procedure.race
         [ sleep toastTimeout widget
         , Procedure.await toastItem <|
@@ -229,30 +229,31 @@ toastItemProcedures oid widget toastItem =
         \(Memory m) ->
             Memory
                 { m
-                    | items = List.filter (\( id, _ ) -> id /= oid) m.items
+                    | items = List.filter (\( id, _ ) -> id /= channel) m.items
                 }
     ]
 
 
 sleep :
     Float
-    -> Observer m Memory
+    -> Modifier m Memory
     -> Procedure (Command Event) m Event
-sleep msec =
-    Procedure.protected <|
-        \priv ->
-            [ Procedure.push priv <|
-                \( oid, _ ) -> Sleep msec (Procedure.issue oid WakeUp)
-            , Procedure.await priv <|
-                \event _ ->
-                    case event of
-                        WakeUp ->
-                            [ Procedure.none
-                            ]
+sleep msec widget =
+    -- Procedure.protected creates sandbox,
+    -- in which procedures pub/sub Events to/from their private Channel.
+    Procedure.protected
+        [ Procedure.push widget <|
+            \( channel, _ ) -> Sleep msec (Procedure.publish channel WakeUp)
+        , Procedure.await widget <|
+            \event _ ->
+                case event of
+                    WakeUp ->
+                        [ Procedure.none
+                        ]
 
-                        _ ->
-                            []
-            ]
+                    _ ->
+                        []
+        ]
 
 
 
@@ -263,7 +264,7 @@ sleep msec =
 -}
 pushHttpError :
     Http.Error
-    -> Observer m Memory
+    -> Modifier m Memory
     -> Procedure (Command Event) m Event
 pushHttpError err widget =
     case err of
@@ -303,10 +304,10 @@ view (Memory param) =
 
 
 toastItemView :
-    ( ObserverId, ToastItemMemory )
+    ( Channel, ToastItemMemory )
     -> ( String, Html (Msg Event) )
-toastItemView ( oid, param ) =
-    ( ObserverId.toString oid
+toastItemView ( channel, param ) =
+    ( Channel.toString channel
     , Html.div
         [ localClass "toast_item"
         , localClass <| "toast_item-" ++ messageTypeCode param.messageType
@@ -321,7 +322,7 @@ toastItemView ( oid, param ) =
             ]
         , Html.div
             [ localClass "toast_item_close"
-            , Events.onClick (Procedure.issue oid CloseToastItem)
+            , Events.onClick (Procedure.publish channel CloseToastItem)
             ]
             [ Html.text "×"
             ]

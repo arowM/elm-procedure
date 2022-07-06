@@ -3,8 +3,8 @@ module Page.Login exposing
     , Event
     , Memory
     , init
-    , procedures
     , mapCommand
+    , procedures
     , runCommand
     , view
     )
@@ -16,8 +16,8 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
-import Procedure.Advanced as Procedure exposing (Msg, ObserverId, Procedure)
-import Procedure.Observer as Observer exposing (Observer)
+import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
+import Procedure.Modifier as Modifier exposing (Modifier)
 import Url exposing (Url)
 import Widget.Toast as Toast
 
@@ -53,15 +53,16 @@ type Event
 
 
 {-| -}
-view : (ObserverId , Memory) -> Html (Msg Event)
-view (oid, param) =
+view : ( Channel, Memory ) -> Html (Msg Event)
+view ( channel, param ) =
     Html.div
         [ localClass "page"
         ]
-        [ loginFormView (oid, param.loginForm)
+        [ loginFormView ( channel, param.loginForm )
         , Toast.view param.toast
             |> Html.map (Procedure.mapMsg ToastEvent)
         ]
+
 
 
 -- -- LoginForm
@@ -86,10 +87,12 @@ initLoginForm =
     }
 
 
-loginFormView : (ObserverId , LoginFormMemory) -> Html (Msg Event)
-loginFormView (oid, param) =
+loginFormView : ( Channel, LoginFormMemory ) -> Html (Msg Event)
+loginFormView ( channel, param ) =
     let
-        issue = Procedure.issue oid
+        publish =
+            Procedure.publish channel
+
         errors =
             Login.toFormErrors param.form
     in
@@ -106,7 +109,7 @@ loginFormView (oid, param) =
                 [ Mixin.attribute "type" "text"
                 , Mixin.attribute "value" param.form.id
                 , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onChange (issue << ChangeLoginId)
+                , Events.onChange (publish << ChangeLoginId)
                 ]
                 []
             ]
@@ -118,13 +121,13 @@ loginFormView (oid, param) =
                 [ Mixin.attribute "type" "password"
                 , Mixin.attribute "value" param.form.pass
                 , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onChange (issue << ChangeLoginPass)
+                , Events.onChange (publish << ChangeLoginPass)
                 ]
                 []
             ]
         , Html.node "button"
             [ localClass "loginForm_submitLogin"
-            , Events.onClick (issue ClickSubmitLogin)
+            , Events.onClick (publish ClickSubmitLogin)
             , Mixin.boolAttribute "disabled" param.isBusy
             ]
             [ Html.text "Login"
@@ -206,7 +209,6 @@ mapCommand f cmd =
 
 
 
-
 -- -- Initialization
 
 
@@ -214,7 +216,7 @@ mapCommand f cmd =
 procedures :
     Url
     -> Key
-    -> Observer m Memory
+    -> Modifier m Memory
     -> List (Procedure (Command Event) m Event)
 procedures url key page =
     [ Procedure.async <|
@@ -225,20 +227,21 @@ procedures url key page =
 loginFormProcedures :
     Url
     -> Key
-    -> Observer m Memory
+    -> Modifier m Memory
     -> List (Procedure (Command Event) m Event)
 loginFormProcedures url key page =
     let
-        loginForm : Observer m LoginFormMemory
+        loginForm : Modifier m LoginFormMemory
         loginForm =
-            Observer.inherit
+            Modifier.dig
                 { get = .loginForm
                 , set = \a m -> { m | loginForm = a }
                 }
                 page
-        form : Observer m Login.Form
+
+        form : Modifier m Login.Form
         form =
-            Observer.inherit
+            Modifier.dig
                 { get = .form
                 , set = \a m -> { m | form = a }
                 }
@@ -274,21 +277,21 @@ submitLoginProcedures :
     Url
     -> Key
     -> Login.Form
-    -> Observer m Memory
+    -> Modifier m Memory
     -> List (Procedure (Command Event) m Event)
 submitLoginProcedures url key formState page =
     let
-        loginForm : Observer m LoginFormMemory
+        loginForm : Modifier m LoginFormMemory
         loginForm =
-            Observer.inherit
+            Modifier.dig
                 { get = .loginForm
                 , set = \a m -> { m | loginForm = a }
                 }
                 page
 
-        toast : Observer m Toast.Memory
+        toast : Modifier m Toast.Memory
         toast =
-            Observer.inherit
+            Modifier.dig
                 { get = .toast
                 , set = \a m -> { m | toast = a }
                 }
@@ -348,7 +351,8 @@ submitLoginProcedures url key formState page =
 -- Toast
 
 
-runToastProcedure : Procedure (Toast.Command Toast.Event) m Toast.Event
+runToastProcedure :
+    Procedure (Toast.Command Toast.Event) m Toast.Event
     -> Procedure (Command Event) m Event
 runToastProcedure =
     Procedure.wrapEvent
@@ -358,10 +362,12 @@ runToastProcedure =
                 case e of
                     ToastEvent e1 ->
                         Just e1
+
                     _ ->
                         Nothing
         }
         >> Procedure.mapCmd (ToastCommand << Toast.mapCommand ToastEvent)
+
 
 
 -- Helper functions

@@ -5,17 +5,20 @@ module Procedure.Advanced exposing
     , wrapEvent
     , mapCmd
     , mapCmds
-    , Observer
-    , ObserverId
-    , issue
+    , Modifier
+    , Channel
+    , publish
     , update
+    , elementView
+    , documentView
+    , subscriptions
     , init
     , Msg
     , mapMsg
     , Model
-    , memoryState
     , modify
     , push
+    , subscribe
     , await
     , async
     , sync
@@ -45,27 +48,34 @@ module Procedure.Advanced exposing
 @docs mapCmds
 
 
-# Observer
+# Modifier
 
-@docs Observer
-@docs ObserverId
-@docs issue
+@docs Modifier
+
+
+# Channel
+
+@docs Channel
+@docs publish
 
 
 # Connect to TEA app
 
 @docs update
+@docs elementView
+@docs documentView
+@docs subscriptions
 @docs init
 @docs Msg
 @docs mapMsg
 @docs Model
-@docs memoryState
 
 
 # Constructors
 
 @docs modify
 @docs push
+@docs subscribe
 @docs await
 @docs async
 @docs sync
@@ -91,30 +101,37 @@ module Procedure.Advanced exposing
 
 -}
 
-import Internal.Observer as Observer
-import Internal.ObserverId as ObserverId
+import Browser exposing (Document)
+import Html exposing (Html)
+import Internal.Channel as Channel
+import Internal.Modifier as Modifier
+import Internal.SubId as SubId
 
 
 
--- Observer
+-- Modifier
 
 
-{-| Same as `Procedure.Observer`.
+{-| Same as `Procedure.Modifier`.
 -}
-type alias Observer m m1 =
-    Observer.Observer m m1
+type alias Modifier memory part =
+    Modifier.Modifier memory part
 
 
-{-| Same as `Procedure.ObserverId`.
+
+-- Channel
+
+
+{-| Same as `Procedure.Channel`.
 -}
-type alias ObserverId =
-    ObserverId.ObserverId
+type alias Channel =
+    Channel.Channel
 
 
-{-| Same as `Procedure.issue`.
+{-| Same as `Procedure.publish`.
 -}
-issue : ObserverId -> e -> Msg e
-issue =
+publish : Channel -> e -> Msg e
+publish =
     Msg
 
 
@@ -128,7 +145,7 @@ I recommend starting with the simpler `Procedure` module, which provides the spe
 
 -}
 type Procedure cmd memory event
-    = Procedure (List (ProcedureItem cmd memory event))
+    = Procedure (List (Channel -> ProcedureItem cmd memory event))
 
 
 type ProcedureItem cmd memory event
@@ -137,21 +154,13 @@ type ProcedureItem cmd memory event
       -- Run concurrently in new thread, killed when the parent thread is killed.
       -- The parent thread keep alive if the new thread alives.
     | Async (List (ProcedureItem cmd memory event))
-    | Observe
-        (ObserverId
-         -> memory
-         ->
-            ( memory -- new memory state after resource assignment.
-            , List (ProcedureItem cmd memory event) -- Procedures for assigned resource.
-            , memory
-              -> ( memory, List cmd ) -- Evaluated when the second element of this tuple ends.
-            )
-        )
-    | Protected (ObserverId -> List (ProcedureItem cmd memory event))
+    | Protected (Channel -> List (ProcedureItem cmd memory event))
     | Sync (List (List (ProcedureItem cmd memory event)))
     | Race (List (List (ProcedureItem cmd memory event)))
       -- Ignore subsequent `Procedure`s and run given `Procedure`s in current thread.
     | Jump (memory -> List (ProcedureItem cmd memory event))
+    | Subscribe (Sub (Msg event)) (SubId -> List (ProcedureItem cmd memory event))
+    | Unsubscribe SubId
     | Quit
 
 
@@ -166,7 +175,7 @@ none =
 -}
 batch : List (Procedure c m e) -> Procedure c m e
 batch procs =
-    List.concatMap (\(Procedure ps) -> ps) procs
+    List.concatMap (\(Procedure fs) -> fs) procs
         |> Procedure
 
 
@@ -178,8 +187,8 @@ wrapEvent :
     }
     -> Procedure c m e1
     -> Procedure c m e0
-wrapEvent wrapper (Procedure ps) =
-    List.map (wrapEvent_ wrapper) ps
+wrapEvent wrapper (Procedure fs) =
+    List.map (\f c -> wrapEvent_ wrapper (f c)) fs
         |> Procedure
 
 
@@ -196,11 +205,11 @@ wrapEvent_ wrapper item =
 
         Await g ->
             Await <|
-                \(Msg oid e0) m ->
+                \(Msg c e0) m ->
                     wrapper.unwrap e0
                         |> Maybe.andThen
                             (\e1 ->
-                                g (Msg oid e1) m
+                                g (Msg c e1) m
                                     |> Maybe.map
                                         (List.map (wrapEvent_ wrapper))
                             )
@@ -209,23 +218,10 @@ wrapEvent_ wrapper item =
             Async <|
                 List.map (wrapEvent_ wrapper) ls
 
-        Observe g ->
-            Observe <|
-                \oid m ->
-                    let
-                        ( mNew, ps, h ) =
-                            g oid m
-                    in
-                    ( mNew
-                    , List.map (wrapEvent_ wrapper) ps
-                    , h
-                    )
-
         Protected g ->
             Protected <|
-                \oid ->
-                    g oid
-                        |> List.map (wrapEvent_ wrapper)
+                \priv ->
+                    List.map (wrapEvent_ wrapper) (g priv)
 
         Sync pss ->
             Sync <|
@@ -245,6 +241,15 @@ wrapEvent_ wrapper item =
                     g m
                         |> List.map (wrapEvent_ wrapper)
 
+        Subscribe sub g ->
+            Subscribe (Sub.map (mapMsg wrapper.wrap) sub) <|
+                \sid ->
+                    g sid
+                        |> List.map (wrapEvent_ wrapper)
+
+        Unsubscribe sid ->
+            Unsubscribe sid
+
         Quit ->
             Quit
 
@@ -253,7 +258,7 @@ wrapEvent_ wrapper item =
 -}
 mapCmd : (c1 -> c0) -> Procedure c1 m e -> Procedure c0 m e
 mapCmd f (Procedure ps) =
-    List.map (mapCmd_ f) ps
+    List.map (\p c -> mapCmd_ f (p c)) ps
         |> Procedure
 
 
@@ -264,7 +269,10 @@ mapCmds =
     List.map << mapCmd
 
 
-mapCmd_ : (c1 -> c0) -> ProcedureItem c1 m e -> ProcedureItem c0 m e
+mapCmd_ :
+    (c1 -> c0)
+    -> ProcedureItem c1 m e
+    -> ProcedureItem c0 m e
 mapCmd_ f item =
     case item of
         Do g ->
@@ -284,26 +292,10 @@ mapCmd_ f item =
             Async <|
                 List.map (mapCmd_ f) ls
 
-        Observe g ->
-            Observe <|
-                \oid m ->
-                    let
-                        ( mNew, ps, h ) =
-                            g oid m
-                    in
-                    ( mNew
-                    , List.map (mapCmd_ f) ps
-                    , \mtmp ->
-                        h mtmp
-                            |> Tuple.mapSecond
-                                (List.map f)
-                    )
-
         Protected g ->
             Protected <|
-                \oid ->
-                    g oid
-                        |> List.map (mapCmd_ f)
+                \priv ->
+                    List.map (mapCmd_ f) (g priv)
 
         Sync pss ->
             Sync <|
@@ -323,72 +315,92 @@ mapCmd_ f item =
                     g m
                         |> List.map (mapCmd_ f)
 
+        Subscribe sub g ->
+            Subscribe sub <|
+                \sid ->
+                    g sid
+                        |> List.map (mapCmd_ f)
+
+        Unsubscribe sid ->
+            Unsubscribe sid
+
         Quit ->
             Quit
 
 
 {-| Just like `Procedure.modify`.
 -}
-modify : Observer m m1 -> (m1 -> m1) -> Procedure c m e1
-modify o f =
+modify : Modifier m m1 -> (m1 -> m1) -> Procedure c m e1
+modify mod f =
     Procedure
-        [ Do <|
-            \m0 ->
-                case Observer.mget o m0 of
-                    Nothing ->
-                        ( m0, [] )
-
-                    Just ( oid1, m1 ) ->
-                        ( Observer.set o ( oid1, f m1 ) m0, [] )
+        [ \_ ->
+            Do <|
+                \m0 ->
+                    Modifier.mget mod m0
+                        |> Maybe.map f
+                        |> Maybe.map
+                            (\m1 ->
+                                ( Modifier.set mod m1 m0, [] )
+                            )
+                        |> Maybe.withDefault
+                            ( m0, [] )
         ]
 
 
 {-| Just like `Procedure.push`.
 -}
-push : Observer m m1 -> (( ObserverId, m1 ) -> cmd) -> Procedure cmd m e1
-push o f =
+push : Modifier m m1 -> (( Channel, m1 ) -> cmd) -> Procedure cmd m e1
+push mod f =
     Procedure
-        [ Do <|
-            \m0 ->
-                case Observer.mget o m0 of
-                    Nothing ->
-                        ( m0, [] )
-
-                    Just ( oid1, m1 ) ->
-                        ( m0, [ f ( oid1, m1 ) ] )
+        [ \c ->
+            Do <|
+                \m0 ->
+                    Modifier.mget mod m0
+                        |> Maybe.map
+                            (\m1 ->
+                                ( m0, [ f ( c, m1 ) ] )
+                            )
+                        |> Maybe.withDefault
+                            ( m0, [] )
         ]
 
 
 {-| Just like `Procedure.await`.
 -}
 await :
-    Observer m m1
+    Modifier m m1
     -> (e1 -> m1 -> List (Procedure c m e1))
     -> Procedure c m e1
-await o f =
+await mod f =
     Procedure
-        [ Await
-            (\(Msg targetId e0) m0 ->
-                Observer.mget o m0
-                    |> Maybe.andThen
-                        (\( oid1, m1 ) ->
-                            if targetId == oid1 then
-                                case f e0 m1 of
-                                    [] ->
-                                        Nothing
+        [ \expected ->
+            Await
+                (\(Msg targetId e1) m0 ->
+                    Modifier.mget mod m0
+                        |> Maybe.andThen
+                            (\m1 ->
+                                if targetId == expected then
+                                    case f e1 m1 of
+                                        [] ->
+                                            Nothing
 
-                                    ps ->
-                                        let
-                                            (Procedure items) =
-                                                batch ps
-                                        in
-                                        Just items
+                                        ps ->
+                                            let
+                                                (Procedure items) =
+                                                    batch ps
+                                            in
+                                            Just <| List.map (apply expected) items
 
-                            else
-                                Nothing
-                        )
-            )
+                                else
+                                    Nothing
+                            )
+                )
         ]
+
+
+apply : a -> (a -> b) -> b
+apply c f =
+    f c
 
 
 {-| Just like `Procedure.async`.
@@ -400,67 +412,26 @@ async ps =
             batch ps
     in
     Procedure
-        [ Async items
+        [ \c -> Async (List.map (apply c) items)
         ]
 
 
 {-| Just like `Procedure.protected`.
 -}
 protected :
-    (Observer m m1 -> List (Procedure c m e1))
-    -> Observer m m1
+    List (Procedure c m e1)
     -> Procedure c m e1
-protected f o =
+protected ps =
     Procedure
-        [ Protected <|
-            \expected ->
-                let
-                    (Procedure items) =
-                        Observer.setExpect expected o
-                            |> f
-                            |> batch
-                in
-                items
+        [ \_ ->
+            Protected <|
+                \priv ->
+                    let
+                        (Procedure items) =
+                            batch ps
+                    in
+                    List.map (apply priv) items
         ]
-
-
-
--- {-| Just like `Procedure.withResource`.
--- -}
--- withResource :
---     Observer m m1
---     ->
---         { aquire : ObserverId -> m1 -> ( m1, r )
---         , release : r -> m1 -> ( m1, List cmd )
---         }
---     -> (r -> List (Procedure cmd m e))
---     -> Procedure cmd m e
--- withResource (Observer { mget, set }) { aquire, release } f =
---     observe_ <|
---         \rid m0 ->
---             case mget m0 of
---                 Nothing ->
---                     ( m0, [], \m -> ( m, [] ) )
---
---                 Just m1 ->
---                     let
---                         ( m1New, r ) =
---                             aquire rid m1
---                     in
---                     ( set m1New m0
---                     , f r
---                     , \finalM0 ->
---                         case mget finalM0 of
---                             Nothing ->
---                                 ( finalM0, [] )
---
---                             Just finalM1 ->
---                                 let
---                                     ( m1Released, cmds ) =
---                                         release r finalM1
---                                 in
---                                 ( set m1Released finalM0, cmds )
---                     )
 
 
 {-| Just like `Procedure.sync`.
@@ -468,8 +439,9 @@ protected f o =
 sync : List (Procedure c m e) -> Procedure c m e
 sync ps =
     Procedure
-        [ Sync <|
-            List.map (\(Procedure items) -> items) ps
+        [ \c ->
+            Sync <|
+                List.map (\(Procedure items) -> List.map (apply c) items) ps
         ]
 
 
@@ -478,8 +450,9 @@ sync ps =
 race : List (Procedure c m e) -> Procedure c m e
 race ps =
     Procedure
-        [ Race <|
-            List.map (\(Procedure items) -> items) ps
+        [ \c ->
+            Race <|
+                List.map (\(Procedure items) -> List.map (apply c) items) ps
         ]
 
 
@@ -487,78 +460,50 @@ race ps =
 -}
 quit : Procedure c m e
 quit =
-    Procedure [ Quit ]
+    Procedure [ \_ -> Quit ]
 
 
 {-| Just like `Procedure.jump`.
 -}
 jump :
-    Observer m m1
+    Modifier m m1
     -> (m1 -> List (Procedure c m e1))
     -> Procedure c m e1
-jump o f =
+jump mod f =
     Procedure
-        [ Jump <|
-            \m0 ->
-                case Observer.mget o m0 of
-                    Nothing ->
-                        []
+        [ \c ->
+            Jump <|
+                \m0 ->
+                    case Modifier.mget mod m0 of
+                        Nothing ->
+                            []
 
-                    Just ( _, m1 ) ->
-                        let
-                            (Procedure items) =
-                                batch (f m1)
-                        in
-                        items
+                        Just m1 ->
+                            let
+                                (Procedure items) =
+                                    batch (f m1)
+                            in
+                            List.map (apply c) items
         ]
 
 
-
--- {-| Just like `Procedure.doUntil`.
--- -}
--- doUntil :
---     Observer m e m1 e1
---     -> List (Procedure c m e)
---     -> (e1 -> m1 -> List (Procedure c m e))
---     -> Procedure c m e
--- doUntil o procs handler =
---     sync
---         [ await o handler
---         , race
---             [ batch procs
---             , await o <|
---                 \e1 m1 ->
---                     case handler e1 m1 of
---                         [] ->
---                             []
---
---                         _ ->
---                             [ none ]
---             ]
---         ]
--- observe_ :
---     (ObserverId
---      -> m
---      ->
---         ( m
---         , List (Procedure cmd m e)
---         , m -> ( m, List cmd )
---         )
---     )
---     -> Procedure cmd m e
--- observe_ f =
---     Procedure
---         [ Observe <|
---             \rid m0 ->
---                 let
---                     ( finalM0, ps, finally ) =
---                         f rid m0
---
---                     (Procedure items) =
---                         batch ps
---                 in
---                 ( finalM0, items, finally )
---         ]
+{-| Just like `Procedure.subscribe`.
+-}
+subscribe :
+    Sub (Msg e1)
+    -> List (Procedure c m e1)
+    -> Procedure c m e1
+subscribe sub ps =
+    Procedure
+        [ \c ->
+            Subscribe sub <|
+                \sid ->
+                    let
+                        (Procedure items) =
+                            batch ps
+                    in
+                    List.map (apply c) items ++ [ Unsubscribe sid ]
+        ]
 
 
 {-| Just like `Procedure.when`.
@@ -598,11 +543,11 @@ withMaybe ma f =
 
 {-| Just like `Procedure.request`.
 -}
-request : (( ObserverId, m1 ) -> (a -> Msg e1) -> cmd1) -> Observer m m1 -> Request cmd m e1 cmd1 a
-request f observer toCmd toEvent =
-    push observer <|
-        \( id, state ) ->
-            toCmd <| f ( id, state ) (toEvent >> issue id)
+request : (m1 -> (a -> Msg e1) -> cmd1) -> Modifier m m1 -> Request cmd m e1 cmd1 a
+request f mod toCmd toEvent =
+    push mod <|
+        \( c, m1 ) ->
+            toCmd <| f m1 (toEvent >> publish c)
 
 
 {-| Just like `Procedure.Request`.
@@ -619,17 +564,18 @@ type alias Request cmd m e cmd1 a =
 -}
 observe :
     r
-    -> (( ObserverId, r ) -> List (Procedure c m e1))
+    -> (( Channel, r ) -> List (Procedure c m e1))
     -> Procedure c m e1
 observe r f =
     Procedure
-        [ Protected <|
-            \priv ->
-                let
-                    (Procedure ps) =
-                        f ( priv, r ) |> batch
-                in
-                ps
+        [ \_ ->
+            Protected <|
+                \priv ->
+                    let
+                        (Procedure ps) =
+                            f ( priv, r ) |> batch
+                    in
+                    List.map (apply priv) ps
         ]
 
 
@@ -637,7 +583,7 @@ observe r f =
 -}
 observeList :
     List r
-    -> (List ( ObserverId, r ) -> List (Procedure c m e1))
+    -> (List ( Channel, r ) -> List (Procedure c m e1))
     -> Procedure c m e1
 observeList rs f =
     List.foldr
@@ -656,13 +602,13 @@ observeList rs f =
 type Model cmd memory event
     = Thread
         -- New thread state after the evaluation.
-        { newState : ThreadState memory
+        { newState : ThreadState memory event
 
         -- Side effects caused by the evaluation.
         , cmds : List cmd
 
         -- New thread to evaluate next time.
-        , next : Msg event -> ThreadState memory -> Thread cmd memory event
+        , next : Msg event -> ThreadState memory event -> Thread cmd memory event
         }
 
 
@@ -670,11 +616,18 @@ type alias Thread cmd memory event =
     Model cmd memory event
 
 
-{-| Just like `Procedure.memoryState`.
+{-| Just like `Procedure.elementView`.
 -}
-memoryState : Model cmd memory event -> memory
-memoryState (Thread { newState }) =
-    newState.memory
+elementView : (memory -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
+elementView f (Thread { newState }) =
+    f newState.memory
+
+
+{-| Just like `Procedure.documentView`.
+-}
+documentView : (memory -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
+documentView f (Thread { newState }) =
+    f newState.memory
 
 
 {-| Just like `Procedure.update`.
@@ -686,6 +639,15 @@ update msg (Thread t) =
             t.next msg t.newState
     in
     ( Thread t2, t2.cmds )
+
+
+{-| Just like `Procedure.subsctiptions`.
+-}
+subscriptions : Model cmd memory event -> Sub (Msg event)
+subscriptions (Thread t) =
+    t.newState.subs
+        |> List.map Tuple.second
+        |> Sub.batch
 
 
 {-| Just like `Procedure.init`.
@@ -703,30 +665,38 @@ init initialMemory procs =
             toThread <|
                 fromProcedure
                     { memory = initialMemory
-                    , nextObserverId = ObserverId.inc ObserverId.init
+                    , nextChannel = Channel.inc Channel.init
+                    , subs = []
+                    , nextSubId = SubId.init
                     }
-                    items
+                    (List.map (\f -> f Channel.init) items)
     in
     ( Thread t, t.cmds )
 
 
 {-| State to evaluate a thread.
 -}
-type alias ThreadState memory =
+type alias ThreadState memory event =
     { memory : memory
-    , nextObserverId : ObserverId
+    , nextChannel : Channel
+    , subs : List ( SubId, Sub (Msg event) )
+    , nextSubId : SubId
     }
+
+
+type alias SubId =
+    SubId.SubId
 
 
 {-| Intermediate type, which helps to handle operations that affects ancestor threads.
 -}
 type FromProcedure cmd memory event
     = FromProcedure
-        { newState : ThreadState memory
+        { newState : ThreadState memory event
         , cmds : List cmd
         , next :
             Maybe
-                { procedure : Msg event -> ThreadState memory -> FromProcedure cmd memory event
+                { procedure : Msg event -> ThreadState memory event -> FromProcedure cmd memory event
                 , onKilled : memory -> ( memory, List cmd )
                 }
         }
@@ -750,7 +720,7 @@ toThread (FromProcedure fp) =
                 }
 
 
-endOfThread : Msg event -> ThreadState memory -> Thread cmd memory event
+endOfThread : Msg event -> ThreadState memory event -> Thread cmd memory event
 endOfThread _ state =
     Thread
         { newState = state
@@ -759,7 +729,7 @@ endOfThread _ state =
         }
 
 
-fromProcedure : ThreadState memory -> List (ProcedureItem cmd memory event) -> FromProcedure cmd memory event
+fromProcedure : ThreadState memory event -> List (ProcedureItem cmd memory event) -> FromProcedure cmd memory event
 fromProcedure state procs =
     case procs of
         [] ->
@@ -804,29 +774,16 @@ fromProcedure state procs =
             fromProcedure state ps1
                 |> andAsync (\s -> fromProcedure s ps2)
 
-        (Observe f) :: ps2 ->
+        (Protected g) :: ps2 ->
             let
-                ( memory1, ps1, finally ) =
-                    f state.nextObserverId state.memory
+                nextChannel =
+                    Channel.inc state.nextChannel
 
-                state1 =
-                    { memory = memory1
-                    , nextObserverId = ObserverId.inc state.nextObserverId
-                    }
-            in
-            fromProcedure state1 ps1
-                |> applyFinally finally
-                |> andThen (\s -> fromProcedure s ps2)
-
-        (Protected f) :: ps2 ->
-            let
                 ps1 =
-                    f state.nextObserverId
+                    g nextChannel
 
                 state1 =
-                    { state
-                        | nextObserverId = ObserverId.inc state.nextObserverId
-                    }
+                    { state | nextChannel = nextChannel }
             in
             fromProcedure state1 (ps1 ++ ps2)
 
@@ -841,11 +798,42 @@ fromProcedure state procs =
         (Jump f) :: _ ->
             fromProcedure state (f state.memory)
 
+        (Subscribe sub g) :: ps2 ->
+            let
+                thisSubId =
+                    state.nextSubId
+
+                nextSubId =
+                    SubId.inc state.nextSubId
+
+                ps1 =
+                    g nextSubId
+
+                state1 =
+                    { state
+                        | nextSubId = nextSubId
+                        , subs = ( thisSubId, sub ) :: state.subs
+                    }
+            in
+            fromProcedure state1 (ps1 ++ ps2)
+
+        (Unsubscribe sid) :: ps2 ->
+            let
+                state1 =
+                    { state
+                        | subs =
+                            List.filter
+                                (\( sid_, _ ) -> sid_ /= sid)
+                                state.subs
+                    }
+            in
+            fromProcedure state1 ps2
+
         Quit :: _ ->
             endOfProcedure state
 
 
-endOfProcedure : ThreadState memory -> FromProcedure cmd memory event
+endOfProcedure : ThreadState memory event -> FromProcedure cmd memory event
 endOfProcedure s =
     FromProcedure
         { newState = s
@@ -854,38 +842,41 @@ endOfProcedure s =
         }
 
 
-applyFinally : (memory -> ( memory, List cmd )) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
-applyFinally f (FromProcedure fp) =
-    case fp.next of
-        Nothing ->
-            let
-                state1 =
-                    fp.newState
 
-                ( memory1, cmds1 ) =
-                    f state1.memory
+{-
+   applyFinally : (memory -> ( memory, List cmd )) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+   applyFinally f (FromProcedure fp) =
+       case fp.next of
+           Nothing ->
+               let
+                   state1 =
+                       fp.newState
 
-                state2 =
-                    { state1 | memory = memory1 }
-            in
-            FromProcedure
-                { newState = state2
-                , cmds = fp.cmds ++ cmds1
-                , next = Nothing
-                }
+                   ( memory1, cmds1 ) =
+                       f state1.memory
 
-        Just next ->
-            FromProcedure
-                { fp
-                    | next =
-                        Just
-                            { procedure =
-                                \msg s ->
-                                    next.procedure msg s
-                                        |> applyFinally f
-                            , onKilled = mergeUpdates f next.onKilled
-                            }
-                }
+                   state2 =
+                       { state1 | memory = memory1 }
+               in
+               FromProcedure
+                   { newState = state2
+                   , cmds = fp.cmds ++ cmds1
+                   , next = Nothing
+                   }
+
+           Just next ->
+               FromProcedure
+                   { fp
+                       | next =
+                           Just
+                               { procedure =
+                                   \msg s ->
+                                       next.procedure msg s
+                                           |> applyFinally f
+                               , onKilled = mergeUpdates f next.onKilled
+                               }
+                   }
+-}
 
 
 mergeUpdates : (memory -> ( memory, List cmd )) -> (memory -> ( memory, List cmd )) -> memory -> ( memory, List cmd )
@@ -902,7 +893,7 @@ mergeUpdates f g memory =
 
 {-| Run a function after the given `FromProcedure` ends.
 -}
-andThen : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andThen : (ThreadState memory event -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andThen f (FromProcedure fp) =
     case fp.next of
         Nothing ->
@@ -927,7 +918,7 @@ andThen f (FromProcedure fp) =
                 }
 
 
-andAsync : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andAsync : (ThreadState memory event -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andAsync f (FromProcedure fp1) =
     let
         (FromProcedure fp2) =
@@ -966,7 +957,7 @@ andAsync f (FromProcedure fp1) =
 
 {-| Merge dependent procedures for `Sync` into one procedure.
 -}
-fromProcDeps : ThreadState memory -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
+fromProcDeps : ThreadState memory event -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
 fromProcDeps state ps =
     List.foldl
         (\p acc ->
@@ -982,7 +973,7 @@ fromProcDeps state ps =
         ps
 
 
-andNextDep : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andNextDep : (ThreadState memory event -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andNextDep =
     andAsync
 
@@ -990,7 +981,7 @@ andNextDep =
 {-| Merge dependent procedures for `Race` into one procedure.
 If given empty list, it skips to next `Procedure`.
 -}
-fromProcRaceDeps : ThreadState memory -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
+fromProcRaceDeps : ThreadState memory event -> List (List (ProcedureItem cmd memory event)) -> FromProcedure cmd memory event
 fromProcRaceDeps state ps =
     case ps of
         [] ->
@@ -1010,7 +1001,7 @@ fromProcRaceDeps state ps =
                 qs
 
 
-andNextRaceDep : (ThreadState memory -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
+andNextRaceDep : (ThreadState memory event -> FromProcedure cmd memory event) -> FromProcedure cmd memory event -> FromProcedure cmd memory event
 andNextRaceDep f (FromProcedure fp1) =
     let
         (FromProcedure fp2) =
@@ -1077,7 +1068,7 @@ andNextRaceDep f (FromProcedure fp1) =
 {-| Same as `Procedure.Msg`.
 -}
 type Msg event
-    = Msg ObserverId event
+    = Msg Channel event
 
 
 {-| Same as `Procedure.mapMsg`.

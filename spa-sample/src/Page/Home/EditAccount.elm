@@ -94,8 +94,9 @@ mapCommand : (e1 -> e0) -> Command e1 -> Command e0
 mapCommand f cmd =
     case cmd of
         RequestEditAccount editAccount toMsg ->
-            RequestEditAccount editAccount
-                <| Procedure.mapMsg f << toMsg
+            RequestEditAccount editAccount <|
+                Procedure.mapMsg f
+                    << toMsg
 
 
 {-| -}

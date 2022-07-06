@@ -3,14 +3,14 @@ module Page.Home exposing
     , Event
     , Memory
     , init
-    , procedures
     , mapCommand
+    , procedures
     , runCommand
     , view
     )
 
-import App.Session exposing (Session)
 import App.Route as Route
+import App.Session exposing (Session)
 import Browser.Navigation exposing (Key)
 import Http
 import Mixin exposing (Mixin)
@@ -28,7 +28,6 @@ type alias Memory =
     , session : Session
     , toast : Toast.Memory
     }
-
 
 
 {-| -}
@@ -55,8 +54,8 @@ type Event
 
 
 {-| -}
-view : (ObserverId, Memory) -> Html (Msg Event)
-view (oid, param) =
+view : ( ObserverId, Memory ) -> Html (Msg Event)
+view ( oid, param ) =
     Html.div
         [ localClass "page"
         ]
@@ -74,6 +73,7 @@ view (oid, param) =
                         [ Html.text "🖉"
                         ]
                     ]
+
             Just editAccountFormCore ->
                 let
                     editAccountForm =
@@ -101,6 +101,7 @@ view (oid, param) =
 
 -- -- EditAccountForm
 
+
 type alias EditAccountFormMemory =
     { form : EditAccount.Form
     , isBusy : Bool
@@ -112,6 +113,7 @@ initEditAccountForm : EditAccountFormMemory
 initEditAccountForm =
     { form = EditAccount.initForm
     , isBusy = False
+
     -- Do not show errors initially to avoid bothering
     -- the user with "Input required" errors
     -- when they has not yet entered the information.
@@ -119,11 +121,11 @@ initEditAccountForm =
     }
 
 
-
-editAccountFormView : (ObserverId, EditAccountFormMemory) -> Html (Msg Event)
-editAccountFormView (oid, param) =
+editAccountFormView : ( ObserverId, EditAccountFormMemory ) -> Html (Msg Event)
+editAccountFormView ( oid, param ) =
     let
-        issue = Procedure.issue oid
+        issue =
+            Procedure.issue oid
 
         errors =
             EditAccount.toFormErrors param.form
@@ -177,6 +179,7 @@ editAccountFormView (oid, param) =
                 errors
             )
         ]
+
 
 
 -- Procedures
@@ -349,7 +352,8 @@ editAccountFormProcedures key page toast mainPage editAccountForm =
                             , Procedure.jump editAccountForm <|
                                 \_ -> editAccountFormProcedures key page toast mainPage editAccountForm
                             ]
-                            |> Procedure.batch
+                                |> Procedure.batch
+
                         Ok editAccount ->
                             [ EditAccount.request editAccount ReceiveEditAccountResp editAccountForm
                                 |> Procedure.mapCmd EditAccountCommand
@@ -378,8 +382,9 @@ editAccountFormProcedures key page toast mainPage editAccountForm =
                                         _ ->
                                             []
                             ]
-                            |> Procedure.batch
+                                |> Procedure.batch
                     ]
+
                 _ ->
                     []
     ]

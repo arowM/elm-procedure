@@ -243,7 +243,7 @@ sleep msec widget =
     -- in which procedures pub/sub Events to/from their private Channel.
     Procedure.protected
         [ Procedure.push widget <|
-            \( channel, _ ) -> Sleep msec (Procedure.publish channel WakeUp)
+            \_ publish -> Sleep msec (publish WakeUp)
         , Procedure.await widget <|
             \event _ ->
                 case event of

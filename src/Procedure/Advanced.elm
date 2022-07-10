@@ -19,6 +19,7 @@ module Procedure.Advanced exposing
     , modify
     , push
     , subscribe
+    , subscribeOnce
     , await
     , async
     , sync
@@ -27,6 +28,7 @@ module Procedure.Advanced exposing
     , jump
     , protected
     , request
+    , portRequest
     , Request
     , when
     , unless
@@ -76,6 +78,7 @@ module Procedure.Advanced exposing
 @docs modify
 @docs push
 @docs subscribe
+@docs subscribeOnce
 @docs await
 @docs async
 @docs sync
@@ -88,6 +91,7 @@ module Procedure.Advanced exposing
 # Helper procedures
 
 @docs request
+@docs portRequest
 @docs Request
 @docs when
 @docs unless
@@ -105,7 +109,10 @@ import Browser exposing (Document)
 import Html exposing (Html)
 import Internal.Channel as Channel
 import Internal.Modifier as Modifier
-import Internal.SubId as SubId
+import Internal.SubId as SubId exposing (SubId)
+import Internal.PortId as PortId exposing (PortId)
+import Json.Decode as JD exposing (Decoder)
+import Json.Encode as JE exposing (Value)
 
 
 
@@ -132,7 +139,7 @@ type alias Channel =
 -}
 publish : Channel -> e -> Msg e
 publish =
-    Msg
+    Msg Nothing
 
 
 
@@ -155,12 +162,14 @@ type ProcedureItem cmd memory event
       -- The parent thread keep alive if the new thread alives.
     | Async (List (ProcedureItem cmd memory event))
     | Protected (Channel -> List (ProcedureItem cmd memory event))
+    | WithPortId (PortId -> List (ProcedureItem cmd memory event))
     | Sync (List (List (ProcedureItem cmd memory event)))
     | Race (List (List (ProcedureItem cmd memory event)))
       -- Ignore subsequent `Procedure`s and run given `Procedure`s in current thread.
     | Jump (memory -> List (ProcedureItem cmd memory event))
     | Subscribe (Sub (Msg event)) (SubId -> List (ProcedureItem cmd memory event))
     | Unsubscribe SubId
+    | SubscribeOnce (Sub (Msg event))
     | Quit
 
 
@@ -205,14 +214,18 @@ wrapEvent_ wrapper item =
 
         Await g ->
             Await <|
-                \(Msg c e0) m ->
-                    wrapper.unwrap e0
-                        |> Maybe.andThen
-                            (\e1 ->
-                                g (Msg c e1) m
-                                    |> Maybe.map
-                                        (List.map (wrapEvent_ wrapper))
-                            )
+                \msg m ->
+                    case msg of
+                        NoOp -> Nothing
+
+                        Msg msid c e0 ->
+                            wrapper.unwrap e0
+                                |> Maybe.andThen
+                                    (\e1 ->
+                                        g (Msg msid c e1) m
+                                            |> Maybe.map
+                                                (List.map (wrapEvent_ wrapper))
+                                    )
 
         Async ls ->
             Async <|
@@ -220,6 +233,11 @@ wrapEvent_ wrapper item =
 
         Protected g ->
             Protected <|
+                \priv ->
+                    List.map (wrapEvent_ wrapper) (g priv)
+
+        WithPortId g ->
+            WithPortId <|
                 \priv ->
                     List.map (wrapEvent_ wrapper) (g priv)
 
@@ -249,6 +267,9 @@ wrapEvent_ wrapper item =
 
         Unsubscribe sid ->
             Unsubscribe sid
+
+        SubscribeOnce sub ->
+            SubscribeOnce (Sub.map (mapMsg wrapper.wrap) sub)
 
         Quit ->
             Quit
@@ -297,6 +318,11 @@ mapCmd_ f item =
                 \priv ->
                     List.map (mapCmd_ f) (g priv)
 
+        WithPortId g ->
+            WithPortId <|
+                \priv ->
+                    List.map (mapCmd_ f) (g priv)
+
         Sync pss ->
             Sync <|
                 List.map
@@ -324,6 +350,9 @@ mapCmd_ f item =
         Unsubscribe sid ->
             Unsubscribe sid
 
+        SubscribeOnce sub ->
+            SubscribeOnce sub
+
         Quit ->
             Quit
 
@@ -349,8 +378,14 @@ modify mod f =
 
 {-| Just like `Procedure.push`.
 -}
-push : Modifier m m1 -> (( Channel, m1 ) -> cmd) -> Procedure cmd m e1
+push : Modifier m m1 -> (m1 -> (e1 -> Msg e1) -> cmd) -> Procedure cmd m e1
 push mod f =
+    push_ mod <| \(c, m1) ->
+        f m1 (publish c)
+
+
+push_ : Modifier m m1 -> ((Channel, m1) -> cmd) -> Procedure cmd m e1
+push_ mod f =
     Procedure
         [ \c ->
             Do <|
@@ -358,7 +393,7 @@ push mod f =
                     Modifier.mget mod m0
                         |> Maybe.map
                             (\m1 ->
-                                ( m0, [ f ( c, m1 ) ] )
+                                ( m0, [ f (c, m1) ] )
                             )
                         |> Maybe.withDefault
                             ( m0, [] )
@@ -375,25 +410,29 @@ await mod f =
     Procedure
         [ \expected ->
             Await
-                (\(Msg targetId e1) m0 ->
-                    Modifier.mget mod m0
-                        |> Maybe.andThen
-                            (\m1 ->
-                                if targetId == expected then
-                                    case f e1 m1 of
-                                        [] ->
+                (\msg m0 ->
+                    case msg of
+                        NoOp ->
+                            Nothing
+                        Msg _ targetId e1 ->
+                            Modifier.mget mod m0
+                                |> Maybe.andThen
+                                    (\m1 ->
+                                        if targetId == expected then
+                                            case f e1 m1 of
+                                                [] ->
+                                                    Nothing
+
+                                                ps ->
+                                                    let
+                                                        (Procedure items) =
+                                                            batch ps
+                                                    in
+                                                    Just <| List.map (apply expected) items
+
+                                        else
                                             Nothing
-
-                                        ps ->
-                                            let
-                                                (Procedure items) =
-                                                    batch ps
-                                            in
-                                            Just <| List.map (apply expected) items
-
-                                else
-                                    Nothing
-                            )
+                                    )
                 )
         ]
 
@@ -490,19 +529,33 @@ jump mod f =
 {-| Just like `Procedure.subscribe`.
 -}
 subscribe :
-    Sub (Msg e1)
+    Sub e1
     -> List (Procedure c m e1)
     -> Procedure c m e1
 subscribe sub ps =
     Procedure
         [ \c ->
-            Subscribe sub <|
+            Subscribe (Sub.map (publish c) sub) <|
                 \sid ->
                     let
                         (Procedure items) =
                             batch ps
                     in
                     List.map (apply c) items ++ [ Unsubscribe sid ]
+        ]
+
+
+{-| Just like `Procedure.subscribeOnce`.
+-}
+subscribeOnce : Sub e1 -> Procedure c m e1
+subscribeOnce sub =
+    subscribeOnce_ (\c -> Sub.map (publish c) sub)
+
+
+subscribeOnce_ : (Channel -> Sub (Msg e1)) -> Procedure c m e1
+subscribeOnce_ mkSub =
+    Procedure
+        [ \c -> SubscribeOnce (mkSub c)
         ]
 
 
@@ -545,7 +598,7 @@ withMaybe ma f =
 -}
 request : (m1 -> (a -> Msg e1) -> cmd1) -> Modifier m m1 -> Request cmd m e1 cmd1 a
 request f mod toCmd toEvent =
-    push mod <|
+    push_ mod <|
         \( c, m1 ) ->
             toCmd <| f m1 (toEvent >> publish c)
 
@@ -555,6 +608,67 @@ request f mod toCmd toEvent =
 type alias Request cmd m e cmd1 a =
     (cmd1 -> cmd) -> (a -> e) -> Procedure cmd m e
 
+
+{-| Just like `Procedure.portRequest`.
+-}
+portRequest :
+    { requestPort : Value -> cmd1
+    , requestBody : (m1 -> Value)
+    , responsePort : (Value -> (Msg e1)) -> Sub (Msg e1)
+    , responseBody : Decoder a
+    }
+    -> Modifier m m1
+    -> Request cmd m e1 cmd1 (Result JD.Error a)
+portRequest conf mod toCmd toEvent =
+    withPortId <|
+        \pid ->
+        [ push_ mod <|
+            \(_, m1) -> toCmd <| conf.requestPort <|
+                JE.object
+                    [ ( "id", PortId.toValue pid )
+                    , ( "body", conf.requestBody m1 )
+                    ]
+        , subscribeOnce_
+            (\c -> conf.responsePort
+                (\v ->
+                    case JD.decodeValue (responseDecoder conf.responseBody) v of
+                        Err err ->
+                            toEvent (Err err)
+                                |> publish c
+
+                        Ok (pid_, body) ->
+                            if pid == pid_ then
+                                toEvent (Ok body)
+                                    |> publish c
+                            else
+                                NoOp
+                )
+
+            )
+        ]
+
+
+withPortId :
+    (PortId -> List (Procedure c m e1))
+    -> Procedure c m e1
+withPortId f =
+    Procedure
+        [ \c ->
+            WithPortId <|
+                \pid ->
+                    let
+                        (Procedure items) =
+                            batch (f pid)
+                    in
+                    List.map (apply c) items
+        ]
+
+
+responseDecoder : Decoder a -> Decoder (PortId, a)
+responseDecoder decoder =
+    JD.map2 (\id body -> (id, body))
+        (JD.field "id" PortId.decoder)
+        (JD.field "body" decoder)
 
 
 -- Observing
@@ -634,11 +748,27 @@ documentView f (Thread { newState }) =
 -}
 update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List cmd )
 update msg (Thread t) =
-    let
-        (Thread t2) =
-            t.next msg t.newState
-    in
-    ( Thread t2, t2.cmds )
+    case msg of
+        NoOp ->
+            (Thread t, [])
+
+        Msg msid _ _ ->
+            let
+                (Thread t2) =
+                    case msid of
+                        Just sid ->
+                            t.next msg
+                                { newState | subs =
+                                    List.filter
+                                        (\( sid_, _) -> sid_ /= sid)
+                                        newState.subs
+                                }
+                        Nothing ->
+                            t.next msg newState
+
+                newState = t.newState
+            in
+            ( Thread t2, t2.cmds )
 
 
 {-| Just like `Procedure.subsctiptions`.
@@ -668,6 +798,7 @@ init initialMemory procs =
                     , nextChannel = Channel.inc Channel.init
                     , subs = []
                     , nextSubId = SubId.init
+                    , nextPortId = PortId.init
                     }
                     (List.map (\f -> f Channel.init) items)
     in
@@ -681,11 +812,8 @@ type alias ThreadState memory event =
     , nextChannel : Channel
     , subs : List ( SubId, Sub (Msg event) )
     , nextSubId : SubId
+    , nextPortId : PortId
     }
-
-
-type alias SubId =
-    SubId.SubId
 
 
 {-| Intermediate type, which helps to handle operations that affects ancestor threads.
@@ -787,6 +915,19 @@ fromProcedure state procs =
             in
             fromProcedure state1 (ps1 ++ ps2)
 
+        (WithPortId g) :: ps2 ->
+            let
+                nextPortId =
+                    PortId.inc state.nextPortId
+
+                ps1 =
+                    g nextPortId
+
+                state1 =
+                    { state | nextPortId = nextPortId }
+            in
+            fromProcedure state1 (ps1 ++ ps2)
+
         (Sync ps) :: ps2 ->
             fromProcDeps state ps
                 |> andThen (\s -> fromProcedure s ps2)
@@ -816,6 +957,25 @@ fromProcedure state procs =
                     }
             in
             fromProcedure state1 (ps1 ++ ps2)
+
+        (SubscribeOnce sub) :: ps2 ->
+            let
+                thisSubId =
+                    state.nextSubId
+
+                nextSubId =
+                    SubId.inc state.nextSubId
+
+                sub2 =
+                    Sub.map (setMsgSubId thisSubId) sub
+
+                state1 =
+                    { state
+                        | nextSubId = nextSubId
+                        , subs = ( thisSubId, sub2 ) :: state.subs
+                    }
+            in
+            fromProcedure state1 ps2
 
         (Unsubscribe sid) :: ps2 ->
             let
@@ -1068,11 +1228,23 @@ andNextRaceDep f (FromProcedure fp1) =
 {-| Same as `Procedure.Msg`.
 -}
 type Msg event
-    = Msg Channel event
+    = Msg (Maybe SubId) Channel event
+    | NoOp
+
+
+setMsgSubId : SubId -> Msg event -> Msg event
+setMsgSubId sid msg =
+    case msg of
+        NoOp -> NoOp
+        Msg _ c e ->
+            Msg (Just sid) c e
 
 
 {-| Same as `Procedure.mapMsg`.
 -}
 mapMsg : (a -> b) -> Msg a -> Msg b
-mapMsg f (Msg id a) =
-    Msg id (f a)
+mapMsg f msg =
+    case msg of
+        NoOp -> NoOp
+        Msg msid c a ->
+            Msg msid c (f a)

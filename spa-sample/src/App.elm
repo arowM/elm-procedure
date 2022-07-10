@@ -1,11 +1,13 @@
-module SampleApp exposing
+module App exposing
     ( Command(..)
-    , Event(..)
+    , Event
     , Memory
     , Page(..)
     , init
     , main
     , procedures
+    , operation
+    , state
     )
 
 -- import Page.Home as PageHome
@@ -23,6 +25,7 @@ import Procedure as AppProcedure
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
 import Procedure.Channel exposing (Channel)
 import Procedure.Modifier as Modifier exposing (Modifier)
+import Procedure.Scenario as Scenario exposing (Operation)
 import Url exposing (Url)
 
 
@@ -205,14 +208,14 @@ linkControllProcedures key app =
                     case urlRequest of
                         Browser.Internal url ->
                             [ Procedure.push app <|
-                                \_ ->
+                                \_ _ ->
                                     Url.toString url
                                         |> PushUrl key
                             ]
 
                         Browser.External href ->
                             [ Procedure.push app <|
-                                \_ ->
+                                \_ _ ->
                                     Load href
                             ]
 
@@ -427,3 +430,34 @@ extractSession memory =
 --     Just session
 -- PageUsers ( _, { session } ) ->
 --     Just session
+
+
+-- Scenario
+
+
+operation :
+    { loadPage : Url -> Operation Event
+    , pageLoginEvent : Operation PageLogin.Event -> Operation Event
+    }
+operation =
+    { loadPage = \url ->
+        Scenario.operation
+            ("Enter URL: " ++ Url.toString url)
+            (UrlChanged url)
+    , pageLoginEvent = Scenario.mapOperation PageLoginEvent
+    }
+
+
+state :
+    { onLoginPage : Scenario.State Memory
+    }
+state =
+    { onLoginPage = Scenario.state "Render sign up page"
+        <| \m ->
+            case m.page of
+                PageLogin _ ->
+                    Nothing
+
+                _ ->
+                    Just m.page
+    }

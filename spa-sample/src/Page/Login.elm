@@ -1,12 +1,13 @@
 module Page.Login exposing
     ( Command(..)
-    , Event
+    , Event(..)
     , Memory
     , init
     , mapCommand
     , procedures
     , runCommand
     , view
+    , operation
     )
 
 import App.Session exposing (Session)
@@ -18,6 +19,7 @@ import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
 import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
 import Procedure.Modifier as Modifier exposing (Modifier)
+import Procedure.Scenario as Scenario exposing (Operation)
 import Url exposing (Url)
 import Widget.Toast as Toast
 
@@ -336,7 +338,7 @@ submitLoginProcedures url key formState page =
                             , Procedure.modify page <|
                                 \m -> { m | msession = Just resp.session }
                             , Procedure.push page <|
-                                \_ -> PushUrl key <| Url.toString url
+                                \_ _ -> PushUrl key <| Url.toString url
                             , Procedure.quit
                             ]
 
@@ -368,6 +370,29 @@ runToastProcedure =
         }
         >> Procedure.mapCmd (ToastCommand << Toast.mapCommand ToastEvent)
 
+
+-- Scenario
+
+
+operation :
+    { changeLoginId : String -> Operation Event
+    , changePass : String -> Operation Event
+    , clickSubmitLogin : Operation Event
+    }
+operation =
+    { changeLoginId = \str ->
+        Scenario.operation
+            ("Type \"" ++ str ++ "\" for Account ID field")
+            (ChangeLoginId str)
+    , changePass = \str ->
+        Scenario.operation
+            ("Type \"" ++ str ++ "\" for Password field")
+            (ChangeLoginPass str)
+    , clickSubmitLogin =
+        Scenario.operation
+            "Click \"Login\" submit button"
+            ClickSubmitLogin
+    }
 
 
 -- Helper functions

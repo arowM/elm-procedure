@@ -6,6 +6,7 @@
         "App.Session",
         "App.ZIndex",
         "Page.Login.Login",
-        "Widget.Toast"
+        "Widget.Toast",
+        "Scenario"
     ]
 }

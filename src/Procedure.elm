@@ -30,6 +30,8 @@ module Procedure exposing
     , global
     , dig
     , digMaybe
+    , withObserver
+    , withObservers
     , setVariant
     , prepend
     , prependList
@@ -95,6 +97,8 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs global
 @docs dig
 @docs digMaybe
+@docs withObserver
+@docs withObservers
 
 
 ## Observe variants
@@ -389,6 +393,7 @@ type ProcedureItem cmd memory event
     | Race (List (List (ProcedureItem cmd memory event)))
       -- Ignore subsequent `Procedure`s and run given `Procedure`s in current thread.
     | Jump (memory -> List (ProcedureItem cmd memory event))
+    | WithMemory (memory -> List (ProcedureItem cmd memory event))
     | Quit
 
 
@@ -473,6 +478,9 @@ fromProcedure state procs =
 
         (Jump f) :: _ ->
             fromProcedure state (f state.memory)
+
+        (WithMemory f) :: ps2 ->
+            fromProcedure state (f state.memory ++ ps2)
 
         Quit :: _ ->
             endOfProcedure state
@@ -1291,6 +1299,130 @@ dig_ lifter (Observer observer) =
         , lifter =
             observer.lifter
                 |> andCompose lifter
+        }
+
+
+{-| Run Procedures with the Observer for the existing resource.
+-}
+withObserver :
+    { get : b -> Maybe ( ObserverId, a )
+    , set : ( ObserverId, a ) -> b -> b
+    }
+    -> Observer memory b
+    -> (Observer memory a -> List (Procedure_ cmd memory event))
+    -> Procedure_ cmd memory event
+withObserver o (Observer observer) f =
+    withMemory <|
+        \m ->
+            observer.lifter.get m
+                |> Maybe.andThen o.get
+                |> Maybe.map
+                    (\( oid, _ ) ->
+                        f (getObserver (andCompose o observer.lifter) oid)
+                    )
+                |> Maybe.withDefault []
+
+
+{-| Run Procedures with the Observer for the existing list resource.
+-}
+withObservers :
+    { get : b -> List ( ObserverId, a )
+    , set : List ( ObserverId, a ) -> b -> b
+    }
+    -> Observer memory b
+    -> (List (Observer memory a) -> List (Procedure_ cmd memory event))
+    -> Procedure_ cmd memory event
+withObservers o (Observer observer) f =
+    withMemory <|
+        \m ->
+            observer.lifter.get m
+                |> Maybe.map
+                    (\b ->
+                        o.get b
+                            |> List.map
+                                (\( oid, _ ) ->
+                                    observer.lifter
+                                        |> andCompose
+                                            { get = o.get >> Just
+                                            , set = o.set
+                                            }
+                                        |> andCompose
+                                            { get =
+                                                \ls ->
+                                                    List.filter (\( x, _ ) -> x == oid) ls
+                                                        |> List.head
+                                            , set =
+                                                \( x, a ) ls ->
+                                                    if x /= oid then
+                                                        ls
+
+                                                    else
+                                                        List.map
+                                                            (\( x2, a2 ) ->
+                                                                if x2 == oid then
+                                                                    ( x2, a )
+
+                                                                else
+                                                                    ( x2, a2 )
+                                                            )
+                                                            ls
+                                            }
+                                        |> (\obs -> getObserver obs oid)
+                                )
+                            |> f
+                    )
+                |> Maybe.withDefault []
+
+
+withMemory : (memory -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+withMemory f =
+    Procedure_
+        [ WithMemory <|
+            \memory ->
+                let
+                    (Procedure_ items) =
+                        batch (f memory)
+                in
+                items
+        ]
+
+
+{-| Returns the Observer for the existing resource.
+-}
+getObserver :
+    { get : memory -> Maybe ( ObserverId, a )
+    , set : ( ObserverId, a ) -> memory -> memory
+    }
+    -> ObserverId
+    -> Observer memory a
+getObserver o oid =
+    Observer
+        { id = oid
+        , lifter =
+            { get =
+                \m ->
+                    o.get m
+                        |> Maybe.andThen
+                            (\( oid_, a ) ->
+                                if oid_ == oid then
+                                    Just a
+
+                                else
+                                    Nothing
+                            )
+            , set =
+                \a m ->
+                    o.get m
+                        |> Maybe.map
+                            (\( oid_, _ ) ->
+                                if oid_ /= oid then
+                                    m
+
+                                else
+                                    o.set ( oid, a ) m
+                            )
+                        |> Maybe.withDefault m
+            }
         }
 
 

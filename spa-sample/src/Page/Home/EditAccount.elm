@@ -2,9 +2,6 @@ module Page.Home.EditAccount exposing
     ( request
     , EditAccount
     , Response
-    , Command(..)
-    , mapCommand
-    , runCommand
     , Form
     , initForm
     , FormError(..)
@@ -21,9 +18,6 @@ module Page.Home.EditAccount exposing
 @docs request
 @docs EditAccount
 @docs Response
-@docs Command
-@docs mapCommand
-@docs runCommand
 
 
 # Form decoding
@@ -45,25 +39,11 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg)
-import Procedure.Observer exposing (Observer)
 import Url.Builder as Url
 
 
 
 -- Request
-
-
-{-| Request server for login.
--}
-request :
-    EditAccount
-    -> Observer m m1
-    -> Request cmd m e1 (Command e1) (Result Http.Error Response)
-request editAccount =
-    Procedure.request <|
-        \_ ->
-            RequestEditAccount editAccount
 
 
 {-| Validated request-ready data.
@@ -84,31 +64,10 @@ type alias Response =
     }
 
 
-{-| -}
-type Command e
-    = RequestEditAccount EditAccount (Result Http.Error Response -> Msg e)
-
-
-{-| -}
-mapCommand : (e1 -> e0) -> Command e1 -> Command e0
-mapCommand f cmd =
-    case cmd of
-        RequestEditAccount editAccount toMsg ->
-            RequestEditAccount editAccount <|
-                Procedure.mapMsg f
-                    << toMsg
-
-
-{-| -}
-runCommand : Command e -> Cmd (Msg e)
-runCommand cmd =
-    case cmd of
-        RequestEditAccount login msg ->
-            requestEditAccount login msg
-
-
-requestEditAccount : EditAccount -> (Result Http.Error Response -> Msg e) -> Cmd (Msg e)
-requestEditAccount (EditAccount editAccount) toEvent =
+{-| Request server for login.
+-}
+request : EditAccount -> (Result Http.Error Response -> msg) -> Cmd msg
+request (EditAccount editAccount) toEvent =
     let
         decoder : JD.Decoder Response
         decoder =

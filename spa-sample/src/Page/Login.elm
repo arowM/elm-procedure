@@ -7,7 +7,7 @@ module Page.Login exposing
     , procedures
     , runCommand
     , view
-    , operation
+    , scenario
     )
 
 import App.Session exposing (Session)
@@ -16,10 +16,10 @@ import Http
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
-import Page.Login.Login as Login
+import Page.Login.Login as Login exposing (Login)
 import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
 import Procedure.Modifier as Modifier exposing (Modifier)
-import Procedure.Scenario as Scenario exposing (Operation)
+import Procedure.Scenario as Scenario
 import Url exposing (Url)
 import Widget.Toast as Toast
 
@@ -176,7 +176,7 @@ loginFormView ( channel, param ) =
 {-| -}
 type Command e
     = ToastCommand (Toast.Command e)
-    | LoginCommand (Login.Command e)
+    | RequestLogin (Result Http.Error Login.Response -> Msg e) Login.Login
     | PushUrl Key String
 
 
@@ -187,8 +187,8 @@ runCommand cmd =
         ToastCommand toastCommand ->
             Toast.runCommand toastCommand
 
-        LoginCommand loginCommand ->
-            Login.runCommand loginCommand
+        RequestLogin toMsg login ->
+            Login.request toMsg login
 
         PushUrl key url ->
             Nav.pushUrl key url
@@ -202,9 +202,8 @@ mapCommand f cmd =
             ToastCommand <|
                 Toast.mapCommand f toastCommand
 
-        LoginCommand loginCommand ->
-            LoginCommand <|
-                Login.mapCommand f loginCommand
+        RequestLogin toMsg login ->
+            RequestLogin (\res -> Procedure.mapMsg f (toMsg res)) login
 
         PushUrl key url ->
             PushUrl key url
@@ -314,10 +313,8 @@ submitLoginProcedures url key formState page =
                 |> Procedure.batch
 
         Ok login ->
-            [ Login.request login
-                loginForm
-                LoginCommand
-                ReceiveLoginResp
+            [ Procedure.push page <|
+                \_ toMsg -> RequestLogin (ReceiveLoginResp >> toMsg) login
             , Procedure.await loginForm <|
                 \event _ ->
                     case event of
@@ -374,24 +371,63 @@ runToastProcedure =
 -- Scenario
 
 
-operation :
-    { changeLoginId : String -> Operation Event
-    , changePass : String -> Operation Event
-    , clickSubmitLogin : Operation Event
+type alias Scenario = Scenario.Scenario (Command Event) Memory Event
+
+scenario : Scenario.Session (Command Event) Memory Event ->
+    { user :
+        { comment : String -> Scenario
+        , changeLoginId : String -> Scenario
+        , changePass : String -> Scenario
+        , clickSubmitLogin : Scenario
+        }
+    , system :
+        { comment : String -> Scenario
+        , requestLogin : Login -> Scenario
+        }
+    , external :
+        { backend :
+            { comment : String -> Scenario
+            , respondInvalidIdOrPasswordToLoginRequest : Scenario
+            , respondSuccessToLoginRequest : Login.Response -> Scenario
+            }
+        }
     }
-operation =
-    { changeLoginId = \str ->
-        Scenario.operation
-            ("Type \"" ++ str ++ "\" for Account ID field")
-            (ChangeLoginId str)
-    , changePass = \str ->
-        Scenario.operation
-            ("Type \"" ++ str ++ "\" for Password field")
-            (ChangeLoginPass str)
-    , clickSubmitLogin =
-        Scenario.operation
-            "Click \"Login\" submit button"
-            ClickSubmitLogin
+scenario session =
+    { user =
+        { comment = Scenario.userComment session
+        , changeLoginId = \str ->
+            Scenario.userEvent session
+                ("Type \"" ++ str ++ "\" for Account ID field")
+                (ChangeLoginId str)
+        , changePass = \str ->
+            Scenario.userEvent session
+                ("Type \"" ++ str ++ "\" for Password field")
+                (ChangeLoginPass str)
+        , clickSubmitLogin =
+            Scenario.userEvent session
+                "Click \"Login\" submit button"
+                ClickSubmitLogin
+        }
+    , system =
+        { comment = Scenario.systemComment session
+        , requestLogin = \login ->
+            Scenario.systemCommand session
+                "Request login to server"
+                (\channel -> RequestLogin (ReceiveLoginResp >> Procedure.publish channel) login)
+        }
+    , external =
+        { backend =
+            { comment = Scenario.externalComment "backend" session
+            , respondInvalidIdOrPasswordToLoginRequest =
+                Scenario.externalEvent "backend" session
+                    "Respond \"Invalid ID or Password\" error to login request"
+                    (ReceiveLoginResp (Err (Http.BadStatus 401)))
+            , respondSuccessToLoginRequest = \resp ->
+                Scenario.externalEvent "backend" session
+                    "Respond \"Success\" to login request"
+                    (ReceiveLoginResp (Ok resp))
+            }
+        }
     }
 
 

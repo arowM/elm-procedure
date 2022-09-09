@@ -1,10 +1,21 @@
 module Procedure.Scenario exposing
     ( Scenario
-    , batch
     , none
+    , batch
+    , Section
+    , section
+    , cases
+    , Session
+    , withNewSession
+    , Page
+    , onPage
     , userComment
+    , userEvent
     , systemComment
-    , runTest
+    , systemCommand
+    , externalComment
+    , externalEvent
+    , toTest
     , toHtml
     , State
     , state
@@ -16,7 +27,7 @@ module Procedure.Scenario exposing
     , Effect
     , effect
     , expectEffect
-    , assertJust
+    , fromJust
     )
 
 {-| Module for Scenario-Driven Development.
@@ -24,13 +35,27 @@ module Procedure.Scenario exposing
 # Scenario
 
 @docs Scenario
-@docs batch
 @docs none
+@docs batch
+@docs Section
+@docs section
+@docs cases
+@docs Session
+@docs withNewSession
+@docs Page
+@docs onPage
 @docs userComment
+@docs userEvent
 @docs systemComment
-@docs runTest
+@docs systemCommand
+@docs externalComment
+@docs externalEvent
+@docs toTest
 @docs toHtml
 
+# Session
+
+@docs Session
 
 # User Operation
 
@@ -55,12 +80,13 @@ module Procedure.Scenario exposing
 
 # Helper
 
-@docs assertJust
+@docs fromJust
 
 
 -}
 
 
+import Procedure.Advanced as Advanced
 import Html exposing (Html)
 import Test exposing (Test)
 import Expect exposing (Expectation)
@@ -80,9 +106,58 @@ type ScenarioItem cmd memory event
     | Unexpected Test
 
 
+{-| -}
+type Section c m e = Section c m e
 
-{-| Batch `Scenario`s together. The elements are evaluated in order.
+
+{-| -}
+section : String -> List (Scenario c m e) -> Section c m e
+section = Debug.todo ""
+
+
+{-| -}
+onPage : Session c m e -> Page c m e c1 m1 e1 -> (Session c1 m1 e1 -> List (Scenario c1 m1 e1)) -> Scenario c m e
+onPage = Debug.todo ""
+
+
+{-| -}
+type Session cmd memory event =
+    Session ()
+
+
+{-| -}
+withNewSession : (Session c m e -> List (Scenario c m e)) -> Scenario c m e
+withNewSession = Debug.todo ""
+
+
+{-| -}
+userEvent : Session c m event -> String -> event -> Scenario c m event
+userEvent = Debug.todo ""
+
+
+{-| -}
+type alias Page c m e c1 m1 e1 =
+    { command :
+        { unwrap : c -> Maybe c1
+        , wrap : c1 -> c
+        }
+    , memory :
+        { unwrap : m -> Maybe m1
+        , wrap : m1 -> m
+        }
+    , event :
+        { unwrap : e -> Maybe e1
+        , wrap : e1 -> e
+        }
+    }
+
+
+{-| Batch some sections together.
 -}
+cases : List (Section c m e) -> Scenario c m e
+cases = Debug.todo ""
+
+
 batch : List (Scenario c m e) -> Scenario c m e
 batch =
     List.concatMap (\(Scenario items) -> items)
@@ -96,11 +171,18 @@ none =
 
 
 {-| -}
-runTest : List (Scenario c m e) -> Test
-runTest = Debug.todo ""
+toTest :
+    { init : m
+    , sections : List (Section c m e)
+    } -> Test
+toTest = Debug.todo ""
+
 
 {-| -}
-toHtml : List (Scenario c m e) -> Html msg
+toHtml :
+    { title : String
+    , sections : List (Section c m e)
+    } -> Html msg
 toHtml = Debug.todo ""
 
 
@@ -108,8 +190,8 @@ toHtml = Debug.todo ""
 
 {-|
 -}
-userComment : String -> Scenario c m e
-userComment str =
+userComment : Session c m e -> String -> Scenario c m e
+userComment _ str =
     Scenario
         [ UserComment str
         ]
@@ -117,12 +199,26 @@ userComment str =
 
 {-|
 -}
-systemComment : String -> Scenario c m e
-systemComment str =
+systemComment : Session c m e -> String -> Scenario c m e
+systemComment _ str =
     Scenario
         [ SystemComment str
         ]
 
+
+{-|
+-}
+systemCommand : Session c m e -> String -> (Advanced.Channel -> c) -> Scenario c m e
+systemCommand = Debug.todo ""
+
+{-| -}
+externalComment : String -> Session c m e -> String -> Scenario c m e
+externalComment = Debug.todo ""
+
+
+{-| -}
+externalEvent : String -> Session c m e -> String -> e -> Scenario c m e
+externalEvent = Debug.todo ""
 
 -- State
 
@@ -197,8 +293,8 @@ pushOperation = Debug.todo ""
 
 {-|
 -}
-assertJust : String -> Maybe a -> (a -> List (Scenario c m e)) -> Scenario c m e
-assertJust str ma f =
+fromJust : String -> Maybe a -> (a -> List (Scenario c m e)) -> Scenario c m e
+fromJust str ma f =
     case ma of
         Nothing ->
             Scenario

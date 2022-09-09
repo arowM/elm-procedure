@@ -2,9 +2,6 @@ module Page.Login.Login exposing
     ( request
     , Login
     , Response
-    , Command(..)
-    , mapCommand
-    , runCommand
     , Form
     , initForm
     , FormError(..)
@@ -21,9 +18,6 @@ module Page.Login.Login exposing
 @docs request
 @docs Login
 @docs Response
-@docs Command
-@docs mapCommand
-@docs runCommand
 
 
 # Form decoding
@@ -45,23 +39,11 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Modifier, Msg, Request)
 import Url.Builder as Url
 
 
 
 -- Request
-
-
-{-| Request server for login.
--}
-request :
-    Login
-    -> Modifier m m1
-    -> Request cmd m e1 (Command e1) (Result Http.Error Response)
-request login =
-    Procedure.request <|
-        \_ -> RequestLogin login
 
 
 {-| Validated request-ready data.
@@ -83,31 +65,10 @@ type alias Response =
     }
 
 
-{-| -}
-type Command e
-    = RequestLogin Login (Result Http.Error Response -> Msg e)
-
-
-{-| -}
-mapCommand : (e1 -> e0) -> Command e1 -> Command e0
-mapCommand f cmd =
-    case cmd of
-        RequestLogin login toMsg ->
-            RequestLogin login <|
-                Procedure.mapMsg f
-                    << toMsg
-
-
-{-| -}
-runCommand : Command e -> Cmd (Msg e)
-runCommand cmd =
-    case cmd of
-        RequestLogin login msg ->
-            requestLogin login msg
-
-
-requestLogin : Login -> (Result Http.Error Response -> Msg e) -> Cmd (Msg e)
-requestLogin (Login login) toEvent =
+{-| Request server for login.
+-}
+request : (Result Http.Error Response -> msg) -> Login -> Cmd msg
+request toEvent (Login login) =
     let
         decoder : JD.Decoder Response
         decoder =

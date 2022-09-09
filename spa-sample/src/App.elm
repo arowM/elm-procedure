@@ -6,11 +6,10 @@ module App exposing
     , init
     , main
     , procedures
-    , operation
-    , state
+    , scenario
+    , page
     )
 
--- import Page.Home as PageHome
 -- import Page.Users as PageUsers
 
 import App.Route as Route
@@ -21,11 +20,12 @@ import Http
 import Json.Encode exposing (Value)
 import Mixin.Html as Html exposing (Html)
 import Page.Login as PageLogin
+import Page.Home as PageHome
 import Procedure as AppProcedure
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
 import Procedure.Channel exposing (Channel)
 import Procedure.Modifier as Modifier exposing (Modifier)
-import Procedure.Scenario as Scenario exposing (Operation)
+import Procedure.Scenario as Scenario
 import Url exposing (Url)
 
 
@@ -71,10 +71,9 @@ type Page
     = PageLoading
     | PageNotFound
     | PageLogin ( Channel, PageLogin.Memory )
+    | PageHome ( Channel, PageHome.Memory )
 
 
-
--- | PageHome ( Channel, PageHome.Memory )
 -- | PageUsers ( Channel, PageUsers.Memory )
 -- View
 
@@ -94,14 +93,11 @@ view memory =
                 PageLogin.view pageLogin
                     |> Html.map (Procedure.mapMsg PageLoginEvent)
 
-        {-
-           PageHome pageHome ->
-               VPack.child
-                   app
-                   PageHomeEvent
-                   (\_ -> PageHome.view)
-                   pageHome
+            PageHome pageHome ->
+                PageHome.view pageHome
+                    |> Html.map (Procedure.mapMsg PageHomeEvent)
 
+        {-
            PageUsers pageUsers ->
                VPack.child
                    app
@@ -140,7 +136,7 @@ type Event
     = LinkClicked Browser.UrlRequest
     | UrlChanged Url
     | PageLoginEvent PageLogin.Event
-      -- | PageHomeEvent PageHome.Event
+    | PageHomeEvent PageHome.Event
       -- | PageUsersEvent PageUsers.Event
     | ReceiveSession (Result Http.Error Session)
 
@@ -149,7 +145,7 @@ type Event
 -}
 type Command e
     = PageLoginCommand (PageLogin.Command e)
-      -- | PageHomeCommand (PageHome.Command e)
+    | PageHomeCommand (PageHome.Command e)
       -- | PageUsersCommand (PageUsers.Command e)
     | SessionCommand (Session.Command e)
     | PushUrl Key String
@@ -164,8 +160,8 @@ runCommand cmd =
         PageLoginCommand c ->
             PageLogin.runCommand c
 
-        -- PageHomeCommand c ->
-        --     PageHome.runCommand c
+        PageHomeCommand c ->
+            PageHome.runCommand c
         -- PageUsersCommand c ->
         --     PageUsers.runCommand c
         SessionCommand c ->
@@ -372,17 +368,7 @@ runPageLoginProcedure :
     Procedure (PageLogin.Command PageLogin.Event) m PageLogin.Event
     -> Procedure (Command Event) m Event
 runPageLoginProcedure =
-    Procedure.wrapEvent
-        { wrap = PageLoginEvent
-        , unwrap =
-            \e ->
-                case e of
-                    PageLoginEvent e1 ->
-                        Just e1
-
-                    _ ->
-                        Nothing
-        }
+    Procedure.wrapEvent page.login.event
         >> Procedure.mapCmd (PageLoginCommand << PageLogin.mapCommand PageLoginEvent)
 
 
@@ -424,40 +410,113 @@ extractSession memory =
         PageLogin ( _, { msession } ) ->
             msession
 
+        PageHome ( _, { session } ) ->
+            Just session
 
-
--- PageHome ( _, { session } ) ->
---     Just session
 -- PageUsers ( _, { session } ) ->
 --     Just session
 
 
 -- Scenario
 
-
-operation :
-    { loadPage : Url -> Operation Event
-    , pageLoginEvent : Operation PageLogin.Event -> Operation Event
+scenario : Scenario.Session (Command Event) Memory Event ->
+    { user :
+        { comment : String -> Scenario (Command Event) Memory Event
+        , setUrl : Url -> Scenario (Command Event) Memory Event
+        }
+    , system :
+        { comment : String -> Scenario (Command Event) Memory Event
+        }
+    , external :
+        {}
     }
-operation =
-    { loadPage = \url ->
-        Scenario.operation
-            ("Enter URL: " ++ Url.toString url)
-            (UrlChanged url)
-    , pageLoginEvent = Scenario.mapOperation PageLoginEvent
+scenario session =
+    { user =
+        { comment = Scenario.userComment session
+        , setUrl = \url ->
+            Scenario.userEvent session
+                ("Set URL: " ++ Url.toString url)
+                (UrlChanged url)
+        }
+    , system =
+        { comment = Scenario.systemComment session
+        }
+    , external =
+        {}
     }
 
 
-state :
-    { onLoginPage : Scenario.State Memory
+page :
+    { login : Scenario.Page (Command Event) Memory Event (PageLogin.Command PageLogin.Event) PageLogin.Memory PageLogin.Event
+    , home : Scenario.Page (Command Event) Memory Event (PageHome.Command PageHome.Event) PageHome.Memory PageHome.Event
     }
-state =
-    { onLoginPage = Scenario.state "Render sign up page"
-        <| \m ->
-            case m.page of
-                PageLogin _ ->
-                    Nothing
+page =
+    { login =
+        { memory =
+            { unwrap =
+                \m ->
+                    case m.page of
+                        PageLogin pageLogin ->
+                            Just pageLogin
 
-                _ ->
-                    Just m.page
+                        _ ->
+                            Nothing
+            , wrap = PageLogin
+            }
+        , event =
+            { unwrap =
+                \e ->
+                    case e of
+                        PageLoginEvent e1 ->
+                            Just e1
+
+                        _ ->
+                            Nothing
+            , wrap = PageLoginEvent
+            }
+        , command =
+            { unwrap =
+                \c ->
+                    case c of
+                        PageLoginCommand c1 ->
+                            Just c1
+                        _ ->
+                            Nothing
+            , wrap = PageLoginCommand
+            }
+        }
+    , home =
+        { memory =
+            { unwrap =
+                \m ->
+                    case m.page of
+                        PageHome pageHome ->
+                            Just pageHome
+
+                        _ ->
+                            Nothing
+            , wrap = PageHome
+            }
+        , event =
+            { unwrap =
+                \e ->
+                    case e of
+                        PageHomeEvent e1 ->
+                            Just e1
+
+                        _ ->
+                            Nothing
+            , wrap = PageHomeEvent
+            }
+        , command =
+            { unwrap =
+                \c ->
+                    case c of
+                        PageHomeCommand c1 ->
+                            Just c1
+                        _ ->
+                            Nothing
+            , wrap = PageHomeCommand
+            }
+        }
     }

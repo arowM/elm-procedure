@@ -18,7 +18,6 @@ import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
 import Procedure.Advanced as Procedure exposing (Msg, ObserverId, Procedure)
-import Procedure.Observer as Observer exposing (Observer)
 import Widget.Toast as Toast
 
 
@@ -188,7 +187,7 @@ editAccountFormView ( oid, param ) =
 {-| -}
 type Command e
     = ToastCommand (Toast.Command e)
-    | EditAccountCommand (EditAccount.Command e)
+    | RequestEditAccount (Result Http.Error EditAccount.Response -> Msg e) EditAccount.EditAccount
 
 
 {-| -}
@@ -198,8 +197,20 @@ runCommand cmd =
         ToastCommand toastCommand ->
             Toast.runCommand toastCommand
 
-        EditAccountCommand editAccountCommand ->
-            EditAccount.runCommand editAccountCommand
+        RequestEditAccount toMsg editAccount ->
+            EditAccount.request toMsg editAccount
+
+
+{-| -}
+mapCommand : (e1 -> e0) -> Command e1 -> Command e0
+mapCommand f cmd =
+    case cmd of
+        ToastCommand toastCommand ->
+            ToastCommand <|
+                Toast.mapCommand f toastCommand
+
+        RequestEditAccount toMsg editAccount ->
+            RequestLogin (\res -> Procedure.mapMsg f (toMsg res)) editAccount
 
 
 {-| -}
@@ -214,54 +225,19 @@ type alias Procedures m e =
 {-| -}
 procedures :
     Key
-    -> Observer m e Memory Event
+    -> Modifier m Memory
     -> Procedures m e
 procedures key page =
-    let
-        toast =
-            Observer.inherit
-                { get = .toast
-                , set = \m2 m1 -> { m1 | toast = m2 }
-                , unwrap =
-                    \e1 ->
-                        case e1 of
-                            ToastEvent e2 ->
-                                Just e2
-
-                            _ ->
-                                Nothing
-                , wrap = ToastEvent
-                }
-                page
-
-        mainPage =
-            Observer.inherit
-                { get = .pageView
-                , set = \m2 m1 -> { m1 | pageView = m2 }
-                , unwrap =
-                    \e1 ->
-                        case e1 of
-                            MainPageEvent e2 ->
-                                Just e2
-
-                            _ ->
-                                Nothing
-                , wrap = MainPageEvent
-                }
-                page
-    in
-    [ Procedure.jump mainPage <|
-        \_ -> mainPageProcedures key page toast mainPage
+    [ Procedure.async <|
+        mainPageProcedures key page
     ]
 
 
 mainPageProcedures :
     Key
-    -> Observer m e Memory Event
-    -> Observer m e Toast.Memory Toast.Event
-    -> Observer m e MainPageMemory MainPageEvent
+    -> Modifier m Memory
     -> Procedures m e
-mainPageProcedures key page toast mainPage =
+mainPageProcedures key page =
     [ Procedure.await mainPage <|
         \event _ ->
             case event of

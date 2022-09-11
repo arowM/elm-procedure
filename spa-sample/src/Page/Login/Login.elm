@@ -40,6 +40,7 @@ import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
 import Url.Builder as Url
+import Procedure.Advanced exposing (Request)
 
 
 
@@ -67,8 +68,8 @@ type alias Response =
 
 {-| Request server for login.
 -}
-request : (Result Http.Error Response -> msg) -> Login -> Cmd msg
-request toEvent (Login login) =
+request : Login -> Request msg (Result Http.Error Response)
+request (Login login) toEvent =
     let
         decoder : JD.Decoder Response
         decoder =

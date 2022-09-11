@@ -1,16 +1,12 @@
 module App.Session exposing
     ( Session
     , fetch
-    , Command(..)
-    , runCommand
     )
 
 {-|
 
 @docs Session
 @docs fetch
-@docs Command
-@docs runCommand
 
 -}
 
@@ -18,7 +14,7 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Modifier, Msg, Request)
+import Procedure.Advanced as Procedure exposing (Msg)
 import Url.Builder as Url
 
 
@@ -31,30 +27,8 @@ type alias Session =
 
 {-| Fetch user information from the server.
 -}
-fetch :
-    Modifier m m1
-    -> Request cmd m e1 (Command e1) (Result Http.Error Session)
-fetch =
-    Procedure.request <|
-        \_ publish ->
-            FetchSession publish
-
-
-{-| -}
-type Command e
-    = FetchSession (Result Http.Error Session -> Msg e)
-
-
-{-| -}
-runCommand : Command e -> Cmd (Msg e)
-runCommand cmd =
-    case cmd of
-        FetchSession msg ->
-            fetchSession msg
-
-
-fetchSession : (Result Http.Error Session -> Msg e) -> Cmd (Msg e)
-fetchSession toEvent =
+fetch : (Result Http.Error Session -> Msg e) -> Cmd (Msg e)
+fetch toEvent =
     let
         decoder : JD.Decoder Session
         decoder =

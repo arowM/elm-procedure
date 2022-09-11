@@ -188,7 +188,7 @@ runCommand cmd =
             Toast.runCommand toastCommand
 
         RequestLogin toMsg login ->
-            Login.request toMsg login
+            Login.request login toMsg
 
         PushUrl key url ->
             Nav.pushUrl key url
@@ -278,44 +278,33 @@ submitLoginProcedures :
     Url
     -> Key
     -> Login.Form
-    -> Modifier m Memory
     -> List (Procedure (Command Event) m Event)
-submitLoginProcedures url key formState page =
-    let
-        loginForm : Modifier m LoginFormMemory
-        loginForm =
-            Modifier.dig
-                { get = .loginForm
-                , set = \a m -> { m | loginForm = a }
-                }
-                page
-
-        toast : Modifier m Toast.Memory
-        toast =
-            Modifier.dig
-                { get = .toast
-                , set = \a m -> { m | toast = a }
-                }
-                page
-    in
-    [ Procedure.modify loginForm <|
-        \m -> { m | isBusy = True }
+submitLoginProcedures url key formState =
+    [ Procedure.modify <|
+        \({ loginForm } as m) ->
+            { m
+                | loginForm =
+                    { loginForm | isBusy = True }
+            }
     , case Login.fromForm formState of
         Err _ ->
-            [ Procedure.modify loginForm <|
-                \m ->
+            [ Procedure.modify <|
+                \({ loginForm } as m) ->
                     { m
-                        | isBusy = False
-                        , showError = True
+                        | loginForm =
+                            { loginForm
+                                | isBusy = False
+                                , showError = True
+                            }
                     }
-            , Procedure.jump page <| \_ -> loginFormProcedures url key page
+            , Procedure.jump <| \_ -> loginFormProcedures url key page
             ]
                 |> Procedure.batch
 
         Ok login ->
-            [ Procedure.push page <|
+            [ Procedure.push <|
                 \_ toMsg -> RequestLogin (ReceiveLoginResp >> toMsg) login
-            , Procedure.await loginForm <|
+            , Procedure.await <|
                 \event _ ->
                     case event of
                         ReceiveLoginResp (Err err) ->

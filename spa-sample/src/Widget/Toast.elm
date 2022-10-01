@@ -3,8 +3,7 @@ module Widget.Toast exposing
     , init
     , view
     , Event
-    , Command(..)
-    , mapCommand
+    , Command
     , runCommand
     , pushWarning
     , pushError
@@ -21,7 +20,6 @@ module Widget.Toast exposing
 @docs view
 @docs Event
 @docs Command
-@docs mapCommand
 @docs runCommand
 
 
@@ -44,7 +42,6 @@ import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
 import Procedure.Channel as Channel exposing (Channel)
-import Procedure.Modifier as Modifier exposing (Modifier)
 import Process
 import Task
 
@@ -115,20 +112,12 @@ type Event
 
 
 {-| -}
-type Command e
-    = Sleep Float (Msg e)
+type Command
+    = Sleep Float (Msg Event)
 
 
 {-| -}
-mapCommand : (e1 -> e0) -> Command e1 -> Command e0
-mapCommand f cmd =
-    case cmd of
-        Sleep msec msg ->
-            Sleep msec (Procedure.mapMsg f msg)
-
-
-{-| -}
-runCommand : Command e -> Cmd (Msg e)
+runCommand : Command -> Cmd (Msg Event)
 runCommand cmd =
     case cmd of
         Sleep msec msg ->
@@ -142,20 +131,20 @@ runCommand cmd =
 
 {-| Show warning message.
 -}
-pushWarning : String -> Modifier m Memory -> Procedure (Command Event) m Event
+pushWarning : String -> Procedure Command Memory Event
 pushWarning =
     pushItem WarningMessage
 
 
 {-| Show error message.
 -}
-pushError : String -> Modifier m Memory -> Procedure (Command Event) m Event
+pushError : String -> Procedure Command Memory Event
 pushError =
     pushItem ErrorMessage
 
 
-pushItem : MessageType -> String -> Modifier m Memory -> Procedure (Command Event) m Event
-pushItem type_ str widget =
+pushItem : MessageType -> String -> Procedure Command Memory Event
+pushItem type_ str =
     let
         newItem =
             { isHidden = False
@@ -165,33 +154,44 @@ pushItem type_ str widget =
     in
     Procedure.observe newItem <|
         \( channel, newItemMemory ) ->
-            let
-                toastItem =
-                    toastItemModifier channel widget
-            in
-            [ Procedure.modify widget <|
+            [ Procedure.modify <|
                 \(Memory m) ->
                     Memory
                         { m
                             | items = m.items ++ [ ( channel, newItemMemory ) ]
                         }
-            , Procedure.jump toastItem <|
-                \_ ->
-                    toastItemProcedures channel widget toastItem
+            , Procedure.asyncOn
+                { get = \(Memory m) ->
+                    List.filter (\(c, _) -> c == channel) m.items
+                        |> List.head
+                , set = \m1 (Memory m) ->
+                    Memory
+                        { m
+                            | items =
+                                List.map
+                                    (\(c, a) ->
+                                        if (c == channel) then
+                                            (c, m1)
+                                        else
+                                            (c, a)
+                                    )
+                                    m.items
+                        }
+                }
+                channel
+                <|
+                    \pointer ->
+                        [ toastItemProcedures
+                            |> Procedure.batch
+                            |> Procedure.liftMemory pointer
+                        , Procedure.modify <|
+                            \(Memory m) ->
+                                Memory
+                                    { m
+                                        | items = List.filter (\( c, _ ) -> c /= channel) m.items
+                                    }
+                        ]
             ]
-
-
-toastItemModifier :
-    Channel
-    -> Modifier m Memory
-    -> Modifier m ToastItemMemory
-toastItemModifier expected =
-    Modifier.listItem
-        { get = \(Memory m) -> m.items
-        , set = \items (Memory m) -> Memory { m | items = items }
-        }
-        expected
-
 
 
 -- ToastItem
@@ -204,15 +204,11 @@ type alias ToastItemMemory =
     }
 
 
-toastItemProcedures :
-    Channel
-    -> Modifier m Memory
-    -> Modifier m ToastItemMemory
-    -> List (Procedure (Command Event) m Event)
-toastItemProcedures channel widget toastItem =
+toastItemProcedures : List (Procedure Command ToastItemMemory Event)
+toastItemProcedures =
     [ Procedure.race
-        [ sleep toastTimeout widget
-        , Procedure.await toastItem <|
+        [ sleep toastTimeout
+        , Procedure.await <|
             \event _ ->
                 case event of
                     CloseToastItem ->
@@ -222,29 +218,22 @@ toastItemProcedures channel widget toastItem =
                     _ ->
                         []
         ]
-    , Procedure.modify toastItem <|
+    , Procedure.modify <|
         \m -> { m | isHidden = True }
-    , sleep toastDisappearingDuration widget
-    , Procedure.modify widget <|
-        \(Memory m) ->
-            Memory
-                { m
-                    | items = List.filter (\( id, _ ) -> id /= channel) m.items
-                }
+    , sleep toastDisappearingDuration
     ]
 
 
 sleep :
     Float
-    -> Modifier m Memory
-    -> Procedure (Command Event) m Event
-sleep msec widget =
+    -> Procedure Command m Event
+sleep msec =
     -- Procedure.protected creates sandbox,
     -- in which procedures pub/sub Events to/from their private Channel.
     Procedure.protected
-        [ Procedure.push widget <|
-            \_ publish -> Sleep msec (publish WakeUp)
-        , Procedure.await widget <|
+        [ Procedure.push <|
+            \_ toMsg -> Sleep msec (toMsg WakeUp)
+        , Procedure.await <|
             \event _ ->
                 case event of
                     WakeUp ->
@@ -264,29 +253,23 @@ sleep msec widget =
 -}
 pushHttpError :
     Http.Error
-    -> Modifier m Memory
-    -> Procedure (Command Event) m Event
-pushHttpError err widget =
+    -> Procedure Command Memory Event
+pushHttpError err =
     case err of
         Http.BadStatus 401 ->
             pushError """Login required."""
-                widget
 
         Http.BadStatus 403 ->
             pushError """Operation not permitted."""
-                widget
 
         Http.Timeout ->
             pushError """Network error, please try again."""
-                widget
 
         Http.NetworkError ->
             pushError """Network error, please try again."""
-                widget
 
         _ ->
             pushError """Internal error, please contact our support team."""
-                widget
 
 
 

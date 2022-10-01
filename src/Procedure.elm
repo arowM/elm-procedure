@@ -3,7 +3,8 @@ module Procedure exposing
     , none
     , batch
     , wrapEvent
-    , Modifier
+    , liftMemory
+    , Pointer
     , Channel
     , publish
     , element
@@ -15,18 +16,20 @@ module Procedure exposing
     , mapMsg
     , modify
     , push
+    , Request
+    , runRequest
     , subscribe
     , subscribeOnce
     , await
     , async
+    , asyncOn
     , sync
     , race
     , quit
     , jump
     , protected
-    , request
     , portRequest
-    , Request
+    , withMemory
     , when
     , unless
     , withMaybe
@@ -37,8 +40,9 @@ module Procedure exposing
     , documentView
     , subscriptions
     , init
-    , rootMsg
     , Model
+    , onUrlChange
+    , onUrlRequest
     )
 
 {-|
@@ -50,11 +54,8 @@ module Procedure exposing
 @docs none
 @docs batch
 @docs wrapEvent
-
-
-# Modifier
-
-@docs Modifier
+@docs liftMemory
+@docs Pointer
 
 
 # Channel
@@ -82,10 +83,13 @@ The [low level API](#low-level-api) is also available for more advanced use case
 
 @docs modify
 @docs push
+@docs Request
+@docs runRequest
 @docs subscribe
 @docs subscribeOnce
 @docs await
 @docs async
+@docs asyncOn
 @docs sync
 @docs race
 @docs quit
@@ -95,9 +99,8 @@ The [low level API](#low-level-api) is also available for more advanced use case
 
 # Helper procedures
 
-@docs request
 @docs portRequest
-@docs Request
+@docs withMemory
 @docs when
 @docs unless
 @docs withMaybe
@@ -116,21 +119,20 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs documentView
 @docs subscriptions
 @docs init
-@docs rootMsg
 @docs Model
+@docs onUrlChange
+@docs onUrlRequest
 
 -}
 
 import Browser exposing (Document)
 import Browser.Navigation exposing (Key)
 import Html exposing (Html)
-import Internal.Channel as Channel
-import Platform
-import Procedure.Advanced as Advanced exposing (Msg)
-import Procedure.Modifier exposing (Modifier)
-import Url exposing (Url)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
+import Platform
+import Procedure.Advanced as Advanced exposing (Msg)
+import Url exposing (Url)
 
 
 
@@ -170,18 +172,13 @@ wrapEvent wrapper proc =
             (Cmd.map (mapMsg wrapper.wrap))
 
 
-
--- Modifier
-
-
-{-| The _Modifier_ is the concept for readng or modifying the specific part of a Memory.
-
-Note that Modifiers can be _expired_ when their target parts have gone.
-For example, a Modifier for a list item will be expired when the item is removed from the list.
-
--}
-type alias Modifier memory part =
-    Advanced.Modifier memory part
+{-| -}
+liftMemory :
+    Pointer m0 m1
+    -> Procedure m1 e
+    -> Procedure m0 e
+liftMemory =
+    Advanced.liftMemory
 
 
 
@@ -210,7 +207,7 @@ publish =
 element :
     { init : memory
     , procedures : flags -> List (Procedure memory event)
-    , view : memory -> Html (Msg event)
+    , view : (Channel, memory) -> Html (Msg event)
     }
     -> Program flags memory event
 element option =
@@ -229,7 +226,7 @@ element option =
 document :
     { init : memory
     , procedures : flags -> List (Procedure memory event)
-    , view : memory -> Document (Msg event)
+    , view : (Channel, memory) -> Document (Msg event)
     }
     -> Program flags memory event
 document option =
@@ -245,13 +242,13 @@ document option =
 
 {-| Procedure version of [Browser.application](https://package.elm-lang.org/packages/elm/browser/latest/Browser#application).
 
-The `onUrlRequest` and `onUrlChange` Events are published to the root Channel.
+The `onUrlRequest` and `onUrlChange` Events are published to the application root Channel.
 
 -}
 application :
     { init : memory
     , procedures : flags -> Url -> Key -> List (Procedure memory event)
-    , view : memory -> Document (Msg event)
+    , view : (Channel, memory) -> Document (Msg event)
     , onUrlRequest : Browser.UrlRequest -> event
     , onUrlChange : Url -> event
     }
@@ -264,29 +261,9 @@ application option =
         , view = documentView option.view
         , update = update
         , subscriptions = subscriptions
-        , onUrlRequest = option.onUrlRequest >> rootMsg
-        , onUrlChange = option.onUrlChange >> rootMsg
+        , onUrlRequest = onUrlRequest option.onUrlRequest
+        , onUrlChange = onUrlChange option.onUrlChange
         }
-
-
-{-| Publish Events to the root Channel.
-You can use it for building your own `Browser.application`:
-
-    Browser.application
-        { init =
-            \flags url key ->
-                Procedure.init init (procedures flags url key)
-        , view = Procedure.documentView view
-        , update = Procedure.update
-        , subscriptions = Procedure.subscriptions
-        , onUrlRequest = OnUrlRequest >> Procedure.rootMsg
-        , onUrlChange = OnUrlChange >> Procedure.rootMsg
-        }
-
--}
-rootMsg : event -> Msg event
-rootMsg =
-    publish Channel.init
 
 
 {-| An alias for [Platform.Program](https://package.elm-lang.org/packages/elm/core/latest/Platform#Program).
@@ -306,27 +283,37 @@ type alias Document event =
 
 
 {-| Construct a `Procedure` instance that modifies the memory state.
-If the given `Modifier` has already expired, it does nothing and is just skipped.
 
 Note that the update operation, passed as the second argument, is performed atomically; it means the state of the memory is not updated by another process during it is read and written by the `modify`.
 
 -}
-modify : Modifier m m1 -> (m1 -> m1) -> Procedure m e
+modify : (m -> m) -> Procedure m e
 modify =
     Advanced.modify
 
 
 {-| Construct a `Procedure` instance that issues a Command.
-If the given `Modifier` has already expired, it does nothing and is just skipped.
 
 Because `push` is a relatively low level function, `request` will be useful for most cases.
 
 -}
-push : Modifier m m1 -> (m1 -> Cmd e) -> Procedure m e
-push mod f =
-    Advanced.push mod <|
-        \m1 toMsg -> Cmd.map toMsg (f m1)
+push : (m -> (e -> Msg e) -> Cmd (Msg e)) -> Procedure m e
+push =
+    Advanced.push
 
+
+{-| Convenient alias for requests.
+-}
+type alias Request msg a =
+    (a -> msg) -> Cmd msg
+
+
+{-| -}
+runRequest : (a -> e) -> Request (Msg e) a -> Procedure m e
+runRequest toEvent req =
+    push <|
+        \_ toMsg ->
+            req (toEvent >> toMsg)
 
 
 {-| Construct a `Procedure` instance that subscribes a Subscription.
@@ -334,33 +321,31 @@ The Subscription lives untill the given Procedure list is completed.
 In other words, the Events issued by this Subscription can only be caught by `await`s inside the given Procedure list.
 -}
 subscribe :
-    Sub e1
-    -> List (Procedure m e1)
-    -> Procedure m e1
+    Sub e
+    -> List (Procedure m e)
+    -> Procedure m e
 subscribe =
     Advanced.subscribe
 
 
 {-| Like `subscribe`, but it quit subscribing when it receives first event.
 -}
-subscribeOnce : Sub e1 -> Procedure m e1
+subscribeOnce : Sub e -> Procedure m e
 subscribeOnce =
     Advanced.subscribeOnce
 
 
-{-| Construct a `Procedure` instance that awaits Events for a Channel.
-If the second argument returns empty list, it awaits again; otherwise, it evaluates the returned `Procedure`.
+{-| Construct a `Procedure` instance that awaits Events for the Channel.
+If the callback function returns empty list, it awaits again; otherwise, it evaluates the returned `Procedure`.
 For example, the following `await` awaits again if it receives `Event1`; or, it just proceeds to the next procedure if it receives `Event2`.
 
-    [ Procedure.await modifier <|
+    [ Procedure.await <|
         \e _ ->
             case e of
                 Event1 -> []
                 Event2 -> [ Procedure.none ]
     , nextProcedures
     , ...
-
-If the given `Modifier` has already expired, it awaits forever.
 
 Note1: The memory state passed to the callback function may become outdated during running the process for the `Procedure` retuned by the function, so it is safe to use this value only to determine whether to accept or ignore events.
 
@@ -369,10 +354,7 @@ Note2: Technically, all the `modify` `push` `async` procedures appeared before t
 Note3: `push`s written before an `await` will not necessarily cause events in the written order. For example, if the first `push` sends a request to the server and it fires an event with its result, and the second `push` sleeps for 0.1 seconds and then returns another event, the first event can fire later if the server is slow to respond. To avoid this situation, after using one `push`, catch it with `await` and use the next `push`. The `sync` can be also helpfull for handling such situations.
 
 -}
-await :
-    Modifier m m1
-    -> (e -> m1 -> List (Procedure m e))
-    -> Procedure m e
+await : (e -> m -> List (Procedure m e)) -> Procedure m e
 await =
     Advanced.await
 
@@ -390,6 +372,27 @@ Note: When multiple `async`s are called, there is no guarantee that the procedur
 async : List (Procedure m e) -> Procedure m e
 async =
     Advanced.async
+
+
+{-| Same as `Procedure.Pointer`.
+-}
+type alias Pointer m m1 =
+    { get : m -> Maybe m1
+    , modify : (m1 -> m1) -> m -> m
+    }
+
+
+{-| Similar to `async`, but given Procedures `await` for the given Channel.
+-}
+asyncOn :
+    { get : m -> Maybe ( Channel, m1 )
+    , set : m1 -> m -> m
+    }
+    -> Channel
+    -> (Pointer m m1 -> List (Procedure m e))
+    -> Procedure m e
+asyncOn =
+    Advanced.asyncOn
 
 
 {-| Construct a `Procedure` instance that wait for all the given `Procedure`s to be completed.
@@ -425,7 +428,6 @@ quit =
 
 
 {-| Ignore subsequent `Procedure`s, and just evaluate given `Procedure`s.
-If the given `Modifier` has already expired, it acts as the `quit`.
 
 It is convenient for following two situations.
 
@@ -437,19 +439,19 @@ Calling itself in the Procedure will result in a compile error; the `jump` enabl
     import Procedure exposing (Msg, Procedure)
     import Time exposing (Posix)
 
-    clockProcedures : Modifier m Memory -> List (Procedure m Event)
-    clockProcedures page =
-        [ Procedure.await page <|
+    clockProcedures : List (Procedure Memory Event)
+    clockProcedures =
+        [ Procedure.await <|
             \event _ ->
                 case event of
                     ReceiveTick time ->
-                        [ Procedure.modify page <|
+                        [ Procedure.modify <|
                             \m -> { m | time = time }
                         ]
 
                     _ ->
                         []
-        , Procedure.jump page <| \_ -> clockProcedures page
+        , Procedure.jump <| \_ -> clockProcedures
         ]
 
 
@@ -457,21 +459,20 @@ Calling itself in the Procedure will result in a compile error; the `jump` enabl
 
 Sometimes you may want to handle errors as follows:
 
-    unsafePruning : Modifier m Memory -> List (Procedure m Event)
-    unsafePruning page =
-        [ requestPosts page
-        , Procedure.await page <|
+    unsafePruning : List (Procedure Memory Event)
+    unsafePruning =
+        [ requestPosts
+        , Procedure.await <|
             \event _ ->
                 case event of
                     ReceivePosts (Err error) ->
-                        [ handleError error page
+                        [ handleError error
                             |> Procedure.batch
                         ]
 
                     ReceivePosts (Ok posts) ->
-                        [ Procedure.modify page <|
-                            \memory ->
-                                { memory | posts = posts }
+                        [ Procedure.modify <|
+                            \m -> { m | posts = posts }
                         ]
 
                     _ ->
@@ -481,20 +482,19 @@ Sometimes you may want to handle errors as follows:
 
 It appears to be nice, but it does not work as intended. Actually, the above `Procedure`s can evaluate the `proceduresForNewPosts` even after evaluating `handleError`. To avoid this, you can use `jump`:
 
-    safePruning : Modifier m Memory -> List (Procedure m Event)
-    safePruning page =
-        [ requestPosts page
-        , Procedure.await page <|
+    safePruning : List (Procedure Memory Event)
+    safePruning =
+        [ requestPosts
+        , Procedure.await <|
             \event _ ->
                 case event of
                     ReceivePosts (Err error) ->
-                        [ Procedure.jump page <| \_ -> handleError error page
+                        [ Procedure.jump <| \_ -> handleError error
                         ]
 
                     ReceivePosts (Ok posts) ->
-                        [ Procedure.modify page <|
-                            \memory ->
-                                { memory | posts = posts }
+                        [ Procedure.modify <|
+                            \m -> { m | posts = posts }
                         ]
 
                     _ ->
@@ -504,8 +504,7 @@ It appears to be nice, but it does not work as intended. Actually, the above `Pr
 
 -}
 jump :
-    Modifier m m1
-    -> (m1 -> List (Procedure m e))
+    (() -> List (Procedure m e))
     -> Procedure m e
 jump =
     Advanced.jump
@@ -513,16 +512,16 @@ jump =
 
 {-| Construct a `Procedure` instance that uses private Channel.
 
-    sleep : Float -> Modifier m Memory -> Procedure m Event
-    sleep msec page =
+    sleep : Float -> Procedure m Event
+    sleep msec =
         Procedure.protected
-            [ Procedure.push page <|
-                \_ ->
+            [ Procedure.push <|
+                \_ toMsg ->
                     -- This publishes `WakeUp` event for private Channel,
                     -- so it only affects within `protected`.
                     Process.sleep msec
-                        |> Task.perform (\() -> WakeUp)
-            , Procedure.await page <|
+                        |> Task.perform (\() -> toMsg WakeUp)
+            , Procedure.await <|
                 \event _ ->
                     case event of
                         WakeUp ->
@@ -549,6 +548,13 @@ protected =
 -- Helper procedures
 
 
+{-| Determine next Procedures with current memory state.
+-}
+withMemory : (m -> List (Procedure m e)) -> Procedure m e
+withMemory =
+    Advanced.withMemory
+
+
 {-| Evaluate the given `Procedure`s only if the first argument is `True`, otherwise same as `none`.
 -}
 when : Bool -> List (Procedure m e) -> Procedure m e
@@ -572,14 +578,6 @@ withMaybe =
 
 
 -- Local procedures
-
-
-{-| Helper function to issue an request via HTTP etc.
-An example use case can be found on `App.Session` module in [spa-sample](https://github.com/arowM/elm-procedure-architecture/tree/main/spa-sample).
--}
-request : (m1 -> (a -> Msg e1) -> Cmd (Msg e1)) -> Modifier m m1 -> Request m e1 a
-request f observer =
-    Advanced.request f observer identity
 
 
 {-| Helper function to do subscribe and send for a port in one safe operation.
@@ -612,61 +610,53 @@ app.ports.requestGetLocalName.subscribe((req) => {
 
 In Elm side:
 
-```elm
-import App.UserId as UserId exposing (UserId)
-import Json.Decode as JD
-import Json.Encode as JE
-import Procedure exposing (Procedure, Request)
-import Procedure.Modifier as Modifier exposing (Modifier)
+    import App.UserId as UserId exposing (UserId)
+    import Json.Decode as JD
+    import Json.Encode as JE
+    import Procedure exposing (Procedure, Request)
 
 
-getLocalName : UserId -> Request m Event (Result JD.Error String)
-getLocalName uid =
-    Procedure.portRequest
-        { requestPort = requestGetLocalName
-        , requestBody = \_ ->
-            JE.object
-                [ ( "userId", UserId.toValue uid )
-                ]
-        , responsePort = receiveGetLocalName
-        , responseBody = JD.field "name" (JD.nullable JD.string)
-        }
-        Modifier.root
-
-
-myProcedures : UserId -> Modifier m Memory -> List (Procedure m Event)
-myProcedures uid page =
-    [ getLocalName uid
-        ReceiveLocalName
-    , Procedure.await page <|
-        \event _ ->
-            case event of
-                ReceiveLocalName name ->
-                    [ Procedure.modify page <|
-                        \m -> setUserName uid name m
+    getLocalName : UserId -> Procedure Memory Event
+    getLocalName uid =
+        Procedure.portRequest
+            { requestPort = requestGetLocalName
+            , requestBody = \_ ->
+                JE.object
+                    [ ( "userId", UserId.toValue uid )
                     ]
+            , responsePort = receiveGetLocalName
+            , responseBody = JD.field "name" (JD.nullable JD.string)
+            }
+            ReceiveLocalName
 
-                _ ->
-                    []
-    , ...
-    ]
-```
+
+    myProcedures : UserId -> List (Procedure Memory Event)
+    myProcedures uid =
+        [ getLocalName uid
+        , Procedure.await <|
+            \event _ ->
+                case event of
+                    ReceiveLocalName name ->
+                        [ Procedure.modify <|
+                            \m -> setUserName uid name m
+                        ]
+
+                    _ ->
+                        []
+        , ...
+        ]
+
 -}
 portRequest :
-    { requestPort : Value -> Cmd (Msg e1)
-    , requestBody : (m1 -> Value)
-    , responsePort : (Value -> (Msg e1)) -> Sub (Msg e1)
+    { requestPort : Value -> Cmd (Msg e)
+    , requestBody : m -> Value
+    , responsePort : (Value -> Msg e) -> Sub (Msg e)
     , responseBody : Decoder a
     }
-    -> Modifier m m1
-    -> Request m e1 (Result JD.Error a)
-portRequest conf mod =
-    Advanced.portRequest conf mod identity
-
-
-{-| -}
-type alias Request m e a =
-    (a -> e) -> Procedure m e
+    -> (Result JD.Error a -> e)
+    -> Procedure m e
+portRequest =
+    Advanced.portRequest
 
 
 
@@ -731,16 +721,30 @@ init initialMemory procs =
 
 {-| Construct the TEA element view function.
 -}
-elementView : (memory -> Html (Msg event)) -> Model memory event -> Html (Msg event)
+elementView : ((Channel, memory) -> Html (Msg event)) -> Model memory event -> Html (Msg event)
 elementView =
     Advanced.elementView
 
 
 {-| Construct the TEA document view function.
 -}
-documentView : (memory -> Document (Msg event)) -> Model memory event -> Document (Msg event)
+documentView : ((Channel, memory) -> Document (Msg event)) -> Model memory event -> Document (Msg event)
 documentView =
     Advanced.documentView
+
+
+{-| Construct the TEA `onUrlChange` property value.
+-}
+onUrlChange : (Url -> event) -> Url -> Msg event
+onUrlChange =
+    Advanced.onUrlChange
+
+
+{-| Construct the TEA `onUrlRequest` property value.
+-}
+onUrlRequest : (Browser.UrlRequest -> event) -> Browser.UrlRequest -> Msg event
+onUrlRequest =
+    Advanced.onUrlRequest
 
 
 {-| TEA Message that wraps your events.

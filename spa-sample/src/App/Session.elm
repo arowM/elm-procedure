@@ -14,7 +14,6 @@ import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
-import Procedure.Advanced as Procedure exposing (Msg)
 import Url.Builder as Url
 
 
@@ -27,8 +26,8 @@ type alias Session =
 
 {-| Fetch user information from the server.
 -}
-fetch : (Result Http.Error Session -> Msg e) -> Cmd (Msg e)
-fetch toEvent =
+fetch : (Result Http.Error Session -> msg) -> Cmd msg
+fetch toMsg =
     let
         decoder : JD.Decoder Session
         decoder =
@@ -52,5 +51,5 @@ fetch toEvent =
                 JE.object
                     []
         , expect =
-            Http.expectJson toEvent decoder
+            Http.expectJson toMsg decoder
         }

@@ -1,7 +1,9 @@
 module Page.Login.Login exposing
     ( request
     , Login
+    , toValue
     , Response
+    , decodeResponse
     , Form
     , initForm
     , FormError(..)
@@ -17,7 +19,9 @@ module Page.Login.Login exposing
 
 @docs request
 @docs Login
+@docs toValue
 @docs Response
+@docs decodeResponse
 
 
 # Form decoding
@@ -40,7 +44,6 @@ import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Json.Encode as JE
 import Url.Builder as Url
-import Procedure.Advanced exposing (Request)
 
 
 
@@ -51,6 +54,32 @@ import Procedure.Advanced exposing (Request)
 -}
 type Login
     = Login Login_
+
+
+{-| -}
+toValue : Login -> JE.Value
+toValue (Login login) =
+    JE.object
+        [ ( "id", JE.string login.id )
+        , ( "pass", JE.string login.pass )
+        ]
+
+
+{-| -}
+decodeResponse : JE.Value -> Result JD.Error Response
+decodeResponse =
+    JD.decodeValue decoder
+
+
+decoder : JD.Decoder Response
+decoder =
+    JD.succeed Response
+        |> JDP.required "profile" sessionDecoder
+
+sessionDecoder : JD.Decoder Session
+sessionDecoder =
+    JD.succeed Session
+        |> JDP.required "id" JD.string
 
 
 type alias Login_ =
@@ -68,19 +97,8 @@ type alias Response =
 
 {-| Request server for login.
 -}
-request : Login -> Request msg (Result Http.Error Response)
-request (Login login) toEvent =
-    let
-        decoder : JD.Decoder Response
-        decoder =
-            JD.succeed Response
-                |> JDP.required "profile" sessionDecoder
-
-        sessionDecoder : JD.Decoder Session
-        sessionDecoder =
-            JD.succeed Session
-                |> JDP.required "id" JD.string
-    in
+request : Login -> (Result Http.Error Response -> msg) -> Cmd msg
+request login toMsg =
     Http.post
         { url =
             Url.absolute
@@ -89,13 +107,9 @@ request (Login login) toEvent =
                 ]
                 []
         , body =
-            Http.jsonBody <|
-                JE.object
-                    [ ( "id", JE.string login.id )
-                    , ( "pass", JE.string login.pass )
-                    ]
+            Http.jsonBody <| toValue login
         , expect =
-            Http.expectJson toEvent decoder
+            Http.expectJson toMsg decoder
         }
 
 

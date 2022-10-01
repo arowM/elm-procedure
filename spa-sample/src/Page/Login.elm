@@ -1,24 +1,24 @@
 module Page.Login exposing
-    ( Command(..)
-    , Event(..)
+    ( Command
+    , Event
     , Memory
     , init
-    , mapCommand
     , procedures
     , runCommand
-    , view
     , scenario
+    , view
     )
 
 import App.Session exposing (Session)
 import Browser.Navigation as Nav exposing (Key)
+import Expect
 import Http
+import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
-import Page.Login.Login as Login exposing (Login)
+import Page.Login.Login as Login
 import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
-import Procedure.Modifier as Modifier exposing (Modifier)
 import Procedure.Scenario as Scenario
 import Url exposing (Url)
 import Widget.Toast as Toast
@@ -26,9 +26,9 @@ import Widget.Toast as Toast
 
 {-| -}
 type alias Memory =
-    { loginForm : LoginFormMemory
-    , msession : Maybe Session
+    { msession : Maybe Session
     , toast : Toast.Memory
+    , loginForm : LoginFormMemory
     }
 
 
@@ -56,12 +56,12 @@ type Event
 
 {-| -}
 view : ( Channel, Memory ) -> Html (Msg Event)
-view ( channel, param ) =
+view ( channel, memory ) =
     Html.div
         [ localClass "page"
         ]
-        [ loginFormView ( channel, param.loginForm )
-        , Toast.view param.toast
+        [ loginFormView ( channel, memory.loginForm )
+        , Toast.view memory.toast
             |> Html.map (Procedure.mapMsg ToastEvent)
         ]
 
@@ -90,18 +90,18 @@ initLoginForm =
 
 
 loginFormView : ( Channel, LoginFormMemory ) -> Html (Msg Event)
-loginFormView ( channel, param ) =
+loginFormView ( channel, memory ) =
     let
         publish =
             Procedure.publish channel
 
         errors =
-            Login.toFormErrors param.form
+            Login.toFormErrors memory.form
     in
     Html.div
         [ localClass "loginForm"
         , Mixin.boolAttribute "aria-invalid"
-            (param.showError && not (List.isEmpty errors))
+            (memory.showError && not (List.isEmpty errors))
         ]
         [ Html.node "label"
             [ localClass "loginForm_label-id"
@@ -109,8 +109,8 @@ loginFormView ( channel, param ) =
             [ Html.text "ID:"
             , Html.node "input"
                 [ Mixin.attribute "type" "text"
-                , Mixin.attribute "value" param.form.id
-                , Mixin.boolAttribute "disabled" param.isBusy
+                , Mixin.attribute "value" memory.form.id
+                , Mixin.boolAttribute "disabled" memory.isBusy
                 , Events.onChange (publish << ChangeLoginId)
                 ]
                 []
@@ -121,8 +121,8 @@ loginFormView ( channel, param ) =
             [ Html.text "Password:"
             , Html.node "input"
                 [ Mixin.attribute "type" "password"
-                , Mixin.attribute "value" param.form.pass
-                , Mixin.boolAttribute "disabled" param.isBusy
+                , Mixin.attribute "value" memory.form.pass
+                , Mixin.boolAttribute "disabled" memory.isBusy
                 , Events.onChange (publish << ChangeLoginPass)
                 ]
                 []
@@ -130,7 +130,7 @@ loginFormView ( channel, param ) =
         , Html.node "button"
             [ localClass "loginForm_submitLogin"
             , Events.onClick (publish ClickSubmitLogin)
-            , Mixin.boolAttribute "disabled" param.isBusy
+            , Mixin.boolAttribute "disabled" memory.isBusy
             ]
             [ Html.text "Login"
             ]
@@ -174,18 +174,19 @@ loginFormView ( channel, param ) =
 
 
 {-| -}
-type Command e
-    = ToastCommand (Toast.Command e)
-    | RequestLogin (Result Http.Error Login.Response -> Msg e) Login.Login
+type Command
+    = ToastCommand Toast.Command
+    | RequestLogin (Result Http.Error Login.Response -> Msg Event) Login.Login
     | PushUrl Key String
 
 
 {-| -}
-runCommand : Command e -> Cmd (Msg e)
+runCommand : Command -> Cmd (Msg Event)
 runCommand cmd =
     case cmd of
         ToastCommand toastCommand ->
             Toast.runCommand toastCommand
+                |> Cmd.map (Procedure.mapMsg ToastEvent)
 
         RequestLogin toMsg login ->
             Login.request login toMsg
@@ -194,79 +195,57 @@ runCommand cmd =
             Nav.pushUrl key url
 
 
-{-| -}
-mapCommand : (e1 -> e0) -> Command e1 -> Command e0
-mapCommand f cmd =
-    case cmd of
-        ToastCommand toastCommand ->
-            ToastCommand <|
-                Toast.mapCommand f toastCommand
-
-        RequestLogin toMsg login ->
-            RequestLogin (\res -> Procedure.mapMsg f (toMsg res)) login
-
-        PushUrl key url ->
-            PushUrl key url
-
+type alias Procedures =
+    List (Procedure Command Memory Event)
 
 
 -- -- Initialization
 
 
 {-| -}
-procedures :
-    Url
-    -> Key
-    -> Modifier m Memory
-    -> List (Procedure (Command Event) m Event)
-procedures url key page =
+procedures : Url -> Key -> Procedures
+procedures url key =
     [ Procedure.async <|
-        loginFormProcedures url key page
+        loginFormProcedures url key
     ]
 
 
-loginFormProcedures :
-    Url
-    -> Key
-    -> Modifier m Memory
-    -> List (Procedure (Command Event) m Event)
-loginFormProcedures url key page =
+loginFormProcedures : Url -> Key -> Procedures
+loginFormProcedures url key =
     let
-        loginForm : Modifier m LoginFormMemory
-        loginForm =
-            Modifier.dig
-                { get = .loginForm
-                , set = \a m -> { m | loginForm = a }
-                }
-                page
-
-        form : Modifier m Login.Form
-        form =
-            Modifier.dig
-                { get = .form
-                , set = \a m -> { m | form = a }
-                }
-                loginForm
+        modifyLoginFormFormMemory f =
+            Procedure.modify <|
+                \m ->
+                    { m
+                        | loginForm =
+                            let
+                                loginForm =
+                                    m.loginForm
+                            in
+                            { loginForm
+                                | form = f loginForm.form
+                            }
+                    }
     in
-    [ Procedure.await loginForm <|
+    [ Procedure.await <|
         \event _ ->
             case event of
                 ChangeLoginId str ->
-                    [ Procedure.modify form <|
+                    [ modifyLoginFormFormMemory <|
                         \m -> { m | id = str }
-                    , Procedure.jump page <| \_ -> loginFormProcedures url key page
+                    , Procedure.jump <| \_ -> loginFormProcedures url key
                     ]
 
                 ChangeLoginPass str ->
-                    [ Procedure.modify form <|
+                    [ modifyLoginFormFormMemory <|
                         \m -> { m | pass = str }
-                    , Procedure.jump page <| \_ -> loginFormProcedures url key page
+                    , Procedure.jump <| \_ -> loginFormProcedures url key
                     ]
 
                 ClickSubmitLogin ->
-                    [ Procedure.jump form <|
-                        \formState ->
-                            submitLoginProcedures url key formState page
+                    [ Procedure.jump <|
+                        \_ ->
+                            submitLoginProcedures url key
                     ]
 
                 _ ->
@@ -274,64 +253,69 @@ loginFormProcedures url key page =
     ]
 
 
-submitLoginProcedures :
-    Url
-    -> Key
-    -> Login.Form
-    -> List (Procedure (Command Event) m Event)
-submitLoginProcedures url key formState =
-    [ Procedure.modify <|
-        \({ loginForm } as m) ->
-            { m
-                | loginForm =
-                    { loginForm | isBusy = True }
-            }
-    , case Login.fromForm formState of
-        Err _ ->
-            [ Procedure.modify <|
+submitLoginProcedures : Url -> Key -> Procedures
+submitLoginProcedures url key =
+    let
+        modifyLoginFormMemory : (LoginFormMemory -> LoginFormMemory) -> Procedure Command Memory Event
+        modifyLoginFormMemory f =
+            Procedure.modify <|
                 \({ loginForm } as m) ->
-                    { m
-                        | loginForm =
-                            { loginForm
+                    { m | loginForm = f loginForm }
+    in
+    [ modifyLoginFormMemory <|
+        \m -> { m | isBusy = True }
+    , Procedure.withMemory <|
+        \curr ->
+            case Login.fromForm curr.loginForm.form of
+                Err _ ->
+                    [ modifyLoginFormMemory <|
+                        \m ->
+                            { m
                                 | isBusy = False
                                 , showError = True
                             }
-                    }
-            , Procedure.jump <| \_ -> loginFormProcedures url key page
-            ]
-                |> Procedure.batch
+                    , Procedure.jump <| \_ -> loginFormProcedures url key
+                    ]
 
-        Ok login ->
-            [ Procedure.push <|
-                \_ toMsg -> RequestLogin (ReceiveLoginResp >> toMsg) login
-            , Procedure.await <|
-                \event _ ->
-                    case event of
-                        ReceiveLoginResp (Err err) ->
-                            [ Toast.pushHttpError err toast
-                                |> runToastProcedure
-                            , Procedure.modify loginForm <|
-                                \m ->
-                                    { m | isBusy = False }
-                            , Procedure.jump page <|
-                                \_ ->
-                                    loginFormProcedures url key page
-                            ]
+                Ok login ->
+                    [ Procedure.push <|
+                        \_ toMsg -> RequestLogin (ReceiveLoginResp >> toMsg) login
+                    , Procedure.await <|
+                        \event _ ->
+                            case event of
+                                ReceiveLoginResp (Err err) ->
+                                    [ Toast.pushHttpError err
+                                        |> runToastProcedure
+                                    , modifyLoginFormMemory <|
+                                        \m ->
+                                            { m | isBusy = False }
+                                    , Procedure.jump <|
+                                        \_ ->
+                                            loginFormProcedures url key
+                                    ]
 
-                        ReceiveLoginResp (Ok resp) ->
-                            [ Procedure.modify loginForm <|
-                                \m -> { m | isBusy = False }
-                            , Procedure.modify page <|
-                                \m -> { m | msession = Just resp.session }
-                            , Procedure.push page <|
-                                \_ _ -> PushUrl key <| Url.toString url
-                            , Procedure.quit
-                            ]
+                                ReceiveLoginResp (Ok resp) ->
+                                    [ Procedure.modify <|
+                                        \m ->
+                                            { m
+                                                | msession = Just resp.session
+                                                , loginForm =
+                                                    let
+                                                        loginForm =
+                                                            m.loginForm
+                                                    in
+                                                    { loginForm
+                                                        | isBusy = False
+                                                    }
+                                            }
+                                    , Procedure.push <|
+                                        \_ _ -> PushUrl key <| Url.toString url
+                                    , Procedure.quit
+                                    ]
 
-                        _ ->
-                            []
-            ]
-                |> Procedure.batch
+                                _ ->
+                                    []
+                    ]
     ]
 
 
@@ -340,8 +324,8 @@ submitLoginProcedures url key formState =
 
 
 runToastProcedure :
-    Procedure (Toast.Command Toast.Event) m Toast.Event
-    -> Procedure (Command Event) m Event
+    Procedure Toast.Command Toast.Memory Toast.Event
+    -> Procedure Command Memory Event
 runToastProcedure =
     Procedure.wrapEvent
         { wrap = ToastEvent
@@ -354,44 +338,54 @@ runToastProcedure =
                     _ ->
                         Nothing
         }
-        >> Procedure.mapCmd (ToastCommand << Toast.mapCommand ToastEvent)
+        >> Procedure.mapCmd ToastCommand
+        >> Procedure.liftMemory
+            { get = .toast >> Just
+            , modify = \f m -> { m | toast = f m.toast }
+            }
+
 
 
 -- Scenario
 
 
-type alias Scenario = Scenario.Scenario (Command Event) Memory Event
+type alias Scenario =
+    Scenario.Scenario Command Memory Event
 
-scenario : Scenario.Session (Command Event) Memory Event ->
-    { user :
-        { comment : String -> Scenario
-        , changeLoginId : String -> Scenario
-        , changePass : String -> Scenario
-        , clickSubmitLogin : Scenario
-        }
-    , system :
-        { comment : String -> Scenario
-        , requestLogin : Login -> Scenario
-        }
-    , external :
-        { backend :
+
+scenario :
+    Scenario.Session Command Memory Event
+    ->
+        { user :
             { comment : String -> Scenario
-            , respondInvalidIdOrPasswordToLoginRequest : Scenario
-            , respondSuccessToLoginRequest : Login.Response -> Scenario
+            , changeLoginId : String -> Scenario
+            , changePass : String -> Scenario
+            , clickSubmitLogin : Scenario
+            }
+        , system :
+            { comment : String -> Scenario
+            , requestLogin : Value -> Scenario
+            }
+        , external :
+            { backend :
+                { comment : String -> Scenario
+                , respondToLoginRequest : Result Http.Error Login.Response -> Scenario
+                }
             }
         }
-    }
 scenario session =
     { user =
         { comment = Scenario.userComment session
-        , changeLoginId = \str ->
-            Scenario.userEvent session
-                ("Type \"" ++ str ++ "\" for Account ID field")
-                (ChangeLoginId str)
-        , changePass = \str ->
-            Scenario.userEvent session
-                ("Type \"" ++ str ++ "\" for Password field")
-                (ChangeLoginPass str)
+        , changeLoginId =
+            \str ->
+                Scenario.userEvent session
+                    ("Type \"" ++ str ++ "\" for Account ID field")
+                    (ChangeLoginId str)
+        , changePass =
+            \str ->
+                Scenario.userEvent session
+                    ("Type \"" ++ str ++ "\" for Password field")
+                    (ChangeLoginPass str)
         , clickSubmitLogin =
             Scenario.userEvent session
                 "Click \"Login\" submit button"
@@ -399,25 +393,34 @@ scenario session =
         }
     , system =
         { comment = Scenario.systemComment session
-        , requestLogin = \login ->
-            Scenario.systemCommand session
-                "Request login to server"
-                (\channel -> RequestLogin (ReceiveLoginResp >> Procedure.publish channel) login)
+        , requestLogin =
+            \json ->
+                Scenario.systemCommand session
+                    "Request login to server"
+                    (\command ->
+                        case command of
+                            RequestLogin _ login ->
+                                if Login.toValue login == json then
+                                    Expect.pass
+                                else
+                                    Expect.fail "thought the request body is equal to the expected JSON."
+                            _ ->
+                                Expect.fail "thought the command is `RequestLogin`."
+                    )
         }
     , external =
         { backend =
             { comment = Scenario.externalComment "backend" session
-            , respondInvalidIdOrPasswordToLoginRequest =
-                Scenario.externalEvent "backend" session
-                    "Respond \"Invalid ID or Password\" error to login request"
-                    (ReceiveLoginResp (Err (Http.BadStatus 401)))
-            , respondSuccessToLoginRequest = \resp ->
-                Scenario.externalEvent "backend" session
-                    "Respond \"Success\" to login request"
-                    (ReceiveLoginResp (Ok resp))
+            , respondToLoginRequest =
+                \resp ->
+                    Scenario.externalEvent "backend"
+                        session
+                        "Respond to login request"
+                        (ReceiveLoginResp resp)
             }
         }
     }
+
 
 
 -- Helper functions

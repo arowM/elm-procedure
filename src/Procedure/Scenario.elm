@@ -53,10 +53,6 @@ module Procedure.Scenario exposing
 @docs toTest
 @docs toHtml
 
-# Session
-
-@docs Session
-
 # User Operation
 
 @docs Operation
@@ -86,7 +82,7 @@ module Procedure.Scenario exposing
 -}
 
 
-import Procedure.Advanced as Advanced
+import Procedure.Advanced as Advanced exposing (Channel)
 import Html exposing (Html)
 import Test exposing (Test)
 import Expect exposing (Expectation)
@@ -107,12 +103,16 @@ type ScenarioItem cmd memory event
 
 
 {-| -}
-type Section c m e = Section c m e
-
+type Section c m e
+    = Section String (List (ScenarioItem c m e))
 
 {-| -}
 section : String -> List (Scenario c m e) -> Section c m e
-section = Debug.todo ""
+section title scenarios =
+    let
+        (Scenario items) = batch scenarios
+    in
+    Section title items
 
 
 {-| -}
@@ -142,8 +142,8 @@ type alias Page c m e c1 m1 e1 =
         , wrap : c1 -> c
         }
     , memory :
-        { unwrap : m -> Maybe m1
-        , wrap : m1 -> m
+        { get : m -> Maybe ( Channel, m1 )
+        , set : m1 -> m -> m
         }
     , event :
         { unwrap : e -> Maybe e1
@@ -158,6 +158,7 @@ cases : List (Section c m e) -> Scenario c m e
 cases = Debug.todo ""
 
 
+{-| -}
 batch : List (Scenario c m e) -> Scenario c m e
 batch =
     List.concatMap (\(Scenario items) -> items)
@@ -208,7 +209,7 @@ systemComment _ str =
 
 {-|
 -}
-systemCommand : Session c m e -> String -> (Advanced.Channel -> c) -> Scenario c m e
+systemCommand : Session c m e -> String -> (c -> Expectation) -> Scenario c m e
 systemCommand = Debug.todo ""
 
 {-| -}

@@ -6,6 +6,7 @@ module Procedure.Advanced exposing
     , mapCmd
     , mapCmds
     , liftMemory
+    , Pointer
     , Channel
     , publish
     , update
@@ -16,10 +17,10 @@ module Procedure.Advanced exposing
     , Msg
     , mapMsg
     , Model
+    , onUrlChange
+    , onUrlRequest
     , modify
     , push
-    , Request
-    , runRequest
     , subscribe
     , subscribeOnce
     , await
@@ -51,6 +52,7 @@ module Procedure.Advanced exposing
 @docs mapCmd
 @docs mapCmds
 @docs liftMemory
+@docs Pointer
 
 
 # Channel
@@ -69,14 +71,14 @@ module Procedure.Advanced exposing
 @docs Msg
 @docs mapMsg
 @docs Model
+@docs onUrlChange
+@docs onUrlRequest
 
 
 # Constructors
 
 @docs modify
 @docs push
-@docs Request
-@docs runRequest
 @docs subscribe
 @docs subscribeOnce
 @docs await
@@ -112,6 +114,7 @@ import Internal.PortId as PortId exposing (PortId)
 import Internal.SubId as SubId exposing (SubId)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE exposing (Value)
+import Url exposing (Url)
 
 
 
@@ -488,20 +491,6 @@ push f =
         ]
 
 
-{-| Same as `Procedure.Request`.
--}
-type alias Request msg a = (a -> msg) -> Cmd msg
-
-
-{-| Just like `Procedure.runRequest`.
--}
-runRequest : (m -> a -> e) -> Request (Msg e) a -> Procedure (Cmd (Msg e)) m e
-runRequest toEvent req =
-    push <|
-        \m toMsg ->
-            req (toEvent m >> toMsg)
-
-
 {-| Just like `Procedure.await`.
 -}
 await : (e -> m -> List (Procedure c m e)) -> Procedure c m e
@@ -560,10 +549,10 @@ type alias Pointer m m1 =
 -}
 asyncOn :
     { get : m -> Maybe ( Channel, m1 )
-    , set : ( Channel, m1 ) -> m -> m
+    , set : m1 -> m -> m
     }
     -> Channel
-    -> (Pointer m m1 -> List (Procedure c m1 e))
+    -> (Pointer m m1 -> List (Procedure c m e))
     -> Procedure c m e
 asyncOn o c f =
     let
@@ -584,7 +573,7 @@ asyncOn o c f =
                             if c /= c_ then
                                 m
                             else
-                                o.set (c, g m1) m
+                                o.set (g m1) m
                         )
                     |> Maybe.withDefault m
             }
@@ -595,7 +584,7 @@ asyncOn o c f =
     in
     Procedure
         [ \_ ->
-            Async <| List.map (\g -> liftMemory_ pointer (g c)) items
+            Async <| List.map (\g -> g c) items
         ]
 
 
@@ -873,16 +862,16 @@ type alias Thread cmd memory event =
 
 {-| Just like `Procedure.elementView`.
 -}
-elementView : (memory -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
+elementView : ((Channel, memory) -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
 elementView f (Thread { newState }) =
-    f newState.memory
+    f (Channel.init, newState.memory)
 
 
 {-| Just like `Procedure.documentView`.
 -}
-documentView : (memory -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
+documentView : ((Channel, memory) -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
 documentView f (Thread { newState }) =
-    f newState.memory
+    f (Channel.init, newState.memory)
 
 
 {-| Just like `Procedure.update`.
@@ -947,6 +936,21 @@ init initialMemory procs =
                     (List.map (\f -> f Channel.init) items)
     in
     ( Thread t, t.cmds )
+
+
+{-| Just like `Procedure.onUrlChange`.
+-}
+onUrlChange : (Url -> event) -> Url -> (Msg event)
+onUrlChange f =
+    f >> publish Channel.init
+
+
+{-| Just like `Procedure.onUrlRequest`.
+-}
+onUrlRequest : (Browser.UrlRequest -> event) -> Browser.UrlRequest -> (Msg event)
+onUrlRequest f =
+    f >> publish Channel.init
+
 
 
 {-| State to evaluate a thread.

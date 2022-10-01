@@ -24,7 +24,6 @@ import Page.Home as PageHome
 import Procedure as AppProcedure
 import Procedure.Advanced as Procedure exposing (Msg, Procedure)
 import Procedure.Channel exposing (Channel)
-import Procedure.Modifier as Modifier exposing (Modifier)
 import Procedure.Scenario as Scenario
 import Url exposing (Url)
 
@@ -40,7 +39,7 @@ main =
         { init = init
         , procedures =
             \flags url key ->
-                procedures flags url key Modifier.root
+                procedures flags url key
                     |> Procedure.mapCmds runCommand
         , view = view
         , onUrlRequest = LinkClicked
@@ -78,8 +77,8 @@ type Page
 -- View
 
 
-view : Memory -> Document (Msg Event)
-view memory =
+view : (Channel, Memory) -> Document (Msg Event)
+view (_, memory) =
     { title = "Sample App"
     , body =
         [ case memory.page of
@@ -143,29 +142,32 @@ type Event
 
 {-| Abstructed Commands, which enables dependency injection.
 -}
-type Command e
-    = PageLoginCommand (PageLogin.Command e)
-    | PageHomeCommand (PageHome.Command e)
-      -- | PageUsersCommand (PageUsers.Command e)
-    | SessionCommand (Session.Command e)
+type Command
+    = PageLoginCommand PageLogin.Command
+    | PageHomeCommand PageHome.Command
+      -- | PageUsersCommand PageUsers.Command
+    | FetchSession (Result Http.Error Session -> Msg Event)
     | PushUrl Key String
     | Load String
 
 
 {-| Run abstructed Commands as actual application Commands.
 -}
-runCommand : Command Event -> Cmd (Msg Event)
+runCommand : Command -> Cmd (Msg Event)
 runCommand cmd =
     case cmd of
         PageLoginCommand c ->
             PageLogin.runCommand c
+                |> Cmd.map (Procedure.mapMsg PageLoginEvent)
 
         PageHomeCommand c ->
             PageHome.runCommand c
+                |> Cmd.map (Procedure.mapMsg PageHomeEvent)
         -- PageUsersCommand c ->
         --     PageUsers.runCommand c
-        SessionCommand c ->
-            Session.runCommand c
+
+        FetchSession toMsg ->
+            Session.fetch toMsg
 
         PushUrl key url ->
             Nav.pushUrl key url
@@ -179,10 +181,10 @@ runCommand cmd =
 
 
 {-| -}
-procedures : Value -> Url -> Key -> Modifier m Memory -> List (Procedure (Command Event) m Event)
-procedures _ url key app =
-    [ Procedure.async <| linkControllProcedures key app
-    , Procedure.async <| pageControllProcedures url key Nothing app
+procedures : Value -> Url -> Key -> List (Procedure Command Memory Event)
+procedures _ url key =
+    [ Procedure.async <| linkControllProcedures key
+    , Procedure.async <| pageControllProcedures url key Nothing
     ]
 
 
@@ -194,23 +196,22 @@ procedures _ url key app =
 -}
 linkControllProcedures :
     Key
-    -> Modifier m Memory
-    -> List (Procedure (Command Event) m Event)
-linkControllProcedures key app =
-    [ Procedure.await app <|
+    -> List (Procedure Command Memory Event)
+linkControllProcedures key =
+    [ Procedure.await <|
         \event _ ->
             case event of
                 LinkClicked urlRequest ->
                     case urlRequest of
                         Browser.Internal url ->
-                            [ Procedure.push app <|
+                            [ Procedure.push <|
                                 \_ _ ->
                                     Url.toString url
                                         |> PushUrl key
                             ]
 
                         Browser.External href ->
-                            [ Procedure.push app <|
+                            [ Procedure.push <|
                                 \_ _ ->
                                     Load href
                             ]
@@ -220,7 +221,7 @@ linkControllProcedures key app =
                     []
 
     -- Call self recursively
-    , Procedure.jump app <| \_ -> linkControllProcedures key app
+    , Procedure.jump <| \_ -> linkControllProcedures key
     ]
 
 
@@ -232,21 +233,20 @@ pageControllProcedures :
     Url
     -> Key
     -> Maybe Session
-    -> Modifier m Memory
-    -> List (Procedure (Command Event) m Event)
-pageControllProcedures url key msession app =
+    -> List (Procedure Command Memory Event)
+pageControllProcedures url key msession =
     case ( Route.fromUrl url, msession ) of
         ( Route.NotFound, _ ) ->
-            [ Procedure.modify app <|
+            [ Procedure.modify <|
                 \m ->
                     { m | page = PageNotFound }
-            , Procedure.await app <|
+            , Procedure.await <|
                 \event _ ->
                     case event of
                         UrlChanged newUrl ->
-                            [ Procedure.jump app <|
+                            [ Procedure.jump <|
                                 \_ ->
-                                    pageControllProcedures newUrl key msession app
+                                    pageControllProcedures newUrl key msession
                             ]
 
                         _ ->
@@ -254,33 +254,27 @@ pageControllProcedures url key msession app =
             ]
 
         ( _, Nothing ) ->
-            [ Session.fetch app
-                SessionCommand
-                ReceiveSession
-            , Procedure.await app <|
+            [ Procedure.push <|
+                \_ toMsg -> FetchSession (toMsg << ReceiveSession)
+            , Procedure.await <|
                 \event _ ->
                     case event of
                         ReceiveSession (Err _) ->
                             [ Procedure.observe PageLogin.init <|
                                 \pageLoginCore ->
-                                    let
-                                        pageLogin =
-                                            pageLoginModifier
-                                                (Tuple.first pageLoginCore)
-                                                app
-                                    in
-                                    [ Procedure.modify app <|
+                                    [ Procedure.modify <|
                                         \m -> { m | page = PageLogin pageLoginCore }
                                     , Procedure.async
-                                        (PageLogin.procedures url key pageLogin)
-                                        |> runPageLoginProcedure
-                                    , Procedure.await app <|
+                                        ( PageLogin.procedures url key
+                                            |> List.map runPageLoginProcedure
+                                        )
+                                    , Procedure.await <|
                                         \event2 appMemory ->
                                             case event2 of
                                                 UrlChanged newUrl ->
-                                                    [ Procedure.jump app <|
+                                                    [ Procedure.jump <|
                                                         \_ ->
-                                                            pageControllProcedures newUrl key (extractSession appMemory) app
+                                                            pageControllProcedures newUrl key (extractSession appMemory)
                                                     ]
 
                                                 _ ->
@@ -289,9 +283,9 @@ pageControllProcedures url key msession app =
                             ]
 
                         ReceiveSession (Ok session) ->
-                            [ Procedure.jump app <|
+                            [ Procedure.jump <|
                                 \_ ->
-                                    pageControllProcedures url key (Just session) app
+                                    pageControllProcedures url key (Just session)
                             ]
 
                         _ ->
@@ -365,37 +359,29 @@ pageControllProcedures url key msession app =
 
 
 runPageLoginProcedure :
-    Procedure (PageLogin.Command PageLogin.Event) m PageLogin.Event
-    -> Procedure (Command Event) m Event
+    Procedure PageLogin.Command PageLogin.Memory PageLogin.Event
+    -> Procedure Command Memory Event
 runPageLoginProcedure =
-    Procedure.wrapEvent page.login.event
-        >> Procedure.mapCmd (PageLoginCommand << PageLogin.mapCommand PageLoginEvent)
-
-
-pageLoginModifier :
-    Channel
-    -> Modifier m Memory
-    -> Modifier m PageLogin.Memory
-pageLoginModifier channel =
-    Modifier.maybeItem
-        { get =
-            \m1 ->
-                case m1.page of
-                    PageLogin m2 ->
-                        Just m2
-
-                    _ ->
-                        Nothing
-        , set =
-            \m2 m1 ->
-                case m1.page of
-                    PageLogin _ ->
-                        { m1 | page = PageLogin m2 }
-
-                    _ ->
-                        m1
+    Procedure.wrapEvent
+        { wrap = PageLoginEvent
+        , unwrap = \e ->
+            case e of
+                PageLoginEvent e1 -> Just e1
+                _ -> Nothing
         }
-        channel
+        >> Procedure.mapCmd PageLoginCommand
+            >> Procedure.liftMemory
+                { get = \m ->
+                    case m.page of
+                        PageLogin (_, m1) -> Just m1
+                        _ -> Nothing
+                , modify = \f m ->
+                    case m.page of
+                        PageLogin (c, m1) ->
+                            { m | page = PageLogin (c, f m1) }
+                        _ ->
+                            m
+                }
 
 
 extractSession : Memory -> Maybe Session
@@ -419,13 +405,16 @@ extractSession memory =
 
 -- Scenario
 
-scenario : Scenario.Session (Command Event) Memory Event ->
+type alias Scenario =
+    Scenario.Scenario Command Memory Event
+
+scenario : Scenario.Session Command Memory Event ->
     { user :
-        { comment : String -> Scenario (Command Event) Memory Event
-        , setUrl : Url -> Scenario (Command Event) Memory Event
+        { comment : String -> Scenario
+        , setUrl : Url -> Scenario
         }
     , system :
-        { comment : String -> Scenario (Command Event) Memory Event
+        { comment : String -> Scenario
         }
     , external :
         {}
@@ -447,21 +436,26 @@ scenario session =
 
 
 page :
-    { login : Scenario.Page (Command Event) Memory Event (PageLogin.Command PageLogin.Event) PageLogin.Memory PageLogin.Event
-    , home : Scenario.Page (Command Event) Memory Event (PageHome.Command PageHome.Event) PageHome.Memory PageHome.Event
+    { login : Scenario.Page Command Memory Event PageLogin.Command PageLogin.Memory PageLogin.Event
+    , home : Scenario.Page Command Memory Event PageHome.Command PageHome.Memory PageHome.Event
     }
 page =
     { login =
         { memory =
-            { unwrap =
+            { get =
                 \m ->
                     case m.page of
-                        PageLogin pageLogin ->
-                            Just pageLogin
+                        PageLogin a ->
+                            Just a
 
                         _ ->
                             Nothing
-            , wrap = PageLogin
+            , set = \m1 m ->
+                case m.page of
+                    PageLogin (c, _) ->
+                        { m | page = PageLogin (c, m1) }
+                    _ ->
+                        m
             }
         , event =
             { unwrap =
@@ -487,15 +481,20 @@ page =
         }
     , home =
         { memory =
-            { unwrap =
+            { get =
                 \m ->
                     case m.page of
-                        PageHome pageHome ->
-                            Just pageHome
+                        PageHome a ->
+                            Just a
 
                         _ ->
                             Nothing
-            , wrap = PageHome
+            , set = \m1 m ->
+                case m.page of
+                    PageHome (c, _) ->
+                        { m | page = PageHome (c, m1) }
+                    _ ->
+                        m
             }
         , event =
             { unwrap =

@@ -2,7 +2,10 @@ module Scenario exposing (..)
 
 import App as App exposing (Memory, Event, Command)
 import Html exposing (Html)
+import Http
+import Json.Encode as JE
 import Page.Login as PageLogin
+import Page.Home as PageHome
 import Procedure.Scenario as Scenario exposing (Scenario)
 import Test exposing (Test)
 import Url
@@ -29,7 +32,7 @@ test =
 
 
 {-| -}
-sections : List (Scenario.Section (Command Event) Memory Event)
+sections : List (Scenario.Section Command Memory Event)
 sections =
         [ Scenario.section "introduction"
             [ Scenario.withNewSession introduction
@@ -37,7 +40,7 @@ sections =
         ]
 
 
-introduction : Scenario.Session (Command Event) Memory Event -> List (Scenario (Command Event) Memory Event)
+introduction : Scenario.Session Command Memory Event -> List (Scenario Command Memory Event)
 introduction session =
     let
         app = App.scenario session
@@ -46,7 +49,7 @@ introduction session =
     , app.user.comment "Today I'll try a goat management service."
     , Scenario.fromJust "URL for home page" (Url.fromString "https://example.com/") <|
         \url ->
-            [ app.user.comment "I'll try to access the URL given to me in advance."
+            [ app.user.comment "I'll try to access the URL."
             , app.system.comment "Load home page."
             , app.user.setUrl url
             ]
@@ -56,39 +59,55 @@ introduction session =
             let
                 pageLogin = PageLogin.scenario pageLoginSession
             in
-            [ pageLogin.user.comment "I see I need to log in! I'm getting my account info beforehand, too."
+            [ pageLogin.user.comment "I see I need to log in! I remember my dad gave me the account information in advance."
             , pageLogin.user.changeLoginId "guest"
-            , pageLogin.user.changeLoginPass "guestpass"
+            , pageLogin.user.changePass "guestpass"
             , pageLogin.user.clickSubmitLogin
-            , pageLogin.system.requestBackendToLogin
-            , pageLogin.external.backend.respondInvalidToLogin
+            , pageLogin.system.requestLogin <|
+                JE.object
+                    [ ("id", JE.string "guest" )
+                    , ("pass", JE.string "guestpass" )
+                    ]
+            , pageLogin.external.backend.respondToLoginRequest <|
+                Err (Http.BadStatus 401)
             , pageLogin.system.comment "Toast popup: \"Invalid user name or password.\"."
-            , pageLogin.user.comment "Oops!"
-            , pageLogin.user.changeLoginPass "guestPass"
+            , pageLogin.user.comment "Oops! It's hard to type with my two-fingered hooves..."
+            , pageLogin.user.changePass "guestPass"
             , pageLogin.user.clickSubmitLogin
-            , pageLogin.system.requestBackendToLogin
-            , pageLogin.external.backend.respondValidToLogin
+            , pageLogin.system.requestLogin <|
+                JE.object
+                    [ ("id", JE.string "guest" )
+                    , ("pass", JE.string "guestPass" )
+                    ]
+            , pageLogin.external.backend.respondToLoginRequest <|
+                Ok
+                    { session =
+                        { id = "guest"
+                        }
+                    }
             ]
     , app.system.comment "Redirect to home page."
-    , App.scenario.pageHome <| \_ -> [] -- Just ensure that current page is Home.
+    , Scenario.onPage session App.page.home <| \_ -> [] -- Just ensure that current page is Home.
     , Scenario.cases
-        [ Scenario.section "Home page #1" <|
-            pageHomeCase1 session
-        , Scenario.section "Home page #2" <|
-            pageHomeCase2 session
+        [ Scenario.section "Home page #1"
+            [ Scenario.onPage session App.page.home <|
+                pageHomeCase1
+            ]
+        , Scenario.section "Home page #2"
+            [ Scenario.onPage session App.page.home <|
+                pageHomeCase2
+            ]
         ]
     ]
 
 
-pageHomeCase1 : Scenario.Session -> List (Scenario (Command Event) Memory Event)
-pageHomeCase1 session =
-    App.scenario.pageHome session <|
-        \_ ->
-            []
+pageHomeCase1 : Scenario.Session PageHome.Command PageHome.Memory PageHome.Event -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
+pageHomeCase1 _ =
+    [
+    ]
 
 
-pageHomeCase2 : Scenario.Session -> List (Scenario (Command Event) Memory Event)
-pageHomeCase2 session =
-    App.scenario.app session <|
-        \_ ->
-            []
+pageHomeCase2 : Scenario.Session PageHome.Command PageHome.Memory PageHome.Event -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
+pageHomeCase2 _ =
+    [
+    ]

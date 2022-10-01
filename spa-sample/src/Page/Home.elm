@@ -1,50 +1,51 @@
 module Page.Home exposing
-    ( Command(..)
+    ( Command
     , Event
     , Memory
     , init
-    , mapCommand
     , procedures
     , runCommand
+    , scenario
     , view
     )
 
 import App.Route as Route
 import App.Session exposing (Session)
 import Browser.Navigation exposing (Key)
+import Expect
 import Http
+import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
-import Procedure.Advanced as Procedure exposing (Msg, ObserverId, Procedure)
+import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
+import Procedure.Scenario as Scenario
 import Widget.Toast as Toast
 
 
 {-| -}
 type alias Memory =
-    { editAccountForm : Maybe ( ObserverId, EditAccountFormMemory )
-    , session : Session
+    { session : Session
     , toast : Toast.Memory
+    , editAccountForm : EditAccountFormMemory
     }
 
 
 {-| -}
 init : Session -> Memory
 init session =
-    { editAccountForm = Nothing
-    , session = session
+    { session = session
     , toast = Toast.init
+    , editAccountForm = initEditAccountForm session
     }
 
 
 {-| -}
 type Event
     = ToastEvent Toast.Event
-    | ClickShowEditAccountForm
     | ChangeEditAccountFormAccountId String
     | ClickSubmitEditAccount
-    | ClickCancelEditAccount
     | ReceiveEditAccountResp (Result Http.Error EditAccount.Response)
 
 
@@ -53,35 +54,12 @@ type Event
 
 
 {-| -}
-view : ( ObserverId, Memory ) -> Html (Msg Event)
-view ( oid, param ) =
+view : ( Channel, Memory ) -> Html (Msg Event)
+view ( channel, memory ) =
     Html.div
         [ localClass "page"
         ]
-        [ case param.editAccountForm of
-            Nothing ->
-                Html.div
-                    [ localClass "dashboard_account"
-                    ]
-                    [ Html.text <| "Hello, " ++ session.id
-                    , Html.node "button"
-                        [ localClass "dashboard_account_editButton"
-                        , Events.onClick
-                            (VPack.issue mainPage <| ClickShowEditAccountForm)
-                        ]
-                        [ Html.text "🖉"
-                        ]
-                    ]
-
-            Just editAccountFormCore ->
-                let
-                    editAccountForm =
-                        VPack.child
-                            EditAccountFormEvent
-                            editAccountFormCore
-                            mainPage
-                in
-                editAccountFormView editAccountForm
+        [ editAccountFormView (channel, memory.editAccountForm)
         , Html.div
             [ localClass "dashboard_links"
             ]
@@ -92,7 +70,7 @@ view ( oid, param ) =
                 [ Html.text "Users"
                 ]
             ]
-        , Toast.view param.toast
+        , Toast.view memory.toast
             |> Html.map (Procedure.mapMsg ToastEvent)
         ]
 
@@ -108,9 +86,9 @@ type alias EditAccountFormMemory =
     }
 
 
-initEditAccountForm : EditAccountFormMemory
-initEditAccountForm =
-    { form = EditAccount.initForm
+initEditAccountForm : Session -> EditAccountFormMemory
+initEditAccountForm session =
+    { form = EditAccount.initForm session.id
     , isBusy = False
 
     -- Do not show errors initially to avoid bothering
@@ -120,19 +98,19 @@ initEditAccountForm =
     }
 
 
-editAccountFormView : ( ObserverId, EditAccountFormMemory ) -> Html (Msg Event)
-editAccountFormView ( oid, param ) =
+editAccountFormView : (Channel, EditAccountFormMemory) -> Html (Msg Event)
+editAccountFormView (channel, memory) =
     let
-        issue =
-            Procedure.issue oid
+        publish =
+            Procedure.publish channel
 
         errors =
-            EditAccount.toFormErrors param.form
+            EditAccount.toFormErrors memory.form
     in
     Html.div
         [ localClass "editAccountForm"
         , Mixin.boolAttribute "aria-invalid"
-            (param.showError && not (List.isEmpty errors))
+            (memory.showError && not (List.isEmpty errors))
         ]
         [ Html.node "label"
             [ localClass "editAccountForm_label-id"
@@ -140,9 +118,9 @@ editAccountFormView ( oid, param ) =
             [ Html.text "New Account ID:"
             , Html.node "input"
                 [ Mixin.attribute "type" "text"
-                , Mixin.attribute "value" param.form.id
-                , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onChange (issue << ChangeEditAccountFormAccountId)
+                , Mixin.attribute "value" memory.form.id
+                , Mixin.boolAttribute "disabled" memory.isBusy
+                , Events.onChange (publish << ChangeEditAccountFormAccountId)
                 ]
                 []
             ]
@@ -150,16 +128,9 @@ editAccountFormView ( oid, param ) =
             [ localClass "editAccountForm_buttonGroup"
             ]
             [ Html.node "button"
-                [ localClass "editAccountForm_buttonGroup_button-cancel"
-                , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onClick (issue ClickCancelEditAccount)
-                ]
-                [ Html.text "Cancel"
-                ]
-            , Html.node "button"
                 [ localClass "editAccountForm_buttonGroup_button-submit"
-                , Mixin.boolAttribute "disabled" param.isBusy
-                , Events.onClick (issue ClickSubmitEditAccount)
+                , Mixin.boolAttribute "disabled" memory.isBusy
+                , Events.onClick (publish ClickSubmitEditAccount)
                 ]
                 [ Html.text "Save"
                 ]
@@ -185,37 +156,26 @@ editAccountFormView ( oid, param ) =
 
 
 {-| -}
-type Command e
-    = ToastCommand (Toast.Command e)
-    | RequestEditAccount (Result Http.Error EditAccount.Response -> Msg e) EditAccount.EditAccount
+type Command
+    = ToastCommand Toast.Command
+    | RequestEditAccount (Result Http.Error EditAccount.Response -> Msg Event) EditAccount.EditAccount
 
 
 {-| -}
-runCommand : Command e -> Cmd (Msg e)
+runCommand : Command -> Cmd (Msg Event)
 runCommand cmd =
     case cmd of
         ToastCommand toastCommand ->
             Toast.runCommand toastCommand
+                |> Cmd.map (Procedure.mapMsg ToastEvent)
 
         RequestEditAccount toMsg editAccount ->
-            EditAccount.request toMsg editAccount
+            EditAccount.request editAccount toMsg
 
 
 {-| -}
-mapCommand : (e1 -> e0) -> Command e1 -> Command e0
-mapCommand f cmd =
-    case cmd of
-        ToastCommand toastCommand ->
-            ToastCommand <|
-                Toast.mapCommand f toastCommand
-
-        RequestEditAccount toMsg editAccount ->
-            RequestLogin (\res -> Procedure.mapMsg f (toMsg res)) editAccount
-
-
-{-| -}
-type alias Procedures m e =
-    List (Procedure (Command e) m e)
+type alias Procedures =
+    List (Procedure Command Memory Event)
 
 
 
@@ -223,40 +183,50 @@ type alias Procedures m e =
 
 
 {-| -}
-procedures :
-    Key
-    -> Modifier m Memory
-    -> Procedures m e
-procedures key page =
+procedures : Key -> Procedures
+procedures key =
     [ Procedure.async <|
-        mainPageProcedures key page
+        mainPageProcedures key
     ]
 
 
-mainPageProcedures :
-    Key
-    -> Modifier m Memory
-    -> Procedures m e
-mainPageProcedures key page =
-    [ Procedure.await mainPage <|
+mainPageProcedures : Key -> Procedures
+mainPageProcedures key =
+    [ Procedure.async <|
+        editAccountFormProcedures key
+    ]
+
+
+editAccountFormProcedures : Key -> Procedures
+editAccountFormProcedures key =
+    let
+        modifyEditAccountFormFormMemory f =
+            Procedure.modify <|
+                \m ->
+                    { m
+                        | editAccountForm =
+                            let
+                                editAccountForm = m.editAccountForm
+                            in
+                            { editAccountForm
+                                | form = f editAccountForm.form
+                            }
+                    }
+    in
+    [ Procedure.await <|
         \event _ ->
             case event of
-                ClickShowEditAccountForm ->
-                    [ Procedure.observe initEditAccountForm <|
-                        \editAccountFormCore ->
-                            let
-                                editAccountForm =
-                                    editAccountFormObserver
-                                        (Tuple.first editAccountFormCore)
-                                        mainPage
-                            in
-                            [ Procedure.modify mainPage <|
-                                \m -> { m | editAccountForm = Just editAccountFormCore }
-                            , Procedure.async <|
-                                editAccountFormProcedures key page toast mainPage editAccountForm
-                            , Procedure.jump mainPage <|
-                                \_ -> mainPageProcedures key page toast mainPage
-                            ]
+                ChangeEditAccountFormAccountId str ->
+                    [ modifyEditAccountFormFormMemory <|
+                        \m -> { m | id = str }
+                    , Procedure.jump <|
+                        \_ -> editAccountFormProcedures key
+                    ]
+
+                ClickSubmitEditAccount ->
+                    [ Procedure.jump <|
+                        \_ ->
+                            submitAccountProcedures key
                     ]
 
                 _ ->
@@ -264,106 +234,165 @@ mainPageProcedures key page =
     ]
 
 
-editAccountFormObserver :
-    ObserverId
-    -> Observer m e MainPageMemory MainPageEvent
-    -> Observer m e EditAccountFormMemory EditAccountFormEvent
-editAccountFormObserver oid =
-    Observer.dig
-        { id = oid
-        , mget = .editAccountForm
-        , set = \m2 m1 -> { m1 | editAccountForm = Just m2 }
+submitAccountProcedures : Key -> Procedures
+submitAccountProcedures key =
+    let
+        modifyEditAccountFormMemory f =
+            Procedure.modify <|
+                \m ->
+                    { m
+                        | editAccountForm = f m.editAccountForm
+                    }
+    in
+    [ modifyEditAccountFormMemory <|
+        \m -> { m | isBusy = True }
+    , Procedure.withMemory <|
+        \curr ->
+            case EditAccount.fromForm curr.editAccountForm.form of
+                Err _ ->
+                    [ modifyEditAccountFormMemory <|
+                        \m ->
+                            { m
+                                | isBusy = False
+                                , showError = True
+                            }
+                    , Procedure.jump <| \_ -> editAccountFormProcedures key
+                    ]
+
+                Ok editAccount ->
+                    [ Procedure.push <|
+                        \_ toMsg -> RequestEditAccount (ReceiveEditAccountResp >> toMsg) editAccount
+                    , Procedure.await <|
+                        \event _ ->
+                            case event of
+                                ReceiveEditAccountResp (Err err) ->
+                                    [ Toast.pushHttpError err
+                                        |> runToastProcedure
+                                    , modifyEditAccountFormMemory <|
+                                        \m ->
+                                            { m | isBusy = False }
+                                    , Procedure.jump <|
+                                        \_ ->
+                                            editAccountFormProcedures key
+                                    ]
+
+                                ReceiveEditAccountResp (Ok resp) ->
+                                    [ Procedure.modify <|
+                                        \m ->
+                                            { m
+                                                | session = resp.session
+                                                , editAccountForm =
+                                                    let
+                                                        editAccountForm = m.editAccountForm
+                                                    in
+                                                    { editAccountForm
+                                                        | isBusy = False
+                                                    }
+                                            }
+                                    , Procedure.jump <|
+                                        \_ -> editAccountFormProcedures key
+                                    ]
+
+                                _ ->
+                                    []
+                    ]
+    ]
+
+
+-- Toast
+
+
+runToastProcedure :
+    Procedure Toast.Command Toast.Memory Toast.Event
+    -> Procedure Command Memory Event
+runToastProcedure =
+    Procedure.wrapEvent
+        { wrap = ToastEvent
         , unwrap =
-            \e1 ->
-                case e1 of
-                    EditAccountFormEvent e2 ->
-                        Just e2
+            \e ->
+                case e of
+                    ToastEvent e1 ->
+                        Just e1
 
                     _ ->
                         Nothing
-        , wrap = EditAccountFormEvent
         }
+        >> Procedure.mapCmd ToastCommand
+        >> Procedure.liftMemory
+            { get = .toast >> Just
+            , modify = \f m -> { m | toast = f m.toast }
+            }
 
 
-editAccountFormProcedures :
-    Key
-    -> Observer m e Memory Event
-    -> Observer m e Toast.Memory Toast.Event
-    -> Observer m e MainPageMemory MainPageEvent
-    -> Observer m e EditAccountFormMemory EditAccountFormEvent
-    -> Procedures m e
-editAccountFormProcedures key page toast mainPage editAccountForm =
-    let
-        modifyForm f =
-            Procedure.modify editAccountForm <|
-                \m -> { m | form = f m.form }
-    in
-    [ Procedure.await editAccountForm <|
-        \event memoryOnEvent ->
-            case event of
-                ChangeAccountId id ->
-                    [ modifyForm <|
-                        \m -> { m | id = id }
-                    , Procedure.jump editAccountForm <|
-                        \_ -> editAccountFormProcedures key page toast mainPage editAccountForm
-                    ]
+-- Scenario
 
-                ClickCancel ->
-                    [ Procedure.modify mainPage <|
-                        \m -> { m | editAccountForm = Nothing }
-                    , Procedure.quit
-                    ]
 
-                ClickSubmitAccount ->
-                    [ Procedure.modify editAccountForm <|
-                        \m -> { m | isBusy = True }
-                    , case EditAccount.fromForm memoryOnEvent.form of
-                        Err _ ->
-                            [ Procedure.modify editAccountForm <|
-                                \m ->
-                                    { m
-                                        | isBusy = False
-                                        , showError = True
-                                    }
-                            , Procedure.jump editAccountForm <|
-                                \_ -> editAccountFormProcedures key page toast mainPage editAccountForm
-                            ]
-                                |> Procedure.batch
+type alias Scenario =
+    Scenario.Scenario Command Memory Event
 
-                        Ok editAccount ->
-                            [ EditAccount.request editAccount ReceiveEditAccountResp editAccountForm
-                                |> Procedure.mapCmd EditAccountCommand
-                            , Procedure.await editAccountForm <|
-                                \event2 _ ->
-                                    case event2 of
-                                        ReceiveEditAccountResp (Err err) ->
-                                            [ Toast.pushHttpError err toast
-                                                |> Procedure.mapCmd ToastCommand
-                                            , Procedure.modify editAccountForm <|
-                                                \m ->
-                                                    { m | isBusy = False }
-                                            , Procedure.jump editAccountForm <|
-                                                \_ ->
-                                                    editAccountFormProcedures key page toast mainPage editAccountForm
-                                            ]
 
-                                        ReceiveEditAccountResp (Ok resp) ->
-                                            [ Procedure.modify page <|
-                                                \m -> { m | session = resp.session }
-                                            , Procedure.modify mainPage <|
-                                                \m -> { m | editAccountForm = Nothing }
-                                            , Procedure.quit
-                                            ]
+scenario :
+    Scenario.Session Command Memory Event
+    ->
+        { user :
+            { comment : String -> Scenario
+            , changeEditAccountFormAccountId : String -> Scenario
+            , clickSubmitEditAccount : Scenario
+            }
+        , system :
+            { comment : String -> Scenario
+            , requestEditAccount : Value -> Scenario
+            }
+        , external :
+            { backend :
+                { comment : String -> Scenario
+                , respondSuccessToEditAccountIdRequest : EditAccount.Response -> Scenario
+                }
+            }
+        }
+scenario session =
+    { user =
+        { comment = Scenario.userComment session
+        , changeEditAccountFormAccountId =
+            \str ->
+                Scenario.userEvent session
+                    ("Type \"" ++ str ++ "\" for Account ID field")
+                    (ChangeEditAccountFormAccountId str)
+        , clickSubmitEditAccount =
+            Scenario.userEvent session
+                "Click submit button for edit account form."
+                ClickSubmitEditAccount
+        }
+    , system =
+        { comment = Scenario.systemComment session
+        , requestEditAccount =
+            \json ->
+                Scenario.systemCommand session
+                    "Request save new account to server"
+                    (\command ->
+                        case command of
+                            RequestEditAccount _ editAccount ->
+                                if EditAccount.toValue editAccount == json then
+                                    Expect.pass
+                                else
+                                    Expect.fail "thought the request body is equal to the expected JSON."
+                            _ ->
+                                Expect.fail "thought the command is `RequestEditAccount`."
+                    )
+        }
+    , external =
+        { backend =
+            { comment = Scenario.externalComment "backend" session
+            , respondSuccessToEditAccountIdRequest =
+                \resp ->
+                    Scenario.externalEvent "backend"
+                        session
+                        "Respond \"Success\" to edit account request"
+                        (ReceiveEditAccountResp (Ok resp))
+            }
+        }
+    }
 
-                                        _ ->
-                                            []
-                            ]
-                                |> Procedure.batch
-                    ]
-
-                _ ->
-                    []
-    ]
 
 
 

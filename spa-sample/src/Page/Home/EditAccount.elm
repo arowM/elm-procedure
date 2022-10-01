@@ -1,6 +1,7 @@
 module Page.Home.EditAccount exposing
     ( request
     , EditAccount
+    , toValue
     , Response
     , Form
     , initForm
@@ -10,7 +11,7 @@ module Page.Home.EditAccount exposing
     , toFormErrors
     )
 
-{-| Module about login request.
+{-| Module about edit account request.
 
 
 # Request
@@ -57,6 +58,13 @@ type alias EditAccount_ =
     }
 
 
+{-| -}
+toValue : EditAccount -> JE.Value
+toValue (EditAccount editAccount) =
+                JE.object
+                    [ ( "id", JE.string editAccount.id )
+                    ]
+
 {-| Response type for `request`.
 -}
 type alias Response =
@@ -67,7 +75,7 @@ type alias Response =
 {-| Request server for login.
 -}
 request : EditAccount -> (Result Http.Error Response -> msg) -> Cmd msg
-request (EditAccount editAccount) toEvent =
+request editAccount toMsg =
     let
         decoder : JD.Decoder Response
         decoder =
@@ -87,12 +95,9 @@ request (EditAccount editAccount) toEvent =
                 ]
                 []
         , body =
-            Http.jsonBody <|
-                JE.object
-                    [ ( "id", JE.string editAccount.id )
-                    ]
+            Http.jsonBody <| toValue editAccount
         , expect =
-            Http.expectJson toEvent decoder
+            Http.expectJson toMsg decoder
         }
 
 
@@ -109,9 +114,9 @@ type alias Form =
 
 {-| Initial value.
 -}
-initForm : Form
-initForm =
-    { id = ""
+initForm : String -> Form
+initForm text =
+    { id = text
     }
 
 

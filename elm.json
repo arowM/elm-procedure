@@ -5,6 +5,7 @@
     "license": "MIT",
     "version": "1.0.0",
     "exposed-modules": [
+        "Expect.Builder",
         "Procedure",
         "Procedure.Advanced",
         "Procedure.Channel",

@@ -109,6 +109,7 @@ module Procedure.Advanced exposing
 
 import Browser exposing (Document)
 import Html exposing (Html)
+import Internal.Core as Core exposing (ThreadState, Msg(..), Model(..))
 import Internal.Channel as Channel
 import Internal.PortId as PortId exposing (PortId)
 import Internal.SubId as SubId exposing (SubId)
@@ -843,17 +844,7 @@ observeList rs f =
 
 {-| Just like `Procedure.Model`.
 -}
-type Model cmd memory event
-    = Thread
-        -- New thread state after the evaluation.
-        { newState : ThreadState memory event
-
-        -- Side effects caused by the evaluation.
-        , cmds : List cmd
-
-        -- New thread to evaluate next time.
-        , next : Msg event -> ThreadState memory event -> Thread cmd memory event
-        }
+type alias Model cmd memory event = Core.Model cmd memory event
 
 
 type alias Thread cmd memory event =
@@ -951,17 +942,6 @@ onUrlRequest : (Browser.UrlRequest -> event) -> Browser.UrlRequest -> (Msg event
 onUrlRequest f =
     f >> publish Channel.init
 
-
-
-{-| State to evaluate a thread.
--}
-type alias ThreadState memory event =
-    { memory : memory
-    , nextChannel : Channel
-    , subs : List ( SubId, Sub (Msg event) )
-    , nextSubId : SubId
-    , nextPortId : PortId
-    }
 
 
 {-| Intermediate type, which helps to handle operations that affects ancestor threads.
@@ -1378,9 +1358,7 @@ andNextRaceDep f (FromProcedure fp1) =
 
 {-| Same as `Procedure.Msg`.
 -}
-type Msg event
-    = Msg (Maybe SubId) Channel event
-    | NoOp
+type alias Msg event = Core.Msg event
 
 
 setMsgSubId : SubId -> Msg event -> Msg event

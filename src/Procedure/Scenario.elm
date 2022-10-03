@@ -65,7 +65,7 @@ module Procedure.Scenario exposing
 
 -}
 
-import Expect exposing (Expect)
+import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Html exposing (Html)
 import Internal.Core exposing
@@ -78,7 +78,7 @@ import Test exposing (Test)
 
 
 
-type alias ExpBuilder a = ExpBuilder.ExpBuilder a
+type alias ExpBuilder a = ExpBuilder.Builder a
 
 -- Scenario
 
@@ -99,7 +99,7 @@ type Scenario cmd memory event
     | ExpectCommand
         { target : Target
         , description : String
-        , expectation : ExpBuilder (List cmd)
+        , expectation : ExpBuilder cmd
         , next : Scenario cmd memory event
         }
     | ExpectMemory
@@ -111,18 +111,24 @@ type Scenario cmd memory event
     | ExpectView
         { target : Target
         , description : String
-        , expectation : Html (Msg event) -> Expectation
+        , expectation : Html () -> Expectation
         , next : Scenario cmd memory event
         }
     | WithNewSession
         { next : Session -> Scenario cmd memory event
         }
+    | NextCases
+        { cases : List (Section c m e)
+        }
     | Unexpected
-        { error : String
-        , description : String
+        { reason : UnexpectedReason
         }
     | Nil
 
+
+type UnexpectedReason
+    = IsNotJust String
+    | ScenarioAfterNextCases
 
 type Target
     = UserTarget Session
@@ -151,11 +157,19 @@ concat s1 s2 =
         ExpectMemory r ->
             ExpectMemory { r | next = concat r.next s2 }
 
+        ExpectView r ->
+            ExpectView { r | next = concat r.next s2 }
+
         WithNewSession r ->
             WithNewSession
                 { r
                     | next = \session ->
                         concat (r.next session) s2
+                }
+        NextCases r ->
+            Unexpected
+                { error = ""
+                , description = ""
                 }
 
         Unexpected r ->
@@ -179,6 +193,14 @@ type Section command memory event
     = Section
         { title : String
         , content : Scenario command memory event
+        }
+
+
+liftSection_ : Page c m e c1 m1 e1 -> Section c1 m1 e1 -> Section c m e
+liftSection_ page (Section section) =
+    Section
+        { title = section.title
+        , content = onPage_ page section.content
         }
 
 
@@ -265,7 +287,7 @@ externalEvent name session description event =
 
 
 {-| -}
-systemCommand : Session -> String -> Expect.Builder.Builder command -> Scenario command m e
+systemCommand : Session -> String -> ExpBuilder command -> Scenario command m e
 systemCommand session description expectation =
     ExpectCommand
         { target = SystemTarget session
@@ -276,7 +298,7 @@ systemCommand session description expectation =
 
 
 {-| -}
-systemMemory : Session -> String -> Expect.Builder.Builder memory -> Scenario c memory e
+systemMemory : Session -> String -> ExpBuilder memory -> Scenario c memory e
 systemMemory session description expectation =
     ExpectMemory
         { target = SystemTarget session
@@ -287,7 +309,7 @@ systemMemory session description expectation =
 
 
 {-| -}
-systemView : Session -> String -> (Html (Msg event) -> Expectation) -> Scenario c m event
+systemView : Session -> String -> (Html () -> Expectation) -> Scenario c m event
 systemView session description expectation =
     ExpectView
         { target = SystemTarget session
@@ -325,24 +347,9 @@ fromJust description ma f =
 
 {-| -}
 type alias Page c m e c1 m1 e1 =
-    { wrapEvent : e1 -> e
-
     { unwrapCommand : c -> Maybe c1
     , get : m -> Maybe m1
-
-
-        command :
-        { unwrap : c -> Maybe c1
-        , wrap : c1 -> c
-        }
-    , memory :
-        { get : m -> Maybe ( Channel, m1 )
-        , set : m1 -> m -> m
-        }
-    , event :
-        { unwrap : e -> Maybe e1
-        , wrap : e1 -> e
-        }
+    , wrapEvent : e1 -> e
     }
 
 
@@ -375,38 +382,50 @@ onPage_ page s =
                 , description = r.description
                 , expectation =
                     ExpBuilder.custom <|
-                        \cmds ->
-
-                    ExpBuilder.partial page.unwrapCommand
-                        ( ExpBuilder.all
-                            [ ExpBuilder.notEqual Nothing
-                                |> ExpBuilder.onFail "Unexpected command."
-                            , ExpBuilder.fromJust <| r.expectation
-                            ]
-                        )
+                        \c ->
+                            case page.unwrapCommand c of
+                                Just c1 ->
+                                    ExpBuilder.extractOn c1 r.expectation
+                                _ ->
+                                    ExpBuilder.fail "Unexpected command."
                 , next = onPage_ page r.next
                 }
+
         ExpectMemory r ->
             ExpectMemory
                 { target = r.target
                 , description = r.description
                 , expectation =
-                    ExpBuilder.partial page.get
-                        ( ExpBuilder.all
-                            [ ExpBuilder.notEqual Nothing
-                                |> ExpBuilder.onFail "Unexpected memory state."
-                            , ExpBuilder.fromJust <| r.expectation
-                            ]
-                        )
+                    ExpBuilder.custom <|
+                        \c ->
+                            case page.get c of
+                                Just c1 ->
+                                    ExpBuilder.extractOn c1 r.expectation
+                                _ ->
+                                    ExpBuilder.fail "Unexpected memory state."
                 , next = onPage_ page r.next
                 }
-    | WithNewSession
-        { next : Session -> Scenario cmd memory event
-        }
-    | Unexpected
-        { error : String
-        }
-    | Nil
+        ExpectView r ->
+            ExpectView
+                { target = r.target
+                , description = r.description
+                , expectation = r.expectation
+                , next = onPage_ page r.next
+                }
+        WithNewSession r ->
+            WithNewSession
+                { next = \session ->
+                    r.next session
+                        |> onPage_ page
+                }
+        NextCases r ->
+            NextCases
+                { cases = List.map (liftSection_ page) r.cases
+                }
+        Unexpected r ->
+            Unexpected r
+        Nil ->
+            Nil
 
 
 

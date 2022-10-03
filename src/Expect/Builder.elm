@@ -9,8 +9,11 @@ module Expect.Builder exposing
     , lessThan, atMost, greaterThan, atLeast
     , FloatingPointTolerance
     , within, notWithin
-    , ok, err, equalLists, equalDicts, equalSets
-    , custom, onFail
+    , ok, err
+    , equalLists, allOfListItems, oneOfListItem
+    , equalDicts
+    , equalSets
+    , custom, pass, fail, onFail, extractOn, isPass
     )
 
 
@@ -52,7 +55,9 @@ or both. For an in-depth look, see our [Guide to Floating Point Comparison](#gui
 
 ## Collections
 
-@docs ok, err, equalLists, equalDicts, equalSets
+@docs ok, err
+@docs equalLists, allOfListItems, oneOfListItem
+@docs equalDicts, equalSets
 
 
 ## Combinators
@@ -63,7 +68,7 @@ or both. For an in-depth look, see our [Guide to Floating Point Comparison](#gui
 
 These functions will let you build your own expectations.
 
-@docs custom, onFail
+@docs custom, pass, fail, onFail, extractOn, isPass
 
 
 ## Guide to Floating Point Comparison
@@ -171,25 +176,19 @@ oneOf ls =
                 Err <| Expect.fail "Expect.Builder.oneOf was given an empty list. You must make at least one expectation to have a valid test!"
 
         ((Builder init)::xs) ->
-            let
-                accumulated =
-                    List.foldl
-                        (\(Builder f) acc a ->
-                            case acc a of
-                                Ok () ->
-                                    Ok ()
-                                Err _ ->
-                                    f a
-                        )
-                        init
-                        xs
-            in
-            Builder <| \a ->
-                case accumulated a of
-                    Ok () ->
-                        Ok ()
-                    Err _ ->
-                        Err <| Expect.fail "None of the Expect.Builder.oneOf elements passes."
+            Builder <|
+                List.foldl
+                    (\(Builder f) acc a ->
+                        case acc a of
+                            Ok () ->
+                                Ok ()
+                            Err _ ->
+                                f a
+                    )
+                    init
+                    xs
+                    >> Result.mapError
+                        (\_ -> Expect.fail "None of the Expect.Builder.oneOf elements passes.")
 
 
 {-| Test for part of the subject.
@@ -743,6 +742,76 @@ equalLists expected =
             Err <| Expect.equalLists expected actual
 
 
+{-| Passes if given `Builder` passes when applied to one of the list elements.
+Passing an empty list is assumed to be a mistake, so `Expect.Builder.oneOfListItem []`
+will always return a failed expectation no matter what else it is passed.
+
+    [ 3, 4, 5 ]
+        |> Expect.Builder.applyTo
+            (Expect.Builder.oneOfListItem
+                (Expect.Builder.greaterThan 4)
+            )
+    -- Passes because (5 > 4) is True
+-}
+oneOfListItem : Builder a -> Builder (List a)
+oneOfListItem builder =
+    custom <|
+        \ls ->
+            if List.isEmpty ls then
+                fail "Expect.Builder.oneOfListItem was given an empty list. You must make at least one expectation to have a valid test!"
+            else if (List.any (\a -> isPass (extractOn a builder)) ls) then
+                pass
+            else
+                fail "Expect.Builder.oneOfListItem passes for none of the given list elements"
+
+
+
+{-| Passes if given `Builder` passes when applied to each of the list elements.
+Passing an empty list is assumed to be a mistake, so `Expect.Builder.allListItems []`
+will always return a failed expectation no matter what else it is passed.
+
+    [ 3, 4 ]
+        |> Expect.Builder.applyTo
+            (Expect.Builder.allListItems
+                (Expect.Builder.lessThan 6)
+            )
+    -- Passes because (3 < 6) is True and (4 < 6) is also True
+
+Failures resemble code written in pipeline style, so you can tell
+which argument is which:
+    -- Fails because (0 < -10) is False
+    [ 3, 4, 10 ]
+        |> Expect.Builder.applyTo
+            (Expect.Builder.allListItems
+                (Expect.Builder.lessThan 6)
+            )
+    {-
+    10
+    ╷
+    │ Expect.lessThan
+    ╵
+    6
+    -}
+-}
+allOfListItems : Builder a -> Builder (List a)
+allOfListItems builder =
+    custom <|
+        \ls ->
+            if List.isEmpty ls then
+                fail "Expect.Builder.allOfListItems was given an empty list. You must make at least one expectation to have a valid test!"
+            else
+                List.foldl
+                    (\a acc ->
+                        if isPass pass then
+                            extractOn a builder
+                        else
+                            acc
+                    )
+                    pass
+                    ls
+
+
+
 {-| Build `equalDicts`.
 
 Passes if the arguments are equal dicts.
@@ -840,20 +909,40 @@ equalSets expected =
                         \v ->
                             case v of
                                 Ok _ ->
-                                    Ok ()
+                                    Expect.Builder.pass
 
                                 Err err ->
-                                    Err err
+                                    Expect.Builder.fail err
                     )
 
 -}
-custom : (a -> Result String ()) -> Builder a
+custom : (a -> Builder ()) -> Builder a
 custom f =
     Builder <| \a ->
-        case f a of
-            Ok () -> Ok ()
-            Err str ->
-                Err <| Expect.fail str
+        let
+            (Builder builder) = f a
+        in
+        builder ()
+
+
+{-| Build `Expect.pass` for any subject.
+
+Always passes.
+-}
+pass : Builder a
+pass =
+    Builder <| \_ -> Ok ()
+
+
+{-| Build `Expect.fail` for any subject.
+
+Fails with the given message.
+-}
+fail : String -> Builder a
+fail str =
+    Builder <| \_ ->
+        Err <| Expect.fail str
+
 
 {-| If the given expectation fails, replace its failure message with a custom one.
 
@@ -873,6 +962,36 @@ onFail str (Builder builder) =
                 expectation
                     |> Expect.onFail str
                     |> Err
+
+
+{-| Provide an subject value to extract constant `Builder`.
+
+e.g., you can build your original `oneOfListItem` function with `extractOn` and `isPass`.
+
+    myOneOfListItem : Builder a -> Builder (List a)
+    myOneOfListItem builder =
+        custom <|
+            \ls ->
+                if List.isEmpty ls then
+                    fail "Expect.Builder.oneOfListItem was given an empty list. You must make at least one expectation to have a valid test!"
+                else if (List.any (\a -> isPass (extractOn a builder)) ls) then
+                    pass
+                else
+                    fail "Expect.Builder.oneOfListItem passes for none of the given list elements"
+
+-}
+extractOn : a -> Builder a -> Builder ()
+extractOn a (Builder builder) =
+    Builder <| \() ->
+        builder a
+
+
+{-| Check if an extracted `Builder` passes.
+-}
+isPass : Builder () -> Bool
+isPass (Builder builder) =
+    builder () == Ok ()
+
 
 {---- Private *floating point* helper functions from elm-explorations/test.
 

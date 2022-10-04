@@ -11,7 +11,7 @@ module Page.Login exposing
 
 import App.Session exposing (Session)
 import Browser.Navigation as Nav exposing (Key)
-import Expect
+import Expect.Builder as ExpBuilder
 import Http
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -354,7 +354,7 @@ type alias Scenario =
 
 
 scenario :
-    Scenario.Session Command Memory Event
+    Scenario.Session
     ->
         { user :
             { comment : String -> Scenario
@@ -397,15 +397,15 @@ scenario session =
             \json ->
                 Scenario.systemCommand session
                     "Request login to server"
-                    (\command ->
+                    (ExpBuilder.custom <| \command ->
                         case command of
                             RequestLogin _ login ->
                                 if Login.toValue login == json then
-                                    Expect.pass
+                                    ExpBuilder.pass
                                 else
-                                    Expect.fail "thought the request body is equal to the expected JSON."
+                                    ExpBuilder.fail "thought the request body is equal to the expected JSON."
                             _ ->
-                                Expect.fail "thought the command is `RequestLogin`."
+                                ExpBuilder.fail "thought the command is `RequestLogin`."
                     )
         }
     , external =

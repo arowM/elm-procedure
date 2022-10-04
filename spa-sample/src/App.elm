@@ -408,7 +408,7 @@ extractSession memory =
 type alias Scenario =
     Scenario.Scenario Command Memory Event
 
-scenario : Scenario.Session Command Memory Event ->
+scenario : Scenario.Session ->
     { user :
         { comment : String -> Scenario
         , setUrl : Url -> Scenario
@@ -441,81 +441,39 @@ page :
     }
 page =
     { login =
-        { memory =
-            { get =
-                \m ->
-                    case m.page of
-                        PageLogin a ->
-                            Just a
-
-                        _ ->
-                            Nothing
-            , set = \m1 m ->
-                case m.page of
-                    PageLogin (c, _) ->
-                        { m | page = PageLogin (c, m1) }
-                    _ ->
-                        m
-            }
-        , event =
-            { unwrap =
-                \e ->
-                    case e of
-                        PageLoginEvent e1 ->
-                            Just e1
-
-                        _ ->
-                            Nothing
-            , wrap = PageLoginEvent
-            }
-        , command =
-            { unwrap =
+        { unwrapCommand =
                 \c ->
                     case c of
                         PageLoginCommand c1 ->
                             Just c1
                         _ ->
                             Nothing
-            , wrap = PageLoginCommand
-            }
-        }
-    , home =
-        { memory =
-            { get =
+        , get =
                 \m ->
                     case m.page of
-                        PageHome a ->
+                        PageLogin (_, a) ->
                             Just a
 
                         _ ->
                             Nothing
-            , set = \m1 m ->
-                case m.page of
-                    PageHome (c, _) ->
-                        { m | page = PageHome (c, m1) }
-                    _ ->
-                        m
-            }
-        , event =
-            { unwrap =
-                \e ->
-                    case e of
-                        PageHomeEvent e1 ->
-                            Just e1
-
-                        _ ->
-                            Nothing
-            , wrap = PageHomeEvent
-            }
-        , command =
-            { unwrap =
+        , wrapEvent = PageLoginEvent
+        }
+    , home =
+        { unwrapCommand =
                 \c ->
                     case c of
                         PageHomeCommand c1 ->
                             Just c1
                         _ ->
                             Nothing
-            , wrap = PageHomeCommand
-            }
+        , get =
+                \m ->
+                    case m.page of
+                        PageHome (_, a) ->
+                            Just a
+
+                        _ ->
+                            Nothing
+        , wrapEvent = PageHomeEvent
         }
     }

@@ -12,7 +12,7 @@ module Page.Home exposing
 import App.Route as Route
 import App.Session exposing (Session)
 import Browser.Navigation exposing (Key)
-import Expect
+import Expect.Builder as ExpBuilder
 import Http
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -332,7 +332,7 @@ type alias Scenario =
 
 
 scenario :
-    Scenario.Session Command Memory Event
+    Scenario.Session
     ->
         { user :
             { comment : String -> Scenario
@@ -369,15 +369,15 @@ scenario session =
             \json ->
                 Scenario.systemCommand session
                     "Request save new account to server"
-                    (\command ->
+                    (ExpBuilder.custom <| \command ->
                         case command of
                             RequestEditAccount _ editAccount ->
                                 if EditAccount.toValue editAccount == json then
-                                    Expect.pass
+                                    ExpBuilder.pass
                                 else
-                                    Expect.fail "thought the request body is equal to the expected JSON."
+                                    ExpBuilder.fail "thought the request body is equal to the expected JSON."
                             _ ->
-                                Expect.fail "thought the command is `RequestEditAccount`."
+                                ExpBuilder.fail "thought the command is `RequestEditAccount`."
                     )
         }
     , external =

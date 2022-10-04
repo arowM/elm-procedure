@@ -67,13 +67,14 @@ module Procedure.Scenario exposing
 
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
-import Html exposing (Html)
+import Mixin.Html as Html exposing (Html)
 import Internal.Core exposing
     ( Model(..)
-    , ThreadState
+    -- , ThreadState
     , Msg(..)
     )
-import Procedure.Advanced exposing (Channel)
+import Internal.Markup as Markup
+import Mixin exposing (Mixin)
 import Test exposing (Test)
 
 
@@ -118,7 +119,7 @@ type Scenario cmd memory event
         { next : Session -> Scenario cmd memory event
         }
     | NextCases
-        { cases : List (Section c m e)
+        { cases : List (Section cmd memory event)
         }
     | Unexpected
         { reason : UnexpectedReason
@@ -134,6 +135,17 @@ type Target
     = UserTarget Session
     | SystemTarget Session
     | ExternalTarget Session String
+
+
+displayTarget : Target -> String
+displayTarget target =
+    case target of
+        UserTarget (Session session) ->
+            "[Session " ++ String.fromInt session.sessionId ++ "] User"
+        SystemTarget (Session session) ->
+            "[Session " ++ String.fromInt session.sessionId ++ "] System"
+        ExternalTarget (Session session) name ->
+            "[Session " ++ String.fromInt session.sessionId ++ "] " ++ name
 
 
 {-| -}
@@ -166,10 +178,9 @@ concat s1 s2 =
                     | next = \session ->
                         concat (r.next session) s2
                 }
-        NextCases r ->
+        NextCases _ ->
             Unexpected
-                { error = ""
-                , description = ""
+                { reason = ScenarioAfterNextCases
                 }
 
         Unexpected r ->
@@ -197,10 +208,10 @@ type Section command memory event
 
 
 liftSection_ : Page c m e c1 m1 e1 -> Section c1 m1 e1 -> Section c m e
-liftSection_ page (Section section) =
+liftSection_ page (Section r) =
     Section
-        { title = section.title
-        , content = onPage_ page section.content
+        { title = r.title
+        , content = onPage_ page r.content
         }
 
 
@@ -216,9 +227,10 @@ section title scenarios =
 {-| Connect to other sections.
 -}
 cases : List (Section c m e) -> Scenario c m e
-cases =
-    Debug.todo ""
-
+cases sections =
+    NextCases
+        { cases = sections
+        }
 
 
 {-| -}
@@ -336,8 +348,7 @@ fromJust description ma f =
     case ma of
         Nothing ->
             Unexpected
-                { error = "thought this value would be `Just`."
-                , description = description
+                { reason = IsNotJust description
                 }
 
         Just a ->
@@ -432,17 +443,6 @@ onPage_ page s =
 -- Parse
 
 
-type alias Context =
-    { nextSessionId : Int
-    }
-
-
-initContext : Context
-initContext =
-    { nextSessionId = -2147483648
-    }
-
-
 {-| -}
 toTest :
     { init : m
@@ -458,9 +458,163 @@ toHtml :
     { title : String
     , sections : List (Section c m e)
     }
-    -> Html msg
-toHtml =
-    Debug.todo ""
+    -> Html ()
+toHtml { title, sections } =
+    case toMarkup sections of
+        Err err ->
+            unexpectedReasonHtml err
+        Ok sec ->
+            Html.div
+                [ Mixin.style "margin" "2em"
+                ]
+                [ Markup.toHtml (Mixin.none, title, sec )
+                ]
 
 
+unexpectedReasonHtml : UnexpectedReason -> Html ()
+unexpectedReasonHtml reason =
+    Html.div []
+        [ Html.text <|
+            case reason of
+                IsNotJust description ->
+                    "ERROR: `fromJust`\n" ++ description
+                ScenarioAfterNextCases ->
+                    "ERROR: `cases`\nSome scenarios are after `cases`. You must not put any scenarios after `cases`."
+        ]
 
+toMarkup : List (Section c m e) -> Result UnexpectedReason Markup.Section
+toMarkup sections =
+    List.foldr
+        (\sec acc ->
+            Result.map2 (++)
+                (markupSection [] sec)
+                acc
+        )
+        (Ok [])
+        sections
+        |> Result.map Markup.Sections
+
+markupSection : List (Mixin(), Markup.BlockElement) -> Section c m e -> Result UnexpectedReason (List (Mixin (), String, Markup.Section))
+markupSection inherit (Section r) =
+    let
+        context =
+            markupScenario_ r.title r.content
+                { appendSections = \items ->
+                    [ (Mixin.none, r.title, Markup.SectionBody [ (Mixin.none, Markup.ListItems (Mixin.style "list-style-type" "disc") items) ]) ]
+                , listItems = inherit
+                , error = Nothing
+                , nextSessionId = 1
+                }
+    in
+    case context.error of
+        Nothing ->
+            context.listItems
+                |> List.reverse
+                |> context.appendSections
+                |> Ok
+        Just err ->
+            Err err
+
+
+type alias MarkupContext =
+    { appendSections : List (Mixin (), Markup.BlockElement) -> List (Mixin (), String, Markup.Section)
+    , listItems : List (Mixin (), Markup.BlockElement)
+    , error : Maybe UnexpectedReason
+    , nextSessionId : Int
+    }
+
+
+markupScenario_ : String -> Scenario c m e -> MarkupContext -> MarkupContext
+markupScenario_ title scenario context =
+    let
+        appendListItem : Target -> String -> MarkupContext
+        appendListItem target content = Debug.log "context"
+            { context
+                | listItems =
+                        ( Mixin.none
+                        , Markup.Paragraph
+                          [ ( Mixin.none
+                            , Markup.StrongText <|
+                                displayTarget target
+                            )
+                          , ( Mixin.none
+                            , Markup.PlainText <|
+                                ": " ++ content
+                            )
+                          ]
+                        ) :: context.listItems
+            }
+
+    in
+    case scenario of
+        Comment r ->
+            markupScenario_ title
+                r.next
+                (appendListItem r.target r.comment)
+        IssueEvent r ->
+            markupScenario_ title
+                r.next
+                (appendListItem r.target r.description)
+        ExpectCommand r ->
+            markupScenario_ title
+                r.next
+                (appendListItem r.target r.description)
+        ExpectMemory r ->
+            markupScenario_ title
+                r.next
+                (appendListItem r.target r.description)
+        ExpectView r ->
+            markupScenario_ title
+                r.next
+                (appendListItem r.target r.description)
+        WithNewSession r ->
+            markupScenario_ title
+                (r.next (Session { sessionId = context.nextSessionId }))
+                { context | nextSessionId = context.nextSessionId + 1 }
+
+        NextCases r ->
+            let
+                rnextCases : Result UnexpectedReason (List (Mixin (), String, Markup.Section))
+                rnextCases =
+                    List.foldr
+                        (\sec acc ->
+                            Result.map2 (++)
+                                (markupSection
+                                    [ (Mixin.none
+                                      , Markup.Paragraph
+                                        [ ( Mixin.none
+                                          , Markup.PlainText "(After "
+                                          )
+                                        , ( Mixin.none
+                                          , Markup.EmphasizedText title
+                                          )
+                                        , ( Mixin.none
+                                          , Markup.PlainText ")"
+                                          )
+                                        ]
+                                      )
+                                    ]
+                                    sec
+                                )
+                                acc
+                        )
+                        (Ok [])
+                        r.cases
+            in
+            case rnextCases of
+                Err err ->
+                    { context | error = Just err }
+                Ok nextCases ->
+                    { context
+                        | appendSections = \_ ->
+                            (context.listItems
+                                |> List.reverse
+                                |> context.appendSections
+                            ) ++ nextCases
+                        , listItems = []
+                    }
+
+        Unexpected r ->
+            { context | error = Just r.reason }
+        Nil ->
+            context

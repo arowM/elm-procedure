@@ -13,7 +13,7 @@ import Url
 
 {-| Generate document for `scenarios`.
 -}
-main : Html msg
+main : Html ()
 main =
     Scenario.toHtml
         { title = "Sample scenario"
@@ -34,16 +34,17 @@ test =
 {-| -}
 sections : List (Scenario.Section Command Memory Event)
 sections =
-        [ Scenario.section "introduction"
+        [ Scenario.section "Introduction"
             [ Scenario.withNewSession introduction
             ]
         ]
 
 
-introduction : Scenario.Session Command Memory Event -> List (Scenario Command Memory Event)
+introduction : Scenario.Session -> List (Scenario Command Memory Event)
 introduction session =
     let
         app = App.scenario session
+        pageLogin = PageLogin.scenario session
     in
     [ app.user.comment "Hi. I'm Sakura-chan, the cutest goat girl in the world."
     , app.user.comment "Today I'll try a goat management service."
@@ -54,11 +55,7 @@ introduction session =
             , app.user.setUrl url
             ]
     , app.system.comment "Redirect to login page immediately."
-    , Scenario.onPage session App.page.login <|
-        \pageLoginSession ->
-            let
-                pageLogin = PageLogin.scenario pageLoginSession
-            in
+    , Scenario.onPage App.page.login
             [ pageLogin.user.comment "I see I need to log in! I remember my dad gave me the account information in advance."
             , pageLogin.user.changeLoginId "guest"
             , pageLogin.user.changePass "guestpass"
@@ -87,27 +84,27 @@ introduction session =
                     }
             ]
     , app.system.comment "Redirect to home page."
-    , Scenario.onPage session App.page.home <| \_ -> [] -- Just ensure that current page is Home.
+    , Scenario.onPage App.page.home [] -- Just ensure that current page is Home.
     , Scenario.cases
         [ Scenario.section "Home page #1"
-            [ Scenario.onPage session App.page.home <|
-                pageHomeCase1
+            [ Scenario.onPage App.page.home <|
+                pageHomeCase1 session
             ]
         , Scenario.section "Home page #2"
-            [ Scenario.onPage session App.page.home <|
-                pageHomeCase2
+            [ Scenario.onPage App.page.home <|
+                pageHomeCase2 session
             ]
         ]
     ]
 
 
-pageHomeCase1 : Scenario.Session PageHome.Command PageHome.Memory PageHome.Event -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
+pageHomeCase1 : Scenario.Session -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
 pageHomeCase1 _ =
     [
     ]
 
 
-pageHomeCase2 : Scenario.Session PageHome.Command PageHome.Memory PageHome.Event -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
+pageHomeCase2 : Scenario.Session -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
 pageHomeCase2 _ =
     [
     ]

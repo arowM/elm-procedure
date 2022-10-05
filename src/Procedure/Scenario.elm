@@ -68,6 +68,7 @@ module Procedure.Scenario exposing
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Mixin.Html as Html exposing (Html)
+import Internal.Channel as Channel exposing (Channel)
 import Internal.Core exposing
     ( Model(..)
     -- , ThreadState
@@ -440,18 +441,45 @@ onPage_ page s =
 
 
 
--- Parse
+-- Test
 
 
 {-| -}
 toTest :
-    { init : m
-    , sections : List (Section c m e)
+    { init : memory
+    , view : (Channel, memory) -> Html (Msg event)
+    , sections : List (Section cmd memory event)
     }
     -> Test
-toTest =
+toTest o =
+    List.map
+        (\sec ->
+            Test.describe sec.title <|
+                toTests
+                    { view = \m -> Html.map (\_ -> ()) <| o.view (Channel.init, m)
+                    }
+                    { memory = o.init
+                    }
+                    sec.content
+        )
+        o.sections
+        |> Test.describe "Scenario tests"
+
+
+type alias TestConfig m =
+    { view : m -> Html ()
+    }
+
+type alias TextContext m =
+    { memory : m
+    }
+
+toTests : TestConfig m -> TestContext m -> Scenario c m e -> List Test
+toTests config context scenario =
     Debug.todo ""
 
+
+-- Document generation
 
 {-| -}
 toHtml :

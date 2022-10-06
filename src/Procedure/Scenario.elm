@@ -18,6 +18,7 @@ module Procedure.Scenario exposing
     , externalComment
     , externalEvent
     , toTest
+    , Key(..)
     , toHtml
     , fromJust
     )
@@ -27,6 +28,7 @@ module Procedure.Scenario exposing
 # Entry point
 
 @docs toTest
+@docs Key
 @docs toHtml
 
 # Scenario
@@ -65,6 +67,7 @@ module Procedure.Scenario exposing
 
 -}
 
+import Browser.Navigation as Nav
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Mixin.Html as Html exposing (Html)
@@ -86,38 +89,45 @@ type alias ExpBuilder a = ExpBuilder.Builder a
 
 
 {-| -}
-type Scenario cmd memory event
+type Scenario flags cmd memory event
     = Comment
         { target : Target
         , comment : String
-        , next : Scenario cmd memory event
+        , next : Scenario flags cmd memory event
+        }
+    | LoadApp
+        { target : Target
+        , description : String
+        , flags : flags
+        , url : Url
+        , next : Scenario flags cmd memory event
         }
     | IssueEvent
         { target : Target
         , description : String
         , event : event
-        , next : Scenario cmd memory event
+        , next : Scenario flags cmd memory event
         }
     | ExpectCommand
         { target : Target
         , description : String
         , expectation : ExpBuilder cmd
-        , next : Scenario cmd memory event
+        , next : Scenario flags cmd memory event
         }
     | ExpectMemory
         { target : Target
         , description : String
         , expectation : ExpBuilder memory
-        , next : Scenario cmd memory event
+        , next : Scenario flags cmd memory event
         }
     | ExpectView
         { target : Target
         , description : String
         , expectation : Html () -> Expectation
-        , next : Scenario cmd memory event
+        , next : Scenario flags cmd memory event
         }
     | WithNewSession
-        { next : Session -> Scenario cmd memory event
+        { next : Session -> Scenario flags cmd memory event
         }
     | NextCases
         { cases : List (Section cmd memory event)
@@ -150,17 +160,19 @@ displayTarget target =
 
 
 {-| -}
-batch : List (Scenario c m e) -> Scenario c m e
+batch : List (Scenario flags c m e) -> Scenario flags c m e
 batch =
     List.foldl (\a acc -> concat acc a) Nil
 
 
-concat : Scenario c m e -> Scenario c m e -> Scenario c m e
+concat : Scenario flags c m e -> Scenario flags c m e -> Scenario flags c m e
 concat s1 s2 =
     case s1 of
         Comment r ->
             Comment { r | next = concat r.next s2 }
 
+        LoadApp r ->
+            LoadApp { r | next = concat r.next s2 }
         IssueEvent r ->
             IssueEvent { r | next = concat r.next s2 }
 
@@ -192,7 +204,7 @@ concat s1 s2 =
 
 
 {-| -}
-none : Scenario c m e
+none : Scenario flags c m e
 none =
     Nil
 
@@ -204,7 +216,7 @@ none =
 type Section command memory event
     = Section
         { title : String
-        , content : Scenario command memory event
+        , content : Scenario flags command memory event
         }
 
 
@@ -217,7 +229,7 @@ liftSection_ page (Section r) =
 
 
 {-| -}
-section : String -> List (Scenario c m e) -> Section c m e
+section : String -> List (Scenario flags c m e) -> Section c m e
 section title scenarios =
     Section
         { title = title
@@ -227,7 +239,7 @@ section title scenarios =
 
 {-| Connect to other sections.
 -}
-cases : List (Section c m e) -> Scenario c m e
+cases : List (Section c m e) -> Scenario flags c m e
 cases sections =
     NextCases
         { cases = sections
@@ -248,7 +260,7 @@ type alias Session_ =
 
 
 {-| -}
-userComment : Session -> String -> Scenario c m e
+userComment : Session -> String -> Scenario flags c m e
 userComment session comment =
     Comment
         { target = UserTarget session
@@ -258,7 +270,7 @@ userComment session comment =
 
 
 {-| -}
-systemComment : Session -> String -> Scenario c m e
+systemComment : Session -> String -> Scenario flags c m e
 systemComment session comment =
     Comment
         { target = SystemTarget session
@@ -268,7 +280,7 @@ systemComment session comment =
 
 
 {-| -}
-externalComment : String -> Session -> String -> Scenario c m e
+externalComment : String -> Session -> String -> Scenario flags c m e
 externalComment name session comment =
     Comment
         { target = ExternalTarget session name
@@ -278,7 +290,7 @@ externalComment name session comment =
 
 
 {-| -}
-userEvent : Session -> String -> event -> Scenario c m event
+userEvent : Session -> String -> event -> Scenario flags c m event
 userEvent session description event =
     IssueEvent
         { target = UserTarget session
@@ -289,7 +301,7 @@ userEvent session description event =
 
 
 {-| -}
-externalEvent : String -> Session -> String -> event -> Scenario c m event
+externalEvent : String -> Session -> String -> event -> Scenario flags c m event
 externalEvent name session description event =
     IssueEvent
         { target = ExternalTarget session name
@@ -300,7 +312,7 @@ externalEvent name session description event =
 
 
 {-| -}
-systemCommand : Session -> String -> ExpBuilder command -> Scenario command m e
+systemCommand : Session -> String -> ExpBuilder command -> Scenario flags command m e
 systemCommand session description expectation =
     ExpectCommand
         { target = SystemTarget session
@@ -311,7 +323,7 @@ systemCommand session description expectation =
 
 
 {-| -}
-systemMemory : Session -> String -> ExpBuilder memory -> Scenario c memory e
+systemMemory : Session -> String -> ExpBuilder memory -> Scenario flags c memory e
 systemMemory session description expectation =
     ExpectMemory
         { target = SystemTarget session
@@ -322,7 +334,7 @@ systemMemory session description expectation =
 
 
 {-| -}
-systemView : Session -> String -> (Html () -> Expectation) -> Scenario c m event
+systemView : Session -> String -> (Html () -> Expectation) -> Scenario flags c m event
 systemView session description expectation =
     ExpectView
         { target = SystemTarget session
@@ -333,7 +345,7 @@ systemView session description expectation =
 
 
 {-| -}
-withNewSession : (Session -> List (Scenario c m e)) -> Scenario c m e
+withNewSession : (Session -> List (Scenario flags c m e)) -> Scenario flags c m e
 withNewSession f =
     WithNewSession
         { next = \session -> f session |> batch
@@ -344,7 +356,7 @@ withNewSession f =
 
 
 {-| -}
-fromJust : String -> Maybe a -> (a -> List (Scenario c m e)) -> Scenario c m e
+fromJust : String -> Maybe a -> (a -> List (Scenario flags c m e)) -> Scenario flags c m e
 fromJust description ma f =
     case ma of
         Nothing ->
@@ -366,18 +378,26 @@ type alias Page c m e c1 m1 e1 =
 
 
 {-| -}
-onPage : Page c m e c1 m1 e1 -> List (Scenario c1 m1 e1) -> Scenario c m e
+onPage : Page c m e c1 m1 e1 -> List (Scenario flags c1 m1 e1) -> Scenario flags c m e
 onPage page s1s =
     onPage_ page (batch s1s)
 
 
-onPage_ : Page c m e c1 m1 e1 -> Scenario c1 m1 e1 -> Scenario c m e
+onPage_ : Page c m e c1 m1 e1 -> Scenario flags c1 m1 e1 -> Scenario flags c m e
 onPage_ page s =
     case s of
         Comment r ->
             Comment
                 { target = r.target
                 , comment = r.comment
+                , next = onPage_ page r.next
+                }
+        LoadApp r ->
+            LoadApp
+                { target = r.target
+                , description = r.description
+                , flags = r.flags
+                , url = r.url
                 , next = onPage_ page r.next
                 }
         IssueEvent r ->
@@ -445,8 +465,15 @@ onPage_ page s =
 
 
 {-| -}
+type Key
+    = NavKey Nav.Key
+    | SimKey
+
+
+{-| -}
 toTest :
     { init : memory
+    , procedures : flags -> Url -> Key -> List (Procedure cmd memory event)
     , view : (Channel, memory) -> Html (Msg event)
     , sections : List (Section cmd memory event)
     }
@@ -457,25 +484,70 @@ toTest o =
             Test.describe sec.title <|
                 toTests
                     { view = \m -> Html.map (\_ -> ()) <| o.view (Channel.init, m)
-                    }
-                    { memory = o.init
+                    , procedures = \flags url ->
+                        Procedure.init o.init
+                            (procedures flags url SimKey)
                     }
                     sec.content
+                    (Procedure.init o.init [])
         )
         o.sections
         |> Test.describe "Scenario tests"
 
 
-type alias TestConfig m =
+type alias TestConfig flags c m e =
     { view : m -> Html ()
+    , init : flags -> Url -> Model m e
     }
 
-type alias TextContext m =
-    { memory : m
-    }
+toTests : TestConfig flags c m e -> Scenario flags c m e -> (Model m e, List cmd) -> List Test
+toTests config scenario (model, cmds) =
+    case scenario of
+        Comment r ->
+            toTests config r.next (model, cmds)
 
-toTests : TestConfig m -> TestContext m -> Scenario c m e -> List Test
-toTests config context scenario =
+        LoadApp r ->
+            toTests config r.next
+                (config.init r.flag r.url
+                , []
+                )
+
+        IssueEvent r ->
+            toTests config r.next
+                (Procedure.update
+                    (Debug.todo "toMsg" r.event)
+                    model
+                )
+    ExpectCommand
+        { target : Target
+        , description : String
+        , expectation : ExpBuilder cmd
+        , next : Scenario flags cmd memory event
+        }
+    | ExpectMemory
+        { target : Target
+        , description : String
+        , expectation : ExpBuilder memory
+        , next : Scenario flags cmd memory event
+        }
+    | ExpectView
+        { target : Target
+        , description : String
+        , expectation : Html () -> Expectation
+        , next : Scenario flags cmd memory event
+        }
+    | WithNewSession
+        { next : Session -> Scenario flags cmd memory event
+        }
+    | NextCases
+        { cases : List (Section cmd memory event)
+        }
+    | Unexpected
+        { reason : UnexpectedReason
+        }
+    | Nil
+
+
     Debug.todo ""
 
 
@@ -552,7 +624,7 @@ type alias MarkupContext =
     }
 
 
-markupScenario_ : String -> Scenario c m e -> MarkupContext -> MarkupContext
+markupScenario_ : String -> Scenario flags c m e -> MarkupContext -> MarkupContext
 markupScenario_ title scenario context =
     let
         appendListItem : Target -> String -> MarkupContext
@@ -579,6 +651,10 @@ markupScenario_ title scenario context =
             markupScenario_ title
                 r.next
                 (appendListItem r.target r.comment)
+        LoadApp r ->
+            markupScenario_ title
+                r.next
+                (appendListItem r.target r.description)
         IssueEvent r ->
             markupScenario_ title
                 r.next

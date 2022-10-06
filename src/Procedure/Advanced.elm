@@ -919,6 +919,7 @@ init initialMemory procs =
             toThread <|
                 fromProcedure
                     { memory = initialMemory
+                    , memoryChannel = Channel.inc
                     , nextChannel = Channel.inc Channel.init
                     , subs = []
                     , nextSubId = SubId.init

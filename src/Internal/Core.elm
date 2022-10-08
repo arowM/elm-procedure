@@ -1,41 +1,58 @@
 module Internal.Core exposing
-    ( succeedResponseHandler
-    , mapResponseHandler
-    , andAsyncResponseHandler
-    , andRaceResponseHandler
-    , liftResponseHandlerMemory
+    ( Model(..)
+    , Msg(..)
+    , Promise(..)
     , succeedPromise
     , mapPromise
     , andAsyncPromise
     , andRacePromise
     , liftPromiseMemory
+    , portRequest
+    , Procedure(..)
     , none, batch
-    , modify, push, await, async, addListener
+    , modify, push, await, awaitMsg, async, addListener
     , putLayer, onLayer
     , init, update
-    , HandlerResult(..), Model(..), Msg(..), Procedure(..), Promise(..), ResponseHandler(..)
     )
 
 {-|
 
+
+# Core
+
 @docs Model
 @docs Msg
-@docs ResponseHandler
-@docs succeedResponseHandler
-@docs mapResponseHandler
-@docs andAsyncResponseHandler
-@docs andRaceResponseHandler
-@docs liftResponseHandlerMemory
-@docs HandlerResult
+
+
+# Promise
+
 @docs Promise
 @docs succeedPromise
 @docs mapPromise
 @docs andAsyncPromise
 @docs andRacePromise
 @docs liftPromiseMemory
+@docs portRequest
+
+
+# Procedure
+
 @docs Procedure
-@docs none, batch, liftMemory
-@docs modify, push, await
+@docs none, batch
+
+
+# Primitive Procedures
+
+@docs modify, push, await, awaitMsg, async, addListener
+
+
+# Layer
+
+@docs putLayer, onLayer
+
+
+# TEA
+
 @docs init, update
 
 -}
@@ -68,10 +85,41 @@ type alias OnGoing_ c m e =
 -}
 type alias Context memory event =
     { state : memory
-    , subs : List ( SubId, memory -> Maybe (Sub (Msg event)) )
+    , subs : List ( Channel, SubId, Sub (Msg event) )
+    , layerChannel : LayerChannel memory
     , nextSubId : SubId
     , nextRequestId : RequestId
     , nextChannel : Channel
+    }
+
+
+mapContextMemory :
+    Layer_ m m1
+    -> Context m e
+    -> Maybe (Context m1 e)
+mapContextMemory layer context =
+    layer.get context.state
+        |> Maybe.map
+            (\m1 ->
+                { state = m1
+                , subs = context.subs
+                , layerChannel = layer.channel
+                , nextSubId = context.nextSubId
+                , nextRequestId = context.nextRequestId
+                , nextChannel = context.nextChannel
+                }
+            )
+
+
+setContext :
+    Layer_ m m1
+    -> Context m1 e
+    -> Context m e
+    -> Context m e
+setContext layer context1 context =
+    { context
+        | state =
+            layer.set context1.state context.state
     }
 
 
@@ -86,7 +134,7 @@ type Msg event
         }
     | ResponseMsg
         { requestId : RequestId
-        , event : event
+        , response : Value
         , closeSub : Maybe SubId
         }
     | SubMsg
@@ -97,175 +145,203 @@ type Msg event
 
 
 
--- ResponseHandler
-
-
-type
-    ResponseHandler m e a
-    -- Supply `m` parameter not to resolve on expired layers
-    = ResponseHandler (m -> Msg e -> HandlerResult m e a)
-
-
-type HandlerResult m e a
-    = Resolved a
-    | AwaitAgain (ResponseHandler m e a)
-    | Reject
-
-
-mapResponseHandler : (a -> b) -> ResponseHandler m e a -> ResponseHandler m e b
-mapResponseHandler f (ResponseHandler handler) =
-    ResponseHandler <|
-        \m msg ->
-            case handler m msg of
-                Resolved a ->
-                    Resolved <| f a
-
-                AwaitAgain next ->
-                    AwaitAgain <| mapResponseHandler f next
-
-                Reject ->
-                    Reject
-
-
-succeedResponseHandler : a -> ResponseHandler m e a
-succeedResponseHandler a =
-    ResponseHandler <| \_ _ -> Resolved a
-
-
-andAsyncResponseHandler : ResponseHandler m e a -> ResponseHandler m e (a -> b) -> ResponseHandler m e b
-andAsyncResponseHandler (ResponseHandler handlerA) (ResponseHandler handlerF) =
-    ResponseHandler <|
-        \m msg ->
-            case ( handlerF m msg, handlerA m msg ) of
-                ( Resolved f, Resolved a ) ->
-                    Resolved <| f a
-
-                ( Resolved f, AwaitAgain handlerA2 ) ->
-                    AwaitAgain <| mapResponseHandler f handlerA2
-
-                ( AwaitAgain handlerF2, Resolved a ) ->
-                    AwaitAgain <| mapResponseHandler (\f -> f a) handlerF2
-
-                ( AwaitAgain handlerF2, AwaitAgain handlerA2 ) ->
-                    AwaitAgain <| andAsyncResponseHandler handlerA2 handlerF2
-
-                ( Reject, _ ) ->
-                    Reject
-
-                ( _, Reject ) ->
-                    Reject
-
-
-andRaceResponseHandler : ResponseHandler m e a -> ResponseHandler m e a -> ResponseHandler m e a
-andRaceResponseHandler (ResponseHandler handler1) (ResponseHandler handler2) =
-    ResponseHandler <|
-        \m msg ->
-            case ( handler1 m msg, handler2 m msg ) of
-                ( Resolved a1, _ ) ->
-                    Resolved a1
-
-                ( AwaitAgain _, Resolved a2 ) ->
-                    Resolved a2
-
-                ( AwaitAgain next1, AwaitAgain next2 ) ->
-                    AwaitAgain <| andRaceResponseHandler next1 next2
-
-                ( Reject, r2 ) ->
-                    r2
-
-                ( r1, Reject ) ->
-                    r1
-
-
-liftResponseHandlerMemory :
-    (m -> Maybe m1)
-    -> ResponseHandler m1 e a
-    -> ResponseHandler m e a
-liftResponseHandlerMemory get (ResponseHandler handler) =
-    ResponseHandler <|
-        \m msg ->
-            case get m of
-                Nothing ->
-                    Reject
-
-                Just m1 ->
-                    case handler m1 msg of
-                        Resolved a ->
-                            Resolved a
-
-                        AwaitAgain next ->
-                            AwaitAgain <| liftResponseHandlerMemory get next
-
-                        Reject ->
-                            Reject
-
-
-customResponseHandler : (Msg e -> List (Procedure c m e)) -> ResponseHandler m e (Procedure c m e)
-customResponseHandler f =
-            ResponseHandler <|
-                \_ msg ->
-                    case f msg of
-                        [] ->
-                            AwaitAgain <| customResponseHandler f
-                        procs ->
-                            Resolved <| batch procs
-
 -- Promise
 
 
-type Promise cmd m e a
-    = Promise
-        { cmds : m -> List (RequestId -> cmd)
-        , handler : RequestId -> ResponseHandler m e a
-        }
+type Promise c m e a
+    = Promise (Context m e -> PromiseEffect c m e a)
 
 
-succeedPromise : a -> Promise c m e a
-succeedPromise a =
-    Promise
-        { cmds = \_ -> []
-        , handler = \_ -> succeedResponseHandler a
-        }
+type alias PromiseEffect c m e a =
+    { newContext : Context m e
+    , cmds : List c
+    , handler : m -> Msg e -> PromiseResult c m e a
+    }
+
+
+type PromiseResult c m e a
+    = Resolved a
+    | AwaitAgain (Promise c m e a)
+    | Reject
 
 
 mapPromise : (a -> b) -> Promise c m e a -> Promise c m e b
 mapPromise f (Promise prom) =
-    Promise
-        { cmds = prom.cmds
-        , handler = mapResponseHandler f prom.handler
-        }
+    Promise <|
+        \context ->
+            let
+                effA =
+                    prom context
+            in
+            { newContext = effA.newContext
+            , cmds = effA.cmds
+            , handler =
+                \m msg ->
+                    case effA.handler m msg of
+                        Resolved a ->
+                            Resolved <| f a
+
+                        AwaitAgain nextProm ->
+                            AwaitAgain <|
+                                mapPromise f nextProm
+
+                        Reject ->
+                            Reject
+            }
+
+
+succeedPromise : a -> Promise c m e a
+succeedPromise a =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = []
+            , handler =
+                \_ _ -> Resolved a
+            }
 
 
 andAsyncPromise : Promise c m e a -> Promise c m e (a -> b) -> Promise c m e b
 andAsyncPromise (Promise promA) (Promise promF) =
-    Promise
-        { cmds = \m -> promA.cmds m ++ promF.cmds m
-        , handler = andAsyncResponseHandler promA.handler promF.handler
-        }
+    Promise <|
+        \context ->
+            let
+                effF =
+                    promF context
+
+                effA =
+                    promA effF.newContext
+            in
+            { newContext = effA.newContext
+            , cmds = effF.cmds ++ effA.cmds
+            , handler =
+                \m msg ->
+                    case ( effF.handler m msg, effA.handler m msg ) of
+                        ( Resolved f, Resolved a ) ->
+                            Resolved <| f a
+
+                        ( Resolved f, AwaitAgain nextPromA ) ->
+                            AwaitAgain <|
+                                mapPromise f nextPromA
+
+                        ( AwaitAgain nextPromF, Resolved a ) ->
+                            AwaitAgain <|
+                                mapPromise (\f -> f a) nextPromF
+
+                        ( AwaitAgain nextPromF, AwaitAgain nextPromA ) ->
+                            AwaitAgain <|
+                                andAsyncPromise nextPromA nextPromF
+
+                        ( Reject, _ ) ->
+                            Reject
+
+                        ( _, Reject ) ->
+                            Reject
+            }
 
 
 andRacePromise : Promise c m e a -> Promise c m e a -> Promise c m e a
-andRacePromise (Promise prom1) (Promise prom2) =
-    Promise
-        { cmds = \m -> prom1.cmds m ++ prom2.cmds m
-        , handler = andRaceResponseHandler prom1.handler prom2.handler
-        }
+andRacePromise (Promise prom2) (Promise prom1) =
+    Promise <|
+        \context ->
+            let
+                eff1 =
+                    prom1 context
+
+                eff2 =
+                    prom2 eff1.newContext
+            in
+            { newContext = eff2.newContext
+            , cmds = eff1.cmds ++ eff2.cmds
+            , handler =
+                \m msg ->
+                    case ( eff1.handler m msg, eff2.handler m msg ) of
+                        ( Resolved a1, _ ) ->
+                            Resolved a1
+
+                        ( _, Resolved a2 ) ->
+                            Resolved a2
+
+                        ( AwaitAgain nextProm1, AwaitAgain nextProm2 ) ->
+                            AwaitAgain <|
+                                andRacePromise nextProm2 nextProm1
+
+                        ( Reject, res2 ) ->
+                            res2
+
+                        ( res1, Reject ) ->
+                            res1
+            }
 
 
 liftPromiseMemory :
-    (m -> Maybe m1)
+    Layer_ m m1
     -> Promise c m1 e a
     -> Promise c m e a
-liftPromiseMemory get (Promise prom) =
-    Promise
-        { cmds = \m ->
-            case get m of
+liftPromiseMemory o (Promise prom1) =
+    Promise <|
+        \context ->
+            case mapContextMemory o context of
                 Nothing ->
-                    []
-                Just m1 ->
-                    prom.cmds m1
-        , handler = liftResponseHandlerMemory get prom.handler
-        }
+                    let
+                        (LayerChannel closedChannel) =
+                            o.channel
+                    in
+                    { newContext =
+                        { context
+                            | subs =
+                                List.filter
+                                    (\( c, _, _ ) ->
+                                        c /= closedChannel
+                                    )
+                                    context.subs
+                        }
+                    , cmds = []
+                    , handler = \_ _ -> Reject
+                    }
+
+                Just context1 ->
+                    let
+                        eff1 =
+                            prom1 context1
+                    in
+                    { newContext = setContext o eff1.newContext context
+                    , cmds = eff1.cmds
+                    , handler =
+                        \m msg ->
+                            case o.get m of
+                                Nothing ->
+                                    Reject
+
+                                Just m1 ->
+                                    case eff1.handler m1 msg of
+                                        Resolved a ->
+                                            Resolved a
+
+                                        AwaitAgain next1 ->
+                                            AwaitAgain <| liftPromiseMemory o next1
+
+                                        Reject ->
+                                            Reject
+                    }
+
+
+awaitOnce : (m -> Msg e -> List (Procedure c m e)) -> Promise c m e (Procedure c m e)
+awaitOnce f =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = []
+            , handler =
+                \m msg ->
+                    case f m msg of
+                        [] ->
+                            AwaitAgain <|
+                                awaitOnce f
+
+                        procs ->
+                            Resolved <| batch procs
+            }
 
 
 
@@ -289,24 +365,9 @@ type Procedure c m e
         { async : Procedure c m e
         , next : Procedure c m e
         }
-    | Subscribe
-        -- Supply `m` parameter not to assign new Sub on expired Layers.
-        { subscription : (SubId, m -> Maybe (Sub (Msg e)))
-        , next : Procedure c m e
-        }
     | WithNewChannel
         -- Supply `m` parameter not to assign new channel on expired Layers.
         { withNewChannel : m -> Channel -> Procedure c m e
-        , next : Procedure c m e
-        }
-    | WithNewSubId
-        -- Supply `m` parameter not to assign new SubId on expired Layers.
-        { withNewSubId : m -> SubId -> Procedure c m e
-        , next : Procedure c m e
-        }
-    | WithNewRequestId
-        -- Supply `m` parameter not to assign new RequestId on expired Layers.
-        { withNewRequestId : m -> RequestId -> Procedure c m e
         , next : Procedure c m e
         }
     | Nil
@@ -348,57 +409,20 @@ mappend p1 p2 =
             Async
                 { r | next = mappend r.next p2 }
 
-        Subscribe r ->
-            Subscribe
-                { r | next = mappend r.next p2 }
-
         WithNewChannel r ->
             WithNewChannel
-                { r | next = mappend r.next p2 }
-
-        WithNewSubId r ->
-            WithNewSubId
-                { r | next = mappend r.next p2 }
-
-        WithNewRequestId r ->
-            WithNewRequestId
                 { r | next = mappend r.next p2 }
 
         Nil ->
             p2
 
 
-liftMemory :
-    { get : m -> Maybe ( Channel, m1 )
-    , set : ( Channel, m1 ) -> m -> m
-
-    -- Even if the get succeeds, it is still potential that the result is not for subject Layer.
-    -- The Channel value for the subject Layer is required for releasing the Layer resources in such cases.
-    , channel : Channel
-    }
-    -> Procedure c m1 e
-    -> Procedure c m e
-liftMemory o =
-    liftMemory_
-        { get =
-            \m ->
-                o.get m
-                    |> Maybe.andThen
-                        (\( c, m1 ) ->
-                            if c == o.channel then
-                                Just m1
-
-                            else
-                                Nothing
-                        )
-        , set = \m1 -> o.set ( o.channel, m1 )
-        }
+type LayerChannel m
+    = LayerChannel Channel
 
 
 liftMemory_ :
-    { get : m -> Maybe m1
-    , set : m1 -> m -> m
-    }
+    Layer_ m m1
     -> Procedure c m1 e
     -> Procedure c m e
 liftMemory_ o proc =
@@ -433,26 +457,12 @@ liftMemory_ o proc =
             RunPromise
                 { promise =
                     mapPromise (liftMemory_ o) r.promise
-                        |> liftPromiseMemory o.get
+                        |> liftPromiseMemory o
                 }
 
         Async r ->
             Async
                 { async = liftMemory_ o r.async
-                , next = liftMemory_ o r.next
-                }
-
-        Subscribe r ->
-            Subscribe
-                { subscription =
-                    let
-                        (subId, sub) = r.subscription
-                    in
-                    (subId
-                    , \m ->
-                        o.get m
-                            |> Maybe.andThen sub
-                    )
                 , next = liftMemory_ o r.next
                 }
 
@@ -466,32 +476,6 @@ liftMemory_ o proc =
 
                             Just m1 ->
                                 liftMemory_ o (r.withNewChannel m1 c)
-                , next = liftMemory_ o r.next
-                }
-
-        WithNewSubId r ->
-            WithNewSubId
-                { withNewSubId =
-                    \m c ->
-                        case o.get m of
-                            Nothing ->
-                                Nil
-
-                            Just m1 ->
-                                liftMemory_ o (r.withNewSubId m1 c)
-                , next = liftMemory_ o r.next
-                }
-
-        WithNewRequestId r ->
-            WithNewRequestId
-                { withNewRequestId =
-                    \m c ->
-                        case o.get m of
-                            Nothing ->
-                                Nil
-
-                            Just m1 ->
-                                liftMemory_ o (r.withNewRequestId m1 c)
                 , next = liftMemory_ o r.next
                 }
 
@@ -526,32 +510,21 @@ runPromise prom =
         }
 
 
-awaitMsg : (Msg e -> List (Procedure c m e)) -> Procedure c m e
-awaitMsg f =
-    Promise
-        { cmds = \_ -> []
-        , handler = customResponseHandler f
-        }
-        |> runPromise
-
 await : Promise c m e a -> (a -> List (Procedure c m e)) -> Procedure c m e
 await prom f =
     mapPromise (f >> batch) prom
         |> runPromise
 
 
+awaitMsg : (m -> Msg e -> List (Procedure c m e)) -> Procedure c m e
+awaitMsg f =
+    runPromise <| awaitOnce f
+
+
 async : List (Procedure c m e) -> Procedure c m e
 async procs =
     Async
         { async = batch procs
-        , next = Nil
-        }
-
-
-subscribe : (SubId, m -> Sub (Msg e)) -> Procedure c m e
-subscribe (subId, sub) =
-    Subscribe
-        { subscription = (subId, sub >> Just)
         , next = Nil
         }
 
@@ -563,118 +536,198 @@ withNewChannel f =
         , next = Nil
         }
 
-type Layer m m1 =
-    Layer (Layer_ m m1)
+
+type Layer m m1
+    = Layer (Layer_ m m1)
 
 
 type alias Layer_ m m1 =
-    { get : m -> Maybe ( Channel, m1 )
-    , set : ( Channel, m1 ) -> m -> m
-    , channel : Channel
+    { get : m -> Maybe m1
+    , set : m1 -> m -> m
+    , channel : LayerChannel m1
     }
 
+
 putLayer :
-    { get : m -> Maybe ( Channel, m1)
-    , set : (Channel, m1) -> m -> m
+    { get : m -> Maybe ( Channel, m1 )
+    , set : ( Channel, m1 ) -> m -> m
     , init : Channel -> m -> m
     }
     -> (Layer m m1 -> List (Procedure c m e))
     -> Procedure c m e
 putLayer o f =
-    withNewChannel <| \c ->
-        [ modify (o.init c)
-        , batch <| f <|
-            Layer
-                { get = o.get
-                , set = o.set
-                , channel = c
-                }
-        ]
+    withNewChannel <|
+        \c ->
+            [ modify (o.init c)
+            , batch <|
+                f <|
+                    Layer
+                        { get =
+                            \m ->
+                                o.get m
+                                    |> Maybe.andThen
+                                        (\( c_, m1 ) ->
+                                            if c_ == c then
+                                                Just m1
+
+                                            else
+                                                Nothing
+                                        )
+                        , set = \m1 -> o.set ( c, m1 )
+                        , channel = LayerChannel c
+                        }
+            ]
+
 
 onLayer : Layer m m1 -> List (Procedure c m1 e) -> Procedure c m e
 onLayer (Layer layer) procs =
-    liftMemory layer <| batch procs
-
-
-withNewSubId : (SubId -> List (Procedure c m e)) -> Procedure c m e
-withNewSubId f =
-    WithNewSubId
-        { withNewSubId = \_ -> f >> batch
-        , next = Nil
-        }
-
-withNewRequestId : (RequestId -> List (Procedure c m e)) -> Procedure c m e
-withNewRequestId f =
-    WithNewRequestId
-        { withNewRequestId = \_ -> f >> batch
-        , next = Nil
-        }
+    liftMemory_ layer <| batch procs
 
 
 addListener : (m -> Sub e) -> (e -> List (Procedure c m e)) -> Procedure c m e
 addListener sub handler =
-    withNewSubId <|
-        \subId ->
-            [ async
-                [ let
-                    subMsg e =
-                        SubMsg
-                            { subId = subId
-                            , event = e
+    async
+        [ runPromise <|
+            Promise <|
+                \context ->
+                    let
+                        mySubId =
+                            context.nextSubId
+
+                        (LayerChannel layerChannel) =
+                            context.layerChannel
+
+                        newContext =
+                            { context
+                                | nextSubId = SubId.inc context.nextSubId
+                                , subs =
+                                    ( layerChannel
+                                    , mySubId
+                                    , sub context.state |> Sub.map toSubMsg
+                                    )
+                                        :: context.subs
                             }
-                  in
-                  subscribe
-                    ( subId
-                    , sub >> Sub.map subMsg
-                    )
-                , let
-                    awaitForever () =
-                        awaitMsg <| \msg ->
+
+                        toSubMsg e =
+                            SubMsg
+                                { subId = mySubId
+                                , event = e
+                                }
+
+                        awaitForever m msg =
                             case msg of
                                 SubMsg subMsg ->
-                                    if (subMsg.subId == subId) then
-                                        [ async
-                                            [ awaitForever ()
-                                            ]
-                                        , handler subMsg.event
-                                            |> batch
-                                        ]
+                                    if subMsg.subId == mySubId then
+                                        Resolved <|
+                                            batch
+                                                [ async
+                                                    [ runPromise <| listenerPromise m
+                                                    ]
+                                                , handler subMsg.event
+                                                    |> batch
+                                                ]
+
                                     else
-                                        []
+                                        AwaitAgain <| listenerPromise m
+
                                 _ ->
-                                    []
-                  in
-                  awaitForever ()
-                ]
-            ]
+                                    AwaitAgain <| listenerPromise m
+
+                        listenerPromise _ =
+                            Promise <|
+                                \nextContext ->
+                                    { newContext = nextContext
+                                    , cmds = []
+                                    , handler = awaitForever
+                                    }
+                    in
+                    { newContext = newContext
+                    , cmds = []
+                    , handler = awaitForever
+                    }
+        ]
 
 
 portRequest :
-    { request : m -> RequestId -> (e -> Msg e) -> c
-    , response : (Value -> Msg e) -> Sub (Msg e)
-    , responseBody : Value -> Maybe a
+    { request : m -> RequestId -> c
+    , receiver : (Value -> Msg e) -> Sub (Msg e)
     , requestId : Value -> Maybe RequestId
+    , responseBody : Value -> resp
     }
-    -> Promise c m e a
+    -> Promise c m e resp
 portRequest o =
-    -- Promise
-    --     { cmds = \m ->
-    --         [ \reqId ->
-    --             o.request m reqId <| \e ->
-    --                 ResponseMsg
-    --                     { requestId = 
-    --         ]
-    --     , handler =
-    --         \reqId ->
-    --             ResponseHandler <|
-    --                 \m msg ->
-    --                     case msg of
-    --                         ResponseMsg respMsg ->
-    --                             if (respMsg.requestId == reqId) then
-                                    
+    Promise <|
+        \context ->
+            let
+                myRequestId =
+                    context.nextRequestId
 
+                mySubId =
+                    context.nextSubId
 
-    Debug.todo ""
+                (LayerChannel layerChannel) =
+                    context.layerChannel
+
+                handler : m -> Msg e -> PromiseResult c m e resp
+                handler _ msg =
+                    case msg of
+                        ResponseMsg respMsg ->
+                            if respMsg.requestId == myRequestId then
+                                Resolved <| o.responseBody respMsg.response
+
+                            else
+                                AwaitAgain <|
+                                    Promise <|
+                                        \nextContext ->
+                                            { newContext = nextContext
+                                            , cmds = []
+                                            , handler = handler
+                                            }
+
+                        _ ->
+                            AwaitAgain <|
+                                Promise <|
+                                    \nextContext ->
+                                        { newContext = nextContext
+                                        , cmds = []
+                                        , handler = handler
+                                        }
+            in
+            { newContext =
+                { context
+                    | nextRequestId = RequestId.inc context.nextRequestId
+                    , nextSubId = SubId.inc context.nextSubId
+                    , subs =
+                        ( layerChannel
+                        , mySubId
+                        , o.receiver
+                            (\resp ->
+                                case o.requestId resp of
+                                    Nothing ->
+                                        NoOp
+
+                                    Just requestId ->
+                                        if requestId == myRequestId then
+                                            ResponseMsg
+                                                { requestId = myRequestId
+                                                , response = resp
+                                                , closeSub = Just mySubId
+                                                }
+
+                                        else
+                                            NoOp
+                            )
+                        )
+                            :: context.subs
+                }
+            , cmds =
+                [ o.request
+                    context.state
+                    myRequestId
+                ]
+            , handler = handler
+            }
+
 
 
 -- TEA
@@ -692,6 +745,7 @@ initContext : m -> Context m e
 initContext memory =
     { state = memory
     , subs = []
+    , layerChannel = LayerChannel Channel.init
     , nextSubId = SubId.init
     , nextRequestId = RequestId.init
     , nextChannel = Channel.inc Channel.init
@@ -720,55 +774,32 @@ toModel context proc =
                 (Promise prom) =
                     r.promise
 
-                (ResponseHandler handler) =
-                    prom.handler
+                eff =
+                    prom context
 
                 next : Msg e -> Context m e -> ( Model c m e, List c )
                 next msg nextContext =
-                    case handler nextContext.state msg of
-                        AwaitAgain nextHandler ->
+                    case eff.handler nextContext.state msg of
+                        AwaitAgain nextPromise ->
                             toModel nextContext <|
                                 RunPromise
-                                    { promise =
-                                        Promise
-                                            { handler = nextHandler
-                                            , cmds = \_ -> []
-                                            }
-                                    }
+                                    { promise = nextPromise }
 
                         Resolved nextProc ->
                             toModel nextContext nextProc
 
                         Reject ->
                             ( EndOfProcess, [] )
-
-                ( cmds, nextRequestId ) =
-                    List.foldr
-                        (\toCmd ( accCmds, accNextReqId ) ->
-                            ( toCmd accNextReqId :: accCmds
-                            , RequestId.inc accNextReqId
-                            )
-                        )
-                        ( [], context.nextRequestId )
-                        (prom.cmds context.state)
             in
             ( OnGoing
-                { context = { context | nextRequestId = nextRequestId }
+                { context = eff.newContext
                 , next = next
                 }
-            , cmds
+            , eff.cmds
             )
 
         Async r ->
             toModel context (concurrent r.async r.next)
-
-        Subscribe r ->
-            toModel
-                { context
-                    | subs =
-                        r.subscription :: context.subs
-                }
-                r.next
 
         WithNewChannel r ->
             let
@@ -782,36 +813,6 @@ toModel context proc =
 
                 newProc =
                     r.withNewChannel context.state newChannel
-            in
-            toModel newContext (mappend newProc r.next)
-
-        WithNewSubId r ->
-            let
-                newSubId =
-                    context.nextSubId
-
-                newContext =
-                    { context
-                        | nextSubId = SubId.inc context.nextSubId
-                    }
-
-                newProc =
-                    r.withNewSubId context.state newSubId
-            in
-            toModel newContext (mappend newProc r.next)
-
-        WithNewRequestId r ->
-            let
-                newRequestId =
-                    context.nextRequestId
-
-                newContext =
-                    { context
-                        | nextRequestId = RequestId.inc context.nextRequestId
-                    }
-
-                newProc =
-                    r.withNewRequestId context.state newRequestId
             in
             toModel newContext (mappend newProc r.next)
 
@@ -855,26 +856,8 @@ concurrent p1 p2 =
                             | next = concurrent p1 r2.next
                         }
 
-                Subscribe r2 ->
-                    Subscribe
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
                 WithNewChannel r2 ->
                     WithNewChannel
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
-                WithNewSubId r2 ->
-                    WithNewSubId
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
-                WithNewRequestId r2 ->
-                    WithNewRequestId
                         { r2
                             | next = concurrent p1 r2.next
                         }
@@ -905,26 +888,8 @@ concurrent p1 p2 =
                             | next = concurrent r1.next p2
                         }
 
-                Subscribe r1 ->
-                    Subscribe
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
                 WithNewChannel r1 ->
                     WithNewChannel
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
-                WithNewSubId r1 ->
-                    WithNewSubId
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
-                WithNewRequestId r1 ->
-                    WithNewRequestId
                         { r1
                             | next = concurrent r1.next p2
                         }
@@ -944,18 +909,8 @@ update msg model =
 
         OnGoing onGoing ->
             let
-                oldContext =
-                    onGoing.context
-
                 context =
-                    { oldContext
-                        | subs =
-                            List.filter
-                                (\( _, f ) ->
-                                    f oldContext.state /= Nothing
-                                )
-                                oldContext.subs
-                    }
+                    onGoing.context
             in
             case msg of
                 NoOp ->
@@ -975,7 +930,7 @@ update msg model =
                                     { context
                                         | subs =
                                             List.filter
-                                                (\( sid, _ ) ->
+                                                (\( _, sid, _ ) ->
                                                     sid /= subId
                                                 )
                                                 context.subs

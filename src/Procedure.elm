@@ -1481,7 +1481,7 @@ If the given `Observer` has already expired, the call back function is called, b
 setVariant :
     Observer memory a
     -> Wrapper a ( ObserverId, b )
-    -> b
+    -> (memory -> b)
     -> (Observer memory b -> List (Procedure_ cmd memory event))
     -> Procedure_ cmd memory event
 setVariant (Observer parent) wrapper b f =
@@ -1509,7 +1509,7 @@ setVariant (Observer parent) wrapper b f =
                                         }
                             }
                 in
-                ( parent.lifter.set (wrapper.wrap ( rid, b )) memory, r )
+                ( parent.lifter.set (wrapper.wrap ( rid, b memory )) memory, r )
         , release = \_ m -> ( m, [] )
         }
         f

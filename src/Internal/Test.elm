@@ -345,7 +345,7 @@ pageController route msession =
                     { unwrap = unwrapPageLogin
                     , wrap = PageLogin
                     }
-                    initPageLogin
+                    (\_ -> initPageLogin)
                   <|
                     \pageLogin ->
                         [ Procedure.race
@@ -565,7 +565,7 @@ sessionPageController route session =
                 { unwrap = unwrapPageLogin
                 , wrap = PageLogin
                 }
-                initPageLogin
+                (\_ -> initPageLogin)
               <|
                 \pageLogin ->
                     [ Procedure.doUntil global
@@ -581,7 +581,7 @@ sessionPageController route session =
                 { unwrap = unwrapPageHome
                 , wrap = PageHome
                 }
-                (initPageHome session)
+                (\_ -> initPageHome session)
               <|
                 \pageHome ->
                     [ Procedure.doUntil global
@@ -603,7 +603,7 @@ sessionPageController route session =
                 { unwrap = unwrapPageUsers
                 , wrap = PageUsers
                 }
-                (initPageUsers session)
+                (\_ -> initPageUsers session)
               <|
                 \pageUsers ->
                     [ Procedure.doUntil global

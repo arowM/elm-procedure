@@ -370,7 +370,7 @@ setPage :
     -> b
     -> (Observer Memory b -> List (Procedure Memory Event))
     -> Procedure Memory Event
-setPage =
+setPage wrapper b =
     Procedure.setVariant
         (global
             |> Procedure.dig
@@ -378,3 +378,5 @@ setPage =
                 , set = \a m -> { m | pageView = a }
                 }
         )
+        wrapper
+        (\_ -> b)

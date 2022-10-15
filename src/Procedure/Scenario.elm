@@ -1,27 +1,5 @@
 module Procedure.Scenario exposing
-    ( Scenario
-    , none
-    , batch
-    , Section
-    , section
-    , cases
-    , Session
-    , withNewSession
-    , Page
-    , onPage
-    , userComment
-    , userEvent
-    , systemComment
-    , systemCommand
-    , systemMemory
-    , systemView
-    , externalComment
-    , externalEvent
-    , toTest
-    , Key(..)
-    , toHtml
-    , fromJust
-    )
+    ( .. )
 
 {-| Module for Scenario-Driven Development.
 
@@ -50,32 +28,47 @@ module Procedure.Scenario exposing
 
 # Primitives
 
+## Comments
+
 @docs userComment
-@docs userEvent
 @docs systemComment
-@docs systemCommand
-@docs systemMemory
-@docs systemView
-@docs externalComment
-@docs externalEvent
+
+## Expectations
+
+@docs expectCommand
+@docs expectMemory
+@docs expectView
+
+## Event Simulators
+
+@docs loadApp
+@docs Route
+@docs userEvent
+@docs listenerEvent
+
+## Request Simulators
+
+@docs portRequest
+@docs customRequest
 
 # Conditions
 
 @docs fromJust
-@docs onPage
-@docs Page
+@docs onLayer
 
 -}
 
 import Browser.Navigation as Nav
+import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Mixin.Html as Html exposing (Html)
 import Internal.Channel as Channel exposing (Channel)
-import Internal.Core exposing
+import Internal.Core as Core exposing
     ( Model(..)
-    -- , ThreadState
     , Msg(..)
+    , Context
+    , Pointer
     )
 import Internal.Markup as Markup
 import Mixin exposing (Mixin)
@@ -90,74 +83,86 @@ type alias ExpBuilder a = ExpBuilder.Builder a
 
 {-| -}
 type Scenario flags cmd memory event
-    = Comment
-        { target : Target
+    = UserComment
+        { user : User
+        , comment : String
+        , next : Scenario flags cmd memory event
+        }
+    | SystemComment
+        { session : Session
         , comment : String
         , next : Scenario flags cmd memory event
         }
     | LoadApp
-        { target : Target
+        { session : Session
         , description : String
         , flags : flags
-        , url : Url
+        , route : Route
         , next : Scenario flags cmd memory event
         }
-    | IssueEvent
-        { target : Target
+    | UserEvent
+        { session : Session
         , description : String
         , event : event
         , next : Scenario flags cmd memory event
         }
+    | ListenerEvent
+        { session : Session
+        , description : String
+        , target : String
+        , event : event
+        , next : Scenario flags cmd memory event
+        }
     | ExpectCommand
-        { target : Target
+        { session : Session
         , description : String
         , expectation : ExpBuilder cmd
         , next : Scenario flags cmd memory event
         }
     | ExpectMemory
-        { target : Target
+        { session : Session
         , description : String
         , expectation : ExpBuilder memory
         , next : Scenario flags cmd memory event
         }
     | ExpectView
-        { target : Target
+        { session : Session
         , description : String
         , expectation : Html () -> Expectation
         , next : Scenario flags cmd memory event
         }
-    | WithNewSession
-        { next : Session -> Scenario flags cmd memory event
+    | PortRequest
+        { session : Session
+        , description : String
+        , name : String
+        , expectation : ExpBuilder cmd
+        , next : Value -> Scenario flags cmd memory event
+        }
+    | CustomRequest
+        { session : Session
+        , description : String
+        , name : String
+        , expectation : ExpBuilder cmd
+        , next : event -> Scenario flags cmd memory event
+        }
+    | WithListener
+        { session : Session
+        , name : String
+        , next : RequestId -> Scenario flags cmd memory event
         }
     | NextCases
         { cases : List (Section cmd memory event)
         }
     | Unexpected
-        { reason : UnexpectedReason
+        { reason : UnexpectedScenario
         }
     | Nil
 
 
-type UnexpectedReason
+
+type UnexpectedScenario
     = IsNotJust String
     | ScenarioAfterNextCases
-
-type Target
-    = UserTarget Session
-    | SystemTarget Session
-    | ExternalTarget Session String
-
-
-displayTarget : Target -> String
-displayTarget target =
-    case target of
-        UserTarget (Session session) ->
-            "[Session " ++ String.fromInt session.sessionId ++ "] User"
-        SystemTarget (Session session) ->
-            "[Session " ++ String.fromInt session.sessionId ++ "] System"
-        ExternalTarget (Session session) name ->
-            "[Session " ++ String.fromInt session.sessionId ++ "] " ++ name
-
 
 {-| -}
 batch : List (Scenario flags c m e) -> Scenario flags c m e
@@ -168,13 +173,20 @@ batch =
 concat : Scenario flags c m e -> Scenario flags c m e -> Scenario flags c m e
 concat s1 s2 =
     case s1 of
-        Comment r ->
-            Comment { r | next = concat r.next s2 }
+        UserComment r ->
+            UserComment { r | next = concat r.next s2 }
+
+        SystemComment r ->
+            SystemComment { r | next = concat r.next s2 }
 
         LoadApp r ->
             LoadApp { r | next = concat r.next s2 }
-        IssueEvent r ->
-            IssueEvent { r | next = concat r.next s2 }
+
+        UserEvent r ->
+            UserEvent { r | next = concat r.next s2 }
+
+        ListenerEvent r ->
+            ListenerEvent { r | next = concat r.next s2 }
 
         ExpectCommand r ->
             ExpectCommand { r | next = concat r.next s2 }
@@ -185,11 +197,17 @@ concat s1 s2 =
         ExpectView r ->
             ExpectView { r | next = concat r.next s2 }
 
-        WithNewSession r ->
-            WithNewSession
+        PortRequest r ->
+            PortRequest { r | next = \v -> concat (r.next v) s2 }
+
+        CustomRequest r ->
+            CustomRequest { r | next = \e -> concat (r.next e) s2 }
+
+        WithListener r ->
+            WithListener
                 { r
-                    | next = \session ->
-                        concat (r.next session) s2
+                    | next = \reqId ->
+                        concat (r.next reqId) s2
                 }
         NextCases _ ->
             Unexpected
@@ -220,11 +238,11 @@ type Section command memory event
         }
 
 
-liftSection_ : Page c m e c1 m1 e1 -> Section c1 m1 e1 -> Section c m e
-liftSection_ page (Section r) =
+liftSection_ : Pointer m m1 -> Section c1 m1 e1 -> Section c m e
+liftSection_ pointer (Section r) =
     Section
         { title = r.title
-        , content = onPage_ page r.content
+        , content = onLayer_ pointer r.content
         }
 
 
@@ -247,23 +265,45 @@ cases sections =
 
 
 {-| -}
-type Session
-    = Session Session_
+type User = User
+        { name : String
+        }
 
 
-type alias Session_ =
-    { sessionId : Int
+{-| -}
+user :
+    { name : String
     }
+    -> User
+user = User
+
+{-| -}
+type Session = Session
+    { user : User
+    , name : String
+    }
+
+
+{-| -}
+session :
+    { name : String
+    , user : User
+    }
+    -> Session
+session = Session
 
 
 -- Primitives
 
 
+-- -- Comments
+
+
 {-| -}
-userComment : Session -> String -> Scenario flags c m e
-userComment session comment =
-    Comment
-        { target = UserTarget session
+userComment : User -> String -> Scenario flags c m e
+userComment user comment =
+    UserComment
+        { user = user
         , comment = comment
         , next = Nil
         }
@@ -272,50 +312,20 @@ userComment session comment =
 {-| -}
 systemComment : Session -> String -> Scenario flags c m e
 systemComment session comment =
-    Comment
-        { target = SystemTarget session
+    SystemComment
+        { session = session
         , comment = comment
         , next = Nil
         }
 
 
-{-| -}
-externalComment : String -> Session -> String -> Scenario flags c m e
-externalComment name session comment =
-    Comment
-        { target = ExternalTarget session name
-        , comment = comment
-        , next = Nil
-        }
-
+-- -- Expectations
 
 {-| -}
-userEvent : Session -> String -> event -> Scenario flags c m event
-userEvent session description event =
-    IssueEvent
-        { target = UserTarget session
-        , description = description
-        , event = event
-        , next = Nil
-        }
-
-
-{-| -}
-externalEvent : String -> Session -> String -> event -> Scenario flags c m event
-externalEvent name session description event =
-    IssueEvent
-        { target = ExternalTarget session name
-        , description = description
-        , event = event
-        , next = Nil
-        }
-
-
-{-| -}
-systemCommand : Session -> String -> ExpBuilder command -> Scenario flags command m e
-systemCommand session description expectation =
+expectCommand : Session -> String -> ExpBuilder command -> Scenario flags command m e
+expectCommand session description expectation =
     ExpectCommand
-        { target = SystemTarget session
+        { session = session
         , description = description
         , expectation = expectation
         , next = Nil
@@ -323,10 +333,10 @@ systemCommand session description expectation =
 
 
 {-| -}
-systemMemory : Session -> String -> ExpBuilder memory -> Scenario flags c memory e
-systemMemory session description expectation =
+expectMemory : Session -> String -> ExpBuilder memory -> Scenario flags c memory e
+expectMemory session description expectation =
     ExpectMemory
-        { target = SystemTarget session
+        { session = session
         , description = description
         , expectation = expectation
         , next = Nil
@@ -334,23 +344,119 @@ systemMemory session description expectation =
 
 
 {-| -}
-systemView : Session -> String -> (Html () -> Expectation) -> Scenario flags c m event
-systemView session description expectation =
+expectView : Session -> String -> (Html () -> Expectation) -> Scenario flags c m event
+expectView session description expectation =
     ExpectView
-        { target = SystemTarget session
+        { session = session
         , description = description
         , expectation = expectation
         , next = Nil
         }
 
 
-{-| -}
-withNewSession : (Session -> List (Scenario flags c m e)) -> Scenario flags c m e
-withNewSession f =
-    WithNewSession
-        { next = \session -> f session |> batch
+
+-- -- Event Simulators
+
+
+{-|
+-}
+type alias Route =
+    { path : List String
+    , query : List QueryParameter
+    , fragment : Maybe String
+    }
+
+
+{-|
+-}
+loadApp :
+    { session : Session
+    , description : String
+    , route : Route
+    , flags : flags
+    }
+    -> Scenario flags c m e
+loadApp o description =
+    LoadApp
+        { session = o.session
+        , description = o.description
+        , flags = o.flags
+        , route = o.route
+        , next = Nil
         }
 
+
+{-| -}
+userEvent :
+    { session : Session
+    , description : String
+    , event : event
+    }
+    -> Scenario flags c memory event
+userEvent o =
+    UserEvent
+        { session = o.session
+        , description = o.description
+        , event = o.event
+        , next = Nil
+        }
+
+
+{-| -}
+listenerEvent :
+    { session : Session
+    , description : String
+    , target : String
+    , event : event
+    }
+    -> Scenario flags c m event
+listenerEvent o =
+    ListenerEvent
+        { session = o.session
+        , description = o.description
+        , target = o.target
+        , event = o.event
+        , next = Nil
+        }
+
+-- -- Request Simulators
+
+
+{-|
+-}
+portRequest :
+    { session : Session
+    , description : String
+    , name : String
+    , expectation : ExpBuilder command
+    }
+    -> (Value -> Scenario flags command m e)
+    -> Scenario flags command m e
+portRequest o f =
+    PortRequest
+        { session = o.session
+        , description = o.description
+        , name = o.name
+        , expectation = o.expectation
+        , next = f
+        }
+
+customRequest :
+    { session : Session
+    , description : String
+    , name : String
+    , expectation : ExpBuilder command
+    }
+    -> (e -> Scenario flags command m e)
+    -> Scenario flags command m e
+customRequest o f =
+    CustomRequest
+        { session = o.session
+        , description = o.description
+        , name = o.name
+        , expectation = o.expectation
+        , next = f
+        }
 
 -- Conditions
 
@@ -370,27 +476,25 @@ fromJust description ma f =
 
 
 {-| -}
-type alias Page c m e c1 m1 e1 =
-    { unwrapCommand : c -> Maybe c1
-    , get : m -> Maybe m1
-    , wrapEvent : e1 -> e
-    }
+onLayer : Pointer m m1 -> List (Scenario flags c m1 e) -> Scenario flags c m e
+onLayer pointer s1s =
+    onLayer_ pointer (batch s1s)
 
 
-{-| -}
-onPage : Page c m e c1 m1 e1 -> List (Scenario flags c1 m1 e1) -> Scenario flags c m e
-onPage page s1s =
-    onPage_ page (batch s1s)
-
-
-onPage_ : Page c m e c1 m1 e1 -> Scenario flags c1 m1 e1 -> Scenario flags c m e
-onPage_ page s =
+onLayer_ : Pointer m m1 -> Scenario flags c m1 e -> Scenario flags c m e
+onLayer_ pointer s =
     case s of
-        Comment r ->
-            Comment
-                { target = r.target
+        UserComment r ->
+            UserComment
+                { user = r.user
                 , comment = r.comment
-                , next = onPage_ page r.next
+                , next = onLayer_ pointer r.next
+                }
+        SystemComment r ->
+            SystemComment
+                { session = r.session
+                , comment = r.comment
+                , next = onLayer_ pointer r.next
                 }
         LoadApp r ->
             LoadApp
@@ -398,29 +502,30 @@ onPage_ page s =
                 , description = r.description
                 , flags = r.flags
                 , url = r.url
-                , next = onPage_ page r.next
+                , next = onLayer_ pointer r.next
                 }
-        IssueEvent r ->
-            IssueEvent
-                { target = r.target
+        UserEvent r ->
+            UserEvent
+                { session = r.session
                 , description = r.description
-                , event = page.wrapEvent r.event
-                , next = onPage_ page r.next
+                , event = r.event
+                , next = onLayer_ pointer r.next
+                }
+        ListenerEvent r ->
+            UserEvent
+                { session = r.session
+                , description = r.description
+                , target = r.target
+                , event = r.event
+                , next = onLayer_ pointer r.next
                 }
 
         ExpectCommand r ->
             ExpectCommand
                 { target = r.target
                 , description = r.description
-                , expectation =
-                    ExpBuilder.custom <|
-                        \c ->
-                            case page.unwrapCommand c of
-                                Just c1 ->
-                                    ExpBuilder.extractOn c1 r.expectation
-                                _ ->
-                                    ExpBuilder.fail "Unexpected command."
-                , next = onPage_ page r.next
+                , expectation = r.expectation
+                , next = onLayer_ pointer r.next
                 }
 
         ExpectMemory r ->
@@ -430,29 +535,45 @@ onPage_ page s =
                 , expectation =
                     ExpBuilder.custom <|
                         \c ->
-                            case page.get c of
-                                Just c1 ->
+                            case pointer.get c of
+                                Just (_, c1) ->
                                     ExpBuilder.extractOn c1 r.expectation
                                 _ ->
                                     ExpBuilder.fail "Unexpected memory state."
-                , next = onPage_ page r.next
+                , next = onLayer_ pointer r.next
                 }
         ExpectView r ->
             ExpectView
                 { target = r.target
                 , description = r.description
                 , expectation = r.expectation
-                , next = onPage_ page r.next
+                , next = onLayer_ pointer r.next
                 }
-        WithNewSession r ->
-            WithNewSession
-                { next = \session ->
-                    r.next session
-                        |> onPage_ page
+        PortRequest r ->
+            PortRequest
+                { session = r.session
+                , description = r.description
+                , name = r.name
+                , expectation = r.expectation
+                , next = onLayer_ pointer r.next
+                }
+        CustomRequest r ->
+            CustomRequest
+                { session = r.session
+                , description = r.description
+                , name = r.name
+                , expectation = r.expectation
+                , next = onLayer_ pointer << r.next
+                }
+        WithListener r ->
+            WithListener
+                { session = r.session
+                , name = r.name
+                , next = onLayer_ pointer << r.next
                 }
         NextCases r ->
             NextCases
-                { cases = List.map (liftSection_ page) r.cases
+                { cases = List.map (liftSection_ pointer) r.cases
                 }
         Unexpected r ->
             Unexpected r
@@ -484,12 +605,12 @@ toTest o =
             Test.describe sec.title <|
                 toTests
                     { view = \m -> Html.map (\_ -> ()) <| o.view (Channel.init, m)
-                    , procedures = \flags url ->
+                    , init = \flags url ->
                         Procedure.init o.init
                             (procedures flags url SimKey)
                     }
                     sec.content
-                    (Procedure.init o.init [])
+                    Dict.empty
         )
         o.sections
         |> Test.describe "Scenario tests"
@@ -497,28 +618,90 @@ toTest o =
 
 type alias TestConfig flags c m e =
     { view : m -> Html ()
-    , init : flags -> Url -> Model m e
+    , init : flags -> Url -> Model c m e
     }
 
-toTests : TestConfig flags c m e -> Scenario flags c m e -> (Model m e, List cmd) -> List Test
-toTests config scenario (model, cmds) =
+toTests : TestConfig flags c m e -> Scenario flags c m e -> Dict String (Model c m e, List cmd) -> List Test
+toTests config scenario sessions =
     case scenario of
-        Comment r ->
+        UserComment r ->
+            toTests config r.next (model, cmds)
+
+        SystemComment r ->
             toTests config r.next (model, cmds)
 
         LoadApp r ->
-            toTests config r.next
-                (config.init r.flag r.url
-                , []
-                )
+            let
+                (Session session) = r.session
+            in
+            Dict.insert session.name
+                (config.init r.flag r.url, [])
+                |> toTests config r.next
 
-        IssueEvent r ->
-            toTests config r.next
-                (Procedure.update
-                    (Debug.todo "toMsg" r.event)
-                    model
-                )
-    ExpectCommand
+        UserEvent r ->
+            let
+                (Session session) = r.session
+            in
+            case Dict.get session.name sessions of
+                Nothing ->
+                    [ Test.test
+                        ("[" ++ session.name ++ "] " ++ r.description)
+                        <| \_ -> Expect.fail
+                                "The application has not been loaded. Use `loadApp` beforehand."
+                    ]
+
+                Just (model, _) ->
+                    Dict.insert session.name
+                        ( ChannelMsg
+                            { channel =
+                            , event = r.event
+                            }
+                            |> applyMsg model
+                        )
+                        sessions
+                        |> toTests config r.next
+
+        ListenerEvent r ->
+            let
+                (Session session) = r.session
+            in
+            case Dict.get session.name sessions of
+                Nothing ->
+                    [ Test.test
+                        ("[" ++ session.name ++ "] " ++ r.description)
+                        <| \_ -> Expect.fail
+                                "The application has not been loaded. Use `loadApp` beforehand."
+                    ]
+                Just (OnGoing onGoing, _) ->
+                    Dict.insert session.name
+                        ( onGoing.listeners
+                            |> List.filterMap
+                                (\listener ->
+                                    if (listener.name == r.target) then
+                                        Just <|
+                                            ListenerMsg
+                                                { requestId = listner.requestId
+                                                , event = r.event
+                                                }
+                                    else
+                                        Nothing
+                                )
+                            |> applyMsgs (OnGoing onGoing)
+                        )
+                        sessions
+                        |> toTests config r.next
+                Just (EndOfProcess, _) ->
+                    toTests config r.next sessions
+
+
+
+TODO
+TODO
+TODO
+TODO
+
+
+        ExpectCommand r ->
         { target : Target
         , description : String
         , expectation : ExpBuilder cmd
@@ -536,19 +719,31 @@ toTests config scenario (model, cmds) =
         , expectation : Html () -> Expectation
         , next : Scenario flags cmd memory event
         }
-    | WithNewSession
-        { next : Session -> Scenario flags cmd memory event
-        }
     | NextCases
         { cases : List (Section cmd memory event)
         }
     | Unexpected
-        { reason : UnexpectedReason
+        { reason : UnexpectedScenario
         }
     | Nil
 
 
-    Debug.todo ""
+applyMsg : Model c m e -> Msg e -> (Model c m e, List c)
+applyMsg model msg =
+    Core.update msg model
+
+
+applyMsgs : Model c m e -> List (Msg e) -> (Model c m e, List c)
+applyMsgs model msgs =
+    List.foldl
+        (\msg (model, cmds) ->
+            let
+                (newModel, newCmds) = Core.update msg model
+            in
+            ( newModel, cmds ++ newCmds)
+        )
+        (model, [])
+        msgs
 
 
 -- Document generation
@@ -571,7 +766,7 @@ toHtml { title, sections } =
                 ]
 
 
-unexpectedReasonHtml : UnexpectedReason -> Html ()
+unexpectedReasonHtml : UnexpectedScenario -> Html ()
 unexpectedReasonHtml reason =
     Html.div []
         [ Html.text <|
@@ -582,7 +777,7 @@ unexpectedReasonHtml reason =
                     "ERROR: `cases`\nSome scenarios are after `cases`. You must not put any scenarios after `cases`."
         ]
 
-toMarkup : List (Section c m e) -> Result UnexpectedReason Markup.Section
+toMarkup : List (Section c m e) -> Result UnexpectedScenario Markup.Section
 toMarkup sections =
     List.foldr
         (\sec acc ->
@@ -594,7 +789,7 @@ toMarkup sections =
         sections
         |> Result.map Markup.Sections
 
-markupSection : List (Mixin(), Markup.BlockElement) -> Section c m e -> Result UnexpectedReason (List (Mixin (), String, Markup.Section))
+markupSection : List (Mixin(), Markup.BlockElement) -> Section c m e -> Result UnexpectedScenario (List (Mixin (), String, Markup.Section))
 markupSection inherit (Section r) =
     let
         context =
@@ -619,7 +814,7 @@ markupSection inherit (Section r) =
 type alias MarkupContext =
     { appendSections : List (Mixin (), Markup.BlockElement) -> List (Mixin (), String, Markup.Section)
     , listItems : List (Mixin (), Markup.BlockElement)
-    , error : Maybe UnexpectedReason
+    , error : Maybe UnexpectedScenario
     , nextSessionId : Int
     }
 
@@ -671,14 +866,9 @@ markupScenario_ title scenario context =
             markupScenario_ title
                 r.next
                 (appendListItem r.target r.description)
-        WithNewSession r ->
-            markupScenario_ title
-                (r.next (Session { sessionId = context.nextSessionId }))
-                { context | nextSessionId = context.nextSessionId + 1 }
-
         NextCases r ->
             let
-                rnextCases : Result UnexpectedReason (List (Mixin (), String, Markup.Section))
+                rnextCases : Result UnexpectedScenario (List (Mixin (), String, Markup.Section))
                 rnextCases =
                     List.foldr
                         (\sec acc ->

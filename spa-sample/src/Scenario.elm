@@ -35,64 +35,64 @@ test =
 sections : List (Scenario.Section Command Memory Event)
 sections =
         [ Scenario.section "Introduction"
-            [ Scenario.withNewSession introduction
+            [ Scenario.withNewSession
+                { userName = "Sakura-chan"
+                }
+                introduction
             ]
         ]
 
 
-introduction : Scenario.Session -> List (Scenario Command Memory Event)
-introduction session =
+introduction : Session -> List (Scenario Command Memory Event)
+introduction user1 =
     let
-        app = App.scenario session
-        pageLogin = PageLogin.scenario session
+        user1Comment = Scenario.userComment user1
     in
-    [ app.user.comment "Hi. I'm Sakura-chan, the cutest goat girl in the world."
-    , app.user.comment "Today I'll try a goat management service."
-    , Scenario.fromJust "URL for home page" (Url.fromString "https://example.com/") <|
-        \url ->
-            [ app.user.comment "I'll try to access the URL."
-            , app.system.comment "Load home page."
-            , app.user.setUrl url
+    [ user1Comment "Hi. I'm Sakura-chan, the cutest goat girl in the world."
+    , user1Comment "Today I'll try a goat management service."
+    , user1Comment "I'll try to access the URL."
+    , Scenario.loadApp
+        { user = user1
+        , route = routeHome
+        }
+        <| \appLayer1 ->
+            let
+                app1 = App.scenario appLayer1
+            in
+            [ app1.comment "Redirect to login page immediately."
+            , user1Comment
+                "I see I need to log in! I remember my dad gave me the account information in advance."
+            , app1.pageLogin.user.changeLoginId "guest"
+            , app1.pageLogin.user.changePass "guestpass"
+            , app1.pageLogin.user.clickSubmitLogin
+            , app1.pageLogin.system.requestLogin """{
+  "id": "guest",
+  "pass": "guestpass"
+}"""
+                (Err (Http.BadStatus 401))
+                <| \_ -> []
+            , app1.pageLogin.system.toastPopup "\"Invalid user name or password.\"."
+            , user1Comment "Oops! It's hard to type with my two-fingered hooves..."
+            , app1.pageLogin.user.changePass "guestPass"
+            , app1.pageLogin.user.clickSubmitLogin
+            , app1.pageLogin.system.requestLogin """{
+  "id": "guest",
+  "pass": "guestPass"
+}"""
+                (Ok """{
+  "session": {
+    "id": "guest"
+  }
+}""")
+                <| \_ -> []
             ]
-    , app.system.comment "Redirect to login page immediately."
-    , Scenario.onPage App.page.login
-            [ pageLogin.user.comment "I see I need to log in! I remember my dad gave me the account information in advance."
-            , pageLogin.user.changeLoginId "guest"
-            , pageLogin.user.changePass "guestpass"
-            , pageLogin.user.clickSubmitLogin
-            , pageLogin.system.requestLogin <|
-                JE.object
-                    [ ("id", JE.string "guest" )
-                    , ("pass", JE.string "guestpass" )
-                    ]
-            , pageLogin.external.backend.respondToLoginRequest <|
-                Err (Http.BadStatus 401)
-            , pageLogin.system.comment "Toast popup: \"Invalid user name or password.\"."
-            , pageLogin.user.comment "Oops! It's hard to type with my two-fingered hooves..."
-            , pageLogin.user.changePass "guestPass"
-            , pageLogin.user.clickSubmitLogin
-            , pageLogin.system.requestLogin <|
-                JE.object
-                    [ ("id", JE.string "guest" )
-                    , ("pass", JE.string "guestPass" )
-                    ]
-            , pageLogin.external.backend.respondToLoginRequest <|
-                Ok
-                    { session =
-                        { id = "guest"
-                        }
-                    }
-            ]
-    , app.system.comment "Redirect to home page."
-    , Scenario.onPage App.page.home [] -- Just ensure that current page is Home.
+    , app1.system.comment "Redirect to home page."
     , Scenario.cases
         [ Scenario.section "Home page #1"
-            [ Scenario.onPage App.page.home <|
-                pageHomeCase1 session
+            [ pageHomeCase1 user1 app1
             ]
         , Scenario.section "Home page #2"
-            [ Scenario.onPage App.page.home <|
-                pageHomeCase2 session
+            [ pageHomeCase2 user1 app1
             ]
         ]
     ]

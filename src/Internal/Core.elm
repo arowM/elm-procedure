@@ -1,6 +1,7 @@
 module Internal.Core exposing
     ( Model(..)
     , Msg(..)
+    , Key(..)
     , Context
     , LayerChannel(..)
     , Promise(..)
@@ -11,7 +12,7 @@ module Internal.Core exposing
     , liftPromiseMemory
     , portRequest, customRequest
     , Procedure(..)
-    , none, batch
+    , none, concat
     , modify, push, await, awaitMsg, async, withMemory, jump, addListener
     , putLayer, onLayer, Pointer
     , init, update
@@ -25,6 +26,9 @@ module Internal.Core exposing
 @docs Model
 @docs Msg
 
+# Key
+
+@docs Key
 
 # Promise
 
@@ -40,7 +44,7 @@ module Internal.Core exposing
 # Procedure
 
 @docs Procedure
-@docs none, batch
+@docs none, concat
 
 
 # Primitive Procedures
@@ -59,6 +63,7 @@ module Internal.Core exposing
 
 -}
 
+import Browser.Navigation as Nav
 import Internal.Channel as Channel exposing (Channel)
 import Internal.RequestId as RequestId exposing (RequestId)
 import Json.Encode exposing (Value)
@@ -70,7 +75,7 @@ import Json.Encode exposing (Value)
 
 type Model cmd memory event
     = OnGoing (OnGoing_ cmd memory event)
-    | EndOfProcess
+    | EndOfProcess (EndOfProcess_ memory)
 
 
 type alias OnGoing_ c m e =
@@ -79,6 +84,11 @@ type alias OnGoing_ c m e =
 
     -- New state to evaluate next time.
     , next : Msg e -> Context m e -> ( Model c m e, List c )
+    }
+
+
+type alias EndOfProcess_ m =
+    { lastState : m
     }
 
 
@@ -152,6 +162,12 @@ type Msg event
     | NoOp
 
 
+-- Key
+
+
+type Key
+    = NavKey Nav.Key
+    | SimKey
 
 -- Promise
 
@@ -348,7 +364,7 @@ awaitOnce f =
                                 awaitOnce f
 
                         procs ->
-                            Resolved <| batch procs
+                            Resolved <| concat procs
             }
 
 
@@ -392,8 +408,8 @@ none =
     Nil
 
 
-batch : List (Procedure c m e) -> Procedure c m e
-batch =
+concat : List (Procedure c m e) -> Procedure c m e
+concat =
     List.foldr mappend Nil
 
 
@@ -545,7 +561,7 @@ runPromise prom =
 
 await : Promise c m e a -> (a -> List (Procedure c m e)) -> Procedure c m e
 await prom f =
-    mapPromise (f >> batch) prom
+    mapPromise (f >> concat) prom
         |> runPromise
 
 
@@ -557,7 +573,7 @@ awaitMsg f =
 async : List (Procedure c m e) -> Procedure c m e
 async procs =
     Async
-        { async = batch procs
+        { async = concat procs
         , next = Nil
         }
 
@@ -565,14 +581,14 @@ async procs =
 jump : (() -> List (Procedure c m e)) -> Procedure c m e
 jump f =
     Jump
-        { jumpTo = batch <| f ()
+        { jumpTo = concat <| f ()
         }
 
 
 withNewChannel : (Channel -> List (Procedure c m e)) -> Procedure c m e
 withNewChannel f =
     WithNewChannel
-        { withNewChannel = \_ -> f >> batch
+        { withNewChannel = \_ -> f >> concat
         , next = Nil
         }
 
@@ -580,7 +596,7 @@ withNewChannel f =
 withMemory : (m -> List (Procedure c m e)) -> Procedure c m e
 withMemory f =
     WithMemory
-        { next = \m -> batch (f m)
+        { next = \m -> concat (f m)
         }
 
 type Layer m m1
@@ -609,7 +625,7 @@ putLayer o f =
     withNewChannel <|
         \c ->
             [ modify (o.init c)
-            , batch <|
+            , concat <|
                 f <|
                     Layer
                         { get =
@@ -631,7 +647,7 @@ putLayer o f =
 
 onLayer : Layer m m1 -> List (Procedure c m1 e) -> Procedure c m e
 onLayer (Layer layer) procs =
-    liftMemory_ layer <| batch procs
+    liftMemory_ layer <| concat procs
 
 
 addListener : String -> (m -> Sub e) -> (e -> List (Procedure c m e)) -> Procedure c m e
@@ -659,7 +675,7 @@ addListener name sub handler =
                                         :: context.listeners
                             }
 
-                        toListenerMsg
+                        toListenerMsg e =
                             ListenerMsg
                                 { requestId = myRequestId
                                 , event = e
@@ -670,12 +686,12 @@ addListener name sub handler =
                                 ListenerMsg listenerMsg ->
                                     if listenerMsg.requestId == myRequestId then
                                         Resolved <|
-                                            batch
+                                            concat
                                                 [ async
                                                     [ runPromise <| listenerPromise m
                                                     ]
                                                 , handler listenerMsg.event
-                                                    |> batch
+                                                    |> concat
                                                 ]
 
                                     else
@@ -851,7 +867,7 @@ init :
     -> List (Procedure cmd memory event)
     -> ( Model cmd memory event, List cmd )
 init m procs =
-    toModel (initContext m) (batch procs)
+    toModel (initContext m) (concat procs)
 
 
 initContext : m -> Context m e
@@ -901,7 +917,11 @@ toModel context proc =
                             toModel nextContext nextProc
 
                         Reject ->
-                            ( EndOfProcess, [] )
+                            ( EndOfProcess
+                                { lastState = nextContext.state
+                                }
+                            , []
+                            )
             in
             ( OnGoing
                 { context = eff.newContext
@@ -936,6 +956,8 @@ toModel context proc =
 
         Nil ->
             ( EndOfProcess
+                { lastState = context.state
+                }
             , []
             )
 
@@ -1044,8 +1066,10 @@ concurrent p1 p2 =
 update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List cmd )
 update msg model =
     case model of
-        EndOfProcess ->
-            ( EndOfProcess, [] )
+        EndOfProcess r ->
+            ( EndOfProcess r
+            , []
+            )
 
         OnGoing onGoing ->
             let

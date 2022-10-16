@@ -1,65 +1,31 @@
 module Procedure.Advanced exposing
-    ( Procedure
-    , none
-    , batch
-    , wrapEvent
-    , mapCmd
-    , mapCmds
-    , liftMemory
-    , Pointer
-    , Channel
-    , publish
-    , update
-    , elementView
-    , documentView
-    , subscriptions
-    , init
-    , Msg
-    , mapMsg
-    , Model
-    , onUrlChange
-    , onUrlRequest
-    , modify
-    , push
-    , subscribe
-    , subscribeOnce
-    , await
-    , async
-    , asyncOn
-    , sync
-    , race
-    , quit
-    , jump
-    , protected
-    , portRequest
-    , withMemory
-    , when
-    , unless
-    , withMaybe
-    , observe
-    , observeList
-    )
+    (..)
 
 {-|
-
 
 # Procedure
 
 @docs Procedure
-@docs none
-@docs batch
-@docs wrapEvent
-@docs mapCmd
-@docs mapCmds
-@docs liftMemory
+@docs none, concat
+
+# Layer
+
+@docs Layer
 @docs Pointer
-
-
-# Channel
-
 @docs Channel
+@docs channelString
+@docs putLayer, onLayer
 @docs publish
 
+# Primitive Procedures
+
+@docs modify, push, await, awaitMsg, async, jump, addListener, quit
+
+# Helper procedures
+
+@docs when
+@docs unless
+@docs withMaybe
 
 # Connect to TEA app
 
@@ -68,54 +34,168 @@ module Procedure.Advanced exposing
 @docs documentView
 @docs subscriptions
 @docs init
+@docs Key
 @docs Msg
 @docs mapMsg
 @docs Model
 @docs onUrlChange
 @docs onUrlRequest
 
-
-# Constructors
-
-@docs modify
-@docs push
-@docs subscribe
-@docs subscribeOnce
-@docs await
-@docs async
-@docs asyncOn
-@docs sync
-@docs race
-@docs quit
-@docs jump
-@docs protected
-
-
-# Helper procedures
-
-@docs portRequest
-@docs withMemory
-@docs when
-@docs unless
-@docs withMaybe
-
-
-# Observing
-
-@docs observe
-@docs observeList
-
 -}
 
 import Browser exposing (Document)
 import Html exposing (Html)
-import Internal.Core as Core exposing (ThreadState, Msg(..), Model(..))
+import Internal.Core as Core
 import Internal.Channel as Channel
-import Internal.PortId as PortId exposing (PortId)
-import Internal.SubId as SubId exposing (SubId)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE exposing (Value)
 import Url exposing (Url)
+
+
+
+-- Procedure
+
+{-| An advanced `Procedure` enables you test for Commands.
+
+You can start with the simpler `Procedure` module, which provides the specialized `Procedure` without `cmd` parameter.
+-}
+type alias Procedure cmd memory event =
+    Core.Procedure cmd memory event
+
+
+{-| Construct a `Procedure` instance that does nothing.
+-}
+none : Procedure c m e
+none = Core.none
+
+
+{-| Return a new Procedure that evaluates given Procedures sequentially.
+-}
+concat : List (Procedure c m e) -> Procedure c m e
+concat = Core.concat
+
+
+-- Layer
+
+
+{-| Layer is a concept that deals with a part of the application, and can successfully represent elements that are created or removed during the application runtime. Especially, it matches well with Pages in SPAs. The application itself is also a Layer.
+-}
+type alias Layer m m1 = Core.Layer m m1
+
+
+{-| Pointer indicates where the memory for a certain Layer `m1` should be located in the memory `m`.
+
+Note that Pointer is permanent because it is just a indicator, while Layer may be expired because it is an instance.
+For example, suppose you set the page state of the application to home page with `putLayer`. Next, you change it to the account information page, and then change it back to the home page. In this case, the same Pointer can be used for both the first and the last `putLayer`. On the other hand, the Layer obtained by the first `putLayer` has already expired and it cannot be used anymore. Even if you publish events to the Layer, nothing occurs.
+-}
+type alias Pointer m m1 = Core.Pointer m m1
+
+
+{-| Identifier for Layers.
+-}
+type alias Channel = Channel.Channel
+
+
+{-| Convert a Channel into a unique string.
+
+You can use this value as a key for [`Html.Keyed`](https://package.elm-lang.org/packages/elm/html/latest/Html-Keyed) nodes.
+-}
+channelString : Channel -> String
+channelString = Channel.toString
+
+
+{-| Put new Layer on the application.
+
+Suppose your application have `page` field in its memory:
+
+    type alias Memory =
+        { page : Page
+        }
+
+    type Page
+        = HomePage (Channel, MemoryForHomePage)
+        | AccountPage (Channel, MemoryForAccountPage)
+
+You can change pages with `putLayer` as follows:
+
+    homePagePointer : Pointer Memory MemoryForHomePage
+    homePagePointer =
+        { get = \m ->
+            case m.page of
+                HomePage layer -> Just layer
+                _ -> Nothing
+        , set = \layer m ->
+            { m | page = HomePage layer }
+        }
+
+    myProcedures =
+        [ putLayer
+            { pointer = homePagePointer
+            , init = \channelForTheLayer m ->
+                { m
+                    | page =
+                        HomePage
+                            ( channelForTheLayer
+                            , initMemoryForHomePage
+                            )
+                }
+            }
+            <| \homePageLayerForThisTimeOnly ->
+                [ onLayer homePageLayerForThisTimeOnly
+                    [ Debug.todo "operations on the home page."
+                    ]
+                ]
+        ]
+
+-}
+putLayer :
+    { pointer : Pointer m m1
+    , init : Channel -> m -> m
+    }
+    -> (Layer m m1 -> List (Procedure c m e))
+    -> Procedure c m e
+putLayer o f =
+
+
+{-| Call some Layer Procedures on its parent Layer Procedures.
+-}
+onLayer : Layer m m1 -> List (Procedure c m1 e) -> Procedure c m e
+onLayer = Core.onLayer
+
+{-| Publish an event to the specified Layer.
+
+You can use this function inside the View to notify Procedure that an event has occurred in the Layer specified with the given Channel.
+-}
+publish : Channel -> event -> Msg event
+publish c e =
+    Core.ChannelMsg
+        { channel = c
+        , event = e
+        }
+
+-- Primitive Procedures
+
+
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+TODO
+
+
+
+
+
+
 
 
 

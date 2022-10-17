@@ -13,7 +13,8 @@ module Internal.Core exposing
     , portRequest, customRequest
     , Procedure(..)
     , none, concat
-    , modify, push, await, awaitMsg, async, withMemory, jump, addListener
+    , mapCmd
+    , modify, await, awaitMsg, async, withMemory, jump, addListener
     , putLayer, onLayer, Pointer
     , init, update
     )
@@ -45,11 +46,12 @@ module Internal.Core exposing
 
 @docs Procedure
 @docs none, concat
+@docs mapCmd
 
 
 # Primitive Procedures
 
-@docs modify, push, await, awaitMsg, async, withMemory, jump, addListener
+@docs modify, await, awaitMsg, async, withMemory, jump, addListener
 
 
 # Layer
@@ -350,6 +352,25 @@ liftPromiseMemory o (Promise prom1) =
                     }
 
 
+mapPromiseCmd : (c -> cmd) -> Promise c m e a -> Promise cmd m e a
+mapPromiseCmd f (Promise prom) =
+    Promise <| \context ->
+        let
+            eff = prom context
+        in
+        { newContext = eff.newContext
+        , cmds = List.map f eff.cmds
+        , handler = \m msg ->
+            case eff.handler m msg of
+                Resolved a -> Resolved a
+                Reject -> Reject
+                AwaitAgain nextProm ->
+                    AwaitAgain
+                        (mapPromiseCmd f nextProm)
+        }
+
+
+
 awaitOnce : (m -> Msg e -> List (Procedure c m e)) -> Promise c m e (Procedure c m e)
 awaitOnce f =
     Promise <|
@@ -375,11 +396,6 @@ awaitOnce f =
 type Procedure c m e
     = Modify
         { modify : m -> m
-        , next : Procedure c m e
-        }
-    | Push
-        -- Supply `m` parameter not to issue commands on expired Layers.
-        { push : m -> List c
         , next : Procedure c m e
         }
     | RunPromise
@@ -418,10 +434,6 @@ mappend p1 p2 =
     case p1 of
         Modify r ->
             Modify
-                { r | next = mappend r.next p2 }
-
-        Push r ->
-            Push
                 { r | next = mappend r.next p2 }
 
         RunPromise r ->
@@ -476,19 +488,6 @@ liftMemory_ o proc =
                 , next = liftMemory_ o r.next
                 }
 
-        Push r ->
-            Push
-                { push =
-                    \m ->
-                        case o.get m of
-                            Just m1 ->
-                                r.push m1
-
-                            Nothing ->
-                                []
-                , next = liftMemory_ o r.next
-                }
-
         RunPromise r ->
             RunPromise
                 { promise =
@@ -532,6 +531,40 @@ liftMemory_ o proc =
             Nil
 
 
+mapCmd : (c -> cmd) -> Procedure c m e -> Procedure cmd m e
+mapCmd f proc =
+    case proc of
+        Modify r ->
+            Modify
+                { modify = r.modify
+                , next = mapCmd f r.next
+                }
+        RunPromise r ->
+            RunPromise
+                { promise = mapPromiseCmd f r.promise
+                    |> mapPromise (mapCmd f)
+                }
+        Async r ->
+            Async
+                { async = mapCmd f r.async
+                , next = mapCmd f r.next
+                }
+        WithNewChannel r ->
+            WithNewChannel
+                { withNewChannel = \m c ->
+                        mapCmd f (r.withNewChannel m c)
+                , next = mapCmd f r.next
+                }
+        WithMemory r ->
+            WithMemory
+                { next = \m -> mapCmd f (r.next m)
+                }
+        Jump r ->
+            Jump
+                { jumpTo = mapCmd f r.jumpTo }
+        Nil ->
+            Nil
+
 
 -- Primitive Procedures
 
@@ -540,14 +573,6 @@ modify : (m -> m) -> Procedure c m e
 modify f =
     Modify
         { modify = f
-        , next = Nil
-        }
-
-
-push : (m -> cmd) -> Procedure cmd m e
-push f =
-    Push
-        { push = \m -> [ f m ]
         , next = Nil
         }
 
@@ -585,14 +610,6 @@ jump f =
         }
 
 
-withNewChannel : (Channel -> List (Procedure c m e)) -> Procedure c m e
-withNewChannel f =
-    WithNewChannel
-        { withNewChannel = \_ -> f >> concat
-        , next = Nil
-        }
-
-
 withMemory : (m -> List (Procedure c m e)) -> Procedure c m e
 withMemory f =
     WithMemory
@@ -614,6 +631,14 @@ type alias Pointer m m1 =
     { get : m -> Maybe ( Channel, m1)
     , set : ( Channel, m1 ) -> m -> m
     }
+
+withNewChannel : (Channel -> List (Procedure c m e)) -> Procedure c m e
+withNewChannel f =
+    WithNewChannel
+        { withNewChannel = \_ -> f >> concat
+        , next = Nil
+        }
+
 
 putLayer :
     { pointer : Pointer m m1
@@ -650,8 +675,13 @@ onLayer (Layer layer) procs =
     liftMemory_ layer <| concat procs
 
 
-addListener : String -> (m -> Sub e) -> (e -> List (Procedure c m e)) -> Procedure c m e
-addListener name sub handler =
+addListener :
+    { name : String
+    , subscription : m -> Sub e
+    , handler : e -> List (Procedure c m e)
+    }
+    -> Procedure c m e
+addListener {name, subscription, handler } =
     async
         [ runPromise <|
             Promise <|
@@ -670,7 +700,7 @@ addListener name sub handler =
                                     { channel = layerChannel
                                     , requestId = myRequestId
                                     , name = name
-                                    , sub = sub context.state |> Sub.map toListenerMsg
+                                    , sub = subscription context.state |> Sub.map toListenerMsg
                                     }
                                         :: context.listeners
                             }
@@ -890,13 +920,6 @@ toModel context proc =
                 }
                 r.next
 
-        Push r ->
-            let
-                ( model, cmds ) =
-                    toModel context r.next
-            in
-            ( model, r.push context.state ++ cmds )
-
         RunPromise r ->
             let
                 (Promise prom) =
@@ -948,6 +971,7 @@ toModel context proc =
             in
             toModel newContext (mappend newProc r.next)
 
+
         WithMemory r ->
             toModel context (r.next context.state)
 
@@ -980,13 +1004,6 @@ concurrent p1 p2 =
                         { r2
                             | next = concurrent p1 r2.next
                         }
-
-                Push r2 ->
-                    Push
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
                 RunPromise r2 ->
                     concurrentRequest r1 r2
 
@@ -1019,12 +1036,6 @@ concurrent p1 p2 =
             case p1 of
                 Modify r1 ->
                     Modify
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
-                Push r1 ->
-                    Push
                         { r1
                             | next = concurrent r1.next p2
                         }

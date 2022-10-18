@@ -2,22 +2,18 @@ module Expect.Builder exposing
     ( Builder
     , applyTo
     , runOn
-    , all
-    , oneOf
-    , partial, fromJust, fromOk, fromErr
-    , equal, notEqual
+    , equal, notEqual, all, oneOf
     , lessThan, atMost, greaterThan, atLeast
-    , FloatingPointTolerance
-    , within, notWithin
+    , FloatingPointTolerance, within, notWithin
     , ok, err
     , equalLists, allOfListItems, oneOfListItem
-    , equalDicts
-    , equalSets
+    , equalDicts, equalSets
+    , partial, fromJust, fromOk, fromErr
     , custom, pass, fail, onFail, extractOn, isPass
     )
 
-
 {-| A library to build `Expectation`s flexibly.
+
 
 ## Quick Reference
 
@@ -36,9 +32,11 @@ module Expect.Builder exposing
 @docs applyTo
 @docs runOn
 
+
 ## Basic Expectation Builders
 
 @docs equal, notEqual, all, oneOf
+
 
 ## Numeric Comparisons
 
@@ -64,6 +62,7 @@ or both. For an in-depth look, see our [Guide to Floating Point Comparison](#gui
 
 @docs partial, fromJust, fromOk, fromErr
 
+
 ## Customizing
 
 These functions will let you build your own expectations.
@@ -78,8 +77,9 @@ See [Expect module](https://package.elm-lang.org/packages/elm-explorations/test/
 -}
 
 import Dict exposing (Dict)
-import Set exposing (Set)
 import Expect exposing (Expectation, FloatingPointTolerance(..))
+import Set exposing (Set)
+
 
 {-| `Expectation` alternative.
 -}
@@ -102,7 +102,8 @@ applyTo (Builder f) a =
 {-| Flipped version of `applyTo`.
 -}
 runOn : a -> Builder a -> Expectation
-runOn a builder = applyTo builder a
+runOn a builder =
+    applyTo builder a
 
 
 {-| Build `Expect.all`.
@@ -120,42 +121,46 @@ will always return a failed expectation no matter what else it is passed.
 
 Failures resemble code written in pipeline style, so you can tell
 which argument is which:
-    -- Fails because (0 < -10) is False
-    List.length []
-        |>  Expect.Builder.applyTo
-            ( Expect.Builder.all
-                [ Expect.Builder.greaterThan -2
-                , Expect.Builder.lessThan -10
-                , Expect.Builder.equal 0
-                ]
-            )
-    {-
-    0
-    ╷
-    │ Expect.lessThan
-    ╵
-    -10
-    -}
+-- Fails because (0 < -10) is False
+List.length []
+|> Expect.Builder.applyTo
+( Expect.Builder.all
+[ Expect.Builder.greaterThan -2
+, Expect.Builder.lessThan -10
+, Expect.Builder.equal 0
+]
+)
+{-
+0
+╷
+│ Expect.lessThan
+╵
+-10
+-}
+
 -}
 all : List (Builder a) -> Builder a
 all ls =
     case ls of
         [] ->
-            Builder <| \a ->
-                Err (Expect.all [] a)
+            Builder <|
+                \a ->
+                    Err (Expect.all [] a)
 
-        ((Builder init) :: xs) ->
+        (Builder init) :: xs ->
             List.foldl
                 (\(Builder f) acc a ->
                     case acc a of
                         Ok () ->
                             f a
+
                         Err e ->
                             Err e
                 )
                 init
                 xs
                 |> Builder
+
 
 {-| Passes if one of the given functions passes when applied to the subject.
 Passing an empty list is assumed to be a mistake, so `Expect.Builder.oneOf []`
@@ -167,21 +172,24 @@ will always return a failed expectation no matter what else it is passed.
         ]
         |> Expect.Builder.runOn (List.length [])
     -- Passes because (0 > 2) is False but (0 < 5) is also True
+
 -}
 oneOf : List (Builder a) -> Builder a
 oneOf ls =
     case ls of
         [] ->
-            Builder <| \_ ->
-                Err <| Expect.fail "Expect.Builder.oneOf was given an empty list. You must make at least one expectation to have a valid test!"
+            Builder <|
+                \_ ->
+                    Err <| Expect.fail "Expect.Builder.oneOf was given an empty list. You must make at least one expectation to have a valid test!"
 
-        ((Builder init)::xs) ->
+        (Builder init) :: xs ->
             Builder <|
                 List.foldl
                     (\(Builder f) acc a ->
                         case acc a of
                             Ok () ->
                                 Ok ()
+
                             Err _ ->
                                 f a
                     )
@@ -201,11 +209,13 @@ oneOf ls =
             Expect.Builder.lessThan 4
         )
     -- Passes because the `foo` value is lessThan 4.
+
 -}
 partial : (a -> b) -> Builder b -> Builder a
 partial f (Builder builder) =
-    Builder <| \a ->
-        builder (f a)
+    Builder <|
+        \a ->
+            builder (f a)
 
 
 {-| Passes if the
@@ -248,18 +258,19 @@ an `Just a` and the `a` value passes the given `Builder`; otherwise fails.
 -}
 fromJust : Builder a -> Builder (Maybe a)
 fromJust (Builder builder) =
-    Builder <| \ma ->
-        case ma of
-            Nothing ->
-                Err <| Expect.fail "thought the subject is `Just`."
-            Just a ->
-                builder a
+    Builder <|
+        \ma ->
+            case ma of
+                Nothing ->
+                    Err <| Expect.fail "thought the subject is `Just`."
+
+                Just a ->
+                    builder a
 
 
 {-| Passes if the
 [`Result`](https://package.elm-lang.org/packages/lang/core/latest/Result) is
 an `Ok a` and the `a` value passes the given `Builder`; otherwise fails.
-
 
     -- Passes
     String.toInt "1"
@@ -297,12 +308,14 @@ an `Ok a` and the `a` value passes the given `Builder`; otherwise fails.
 -}
 fromOk : Builder a -> Builder (Result e a)
 fromOk (Builder builder) =
-    Builder <| \res ->
-        case res of
-            Err _ ->
-                Err <| Expect.fail "thought the subject is `Ok`."
-            Ok a ->
-                builder a
+    Builder <|
+        \res ->
+            case res of
+                Err _ ->
+                    Err <| Expect.fail "thought the subject is `Ok`."
+
+                Ok a ->
+                    builder a
 
 
 {-| Passes if the
@@ -311,12 +324,14 @@ an `Err e` and the `e` value passes the given `Builder`; otherwise fails.
 -}
 fromErr : Builder e -> Builder (Result e a)
 fromErr (Builder builder) =
-    Builder <| \res ->
-        case res of
-            Err e ->
-                builder e
-            Ok _ ->
-                Err <| Expect.fail "thought the subject is `Err`."
+    Builder <|
+        \res ->
+            case res of
+                Err e ->
+                    builder e
+
+                Ok _ ->
+                    Err <| Expect.fail "thought the subject is `Err`."
 
 
 {-| Build `Expect.equal`.
@@ -347,14 +362,18 @@ which argument is which:
     -}
 
 Do not equate `Float` values; use [`within`](#within) instead.
+
 -}
 equal : a -> Builder a
 equal expected =
-    Builder <| \a ->
-        if a == expected then
-            Ok ()
-        else
-            Err <| Expect.equal expected a
+    Builder <|
+        \a ->
+            if a == expected then
+                Ok ()
+
+            else
+                Err <| Expect.equal expected a
+
 
 {-| Build `Expect.notEqual`.
 
@@ -386,12 +405,13 @@ Passes if the arguments are not equal.
 -}
 notEqual : a -> Builder a
 notEqual unexpected =
-    Builder <| \a ->
-        if a /= unexpected then
-            Ok ()
-        else
-            Err <| Expect.notEqual unexpected a
+    Builder <|
+        \a ->
+            if a /= unexpected then
+                Ok ()
 
+            else
+                Err <| Expect.notEqual unexpected a
 
 
 {-| Build `Expect.lessThan`.
@@ -432,8 +452,10 @@ lessThan base =
         \a ->
             if a < base then
                 Ok ()
+
             else
                 Err <| Expect.lessThan base a
+
 
 {-| Build `Expect.atMost`.
 
@@ -466,11 +488,13 @@ which argument is which:
 -}
 atMost : comparable -> Builder comparable
 atMost base =
-    Builder <| \a ->
-        if a <= base then
-            Ok ()
-        else
-            Err <| Expect.atMost base a
+    Builder <|
+        \a ->
+            if a <= base then
+                Ok ()
+
+            else
+                Err <| Expect.atMost base a
 
 
 {-| Build `Expect.greaterThan`.
@@ -504,11 +528,13 @@ which argument is which:
 -}
 greaterThan : comparable -> Builder comparable
 greaterThan base =
-    Builder <| \a ->
-        if a > base then
-            Ok ()
-        else
-            Err <| Expect.greaterThan base a
+    Builder <|
+        \a ->
+            if a > base then
+                Ok ()
+
+            else
+                Err <| Expect.greaterThan base a
 
 
 {-| Build `Expect.atLeast`.
@@ -542,18 +568,23 @@ which argument is which:
 -}
 atLeast : comparable -> Builder comparable
 atLeast base =
-    Builder <| \a ->
-        if a >= base then
-            Ok ()
-        else
-            Err <| Expect.atLeast base a
+    Builder <|
+        \a ->
+            if a >= base then
+                Ok ()
+
+            else
+                Err <| Expect.atLeast base a
+
 
 
 -- Floating Point Comparisons
 
+
 {-| Reexport `Expect.FloatingPointTolerance` for convenience.
 -}
-type alias FloatingPointTolerance = Expect.FloatingPointTolerance
+type alias FloatingPointTolerance =
+    Expect.FloatingPointTolerance
 
 
 {-| Build `Expect.within`.
@@ -566,10 +597,10 @@ minor inaccuracies introduced by floating point arithmetic.
     0.1 + 0.2 |> Expect.Builder.applyTo (Expect.Builder.equal 0.3)
 
     -- So instead write this test, which passes
-    0.1 + 0.2
+    0.1
+        + 0.2
         |> Expect.Builder.applyTo
-            (Expect.Builder.within (Absolute 0.000000001) 0.3
-            )
+            (Expect.Builder.within (Absolute 0.000000001) 0.3)
 
 Failures resemble code written in pipeline style, so you can tell
 which argument is which:
@@ -593,24 +624,29 @@ which argument is which:
 -}
 within : FloatingPointTolerance -> Float -> Builder Float
 within tolerance base =
-    Builder <| \a ->
-        if withinCompare tolerance base a then
-            Ok ()
-        else
-            Err <| Expect.within tolerance base a
+    Builder <|
+        \a ->
+            if withinCompare tolerance base a then
+                Ok ()
+
+            else
+                Err <| Expect.within tolerance base a
 
 
 {-| Build `Expect.notWithin`.
 
 Passes if (and only if) a call to `within` with the same arguments would have failed.
+
 -}
 notWithin : FloatingPointTolerance -> Float -> Builder Float
 notWithin tolerance base =
-    Builder <| \a ->
-        if withinCompare tolerance base a then
-            Err <| Expect.notWithin tolerance base a
-        else
-            Ok ()
+    Builder <|
+        \a ->
+            if withinCompare tolerance base a then
+                Err <| Expect.notWithin tolerance base a
+
+            else
+                Ok ()
 
 
 {-| Build `Expect.ok`.
@@ -648,13 +684,14 @@ any `Ok`.
 -}
 ok : Builder (Result a b)
 ok =
-    Builder <| \result ->
-        case result of
-            Ok _ ->
-                Ok ()
+    Builder <|
+        \result ->
+            case result of
+                Ok _ ->
+                    Ok ()
 
-            Err _ ->
-                Err <| Expect.ok result
+                Err _ ->
+                    Err <| Expect.ok result
 
 
 {-| Build `Expect.err`.
@@ -692,13 +729,14 @@ any `Err`.
 -}
 err : Builder (Result a b)
 err =
-    Builder <| \result ->
-        case result of
-            Ok _ ->
-                Err <| Expect.err result
+    Builder <|
+        \result ->
+            case result of
+                Ok _ ->
+                    Err <| Expect.err result
 
-            Err _ ->
-                Ok ()
+                Err _ ->
+                    Ok ()
 
 
 {-| Build `Expect.equalLists`.
@@ -734,12 +772,13 @@ differed at or which list was longer:
 -}
 equalLists : List a -> Builder (List a)
 equalLists expected =
-    Builder <| \actual ->
-        if expected == actual then
-            Ok ()
+    Builder <|
+        \actual ->
+            if expected == actual then
+                Ok ()
 
-        else
-            Err <| Expect.equalLists expected actual
+            else
+                Err <| Expect.equalLists expected actual
 
 
 {-| Passes if given `Builder` passes when applied to one of the list elements.
@@ -752,6 +791,7 @@ will always return a failed expectation no matter what else it is passed.
                 (Expect.Builder.greaterThan 4)
             )
     -- Passes because (5 > 4) is True
+
 -}
 oneOfListItem : Builder a -> Builder (List a)
 oneOfListItem builder =
@@ -759,11 +799,12 @@ oneOfListItem builder =
         \ls ->
             if List.isEmpty ls then
                 fail "Expect.Builder.oneOfListItem was given an empty list. You must make at least one expectation to have a valid test!"
-            else if (List.any (\a -> isPass (extractOn a builder)) ls) then
+
+            else if List.any (\a -> isPass (extractOn a builder)) ls then
                 pass
+
             else
                 fail "Expect.Builder.oneOfListItem passes for none of the given list elements"
-
 
 
 {-| Passes if given `Builder` passes when applied to each of the list elements.
@@ -779,19 +820,20 @@ will always return a failed expectation no matter what else it is passed.
 
 Failures resemble code written in pipeline style, so you can tell
 which argument is which:
-    -- Fails because (0 < -10) is False
-    [ 3, 4, 10 ]
-        |> Expect.Builder.applyTo
-            (Expect.Builder.allListItems
-                (Expect.Builder.lessThan 6)
-            )
-    {-
-    10
-    ╷
-    │ Expect.lessThan
-    ╵
-    6
-    -}
+-- Fails because (0 < -10) is False
+[ 3, 4, 10 ]
+|> Expect.Builder.applyTo
+(Expect.Builder.allListItems
+(Expect.Builder.lessThan 6)
+)
+{-
+10
+╷
+│ Expect.lessThan
+╵
+6
+-}
+
 -}
 allOfListItems : Builder a -> Builder (List a)
 allOfListItems builder =
@@ -799,17 +841,18 @@ allOfListItems builder =
         \ls ->
             if List.isEmpty ls then
                 fail "Expect.Builder.allOfListItems was given an empty list. You must make at least one expectation to have a valid test!"
+
             else
                 List.foldl
                     (\a acc ->
                         if isPass pass then
                             extractOn a builder
+
                         else
                             acc
                     )
                     pass
                     ls
-
 
 
 {-| Build `equalDicts`.
@@ -845,12 +888,13 @@ or added to each dict:
 -}
 equalDicts : Dict comparable a -> Builder (Dict comparable a)
 equalDicts expected =
-    Builder <| \actual ->
-        if Dict.toList expected == Dict.toList actual then
-            Ok ()
+    Builder <|
+        \actual ->
+            if Dict.toList expected == Dict.toList actual then
+                Ok ()
 
-        else
-            Err <| Expect.equalDicts expected actual
+            else
+                Err <| Expect.equalDicts expected actual
 
 
 {-| Build `equalSets`.
@@ -886,12 +930,13 @@ or added to each set:
 -}
 equalSets : Set comparable -> Builder (Set comparable)
 equalSets expected =
-    Builder <| \actual ->
-        if Set.toList expected == Set.toList actual then
-            Ok ()
+    Builder <|
+        \actual ->
+            if Set.toList expected == Set.toList actual then
+                Ok ()
 
-        else
-            Err <| Expect.equalSets expected actual
+            else
+                Err <| Expect.equalSets expected actual
 
 
 {-| Custom Builder.
@@ -918,16 +963,19 @@ equalSets expected =
 -}
 custom : (a -> Builder ()) -> Builder a
 custom f =
-    Builder <| \a ->
-        let
-            (Builder builder) = f a
-        in
-        builder ()
+    Builder <|
+        \a ->
+            let
+                (Builder builder) =
+                    f a
+            in
+            builder ()
 
 
 {-| Build `Expect.pass` for any subject.
 
 Always passes.
+
 -}
 pass : Builder a
 pass =
@@ -937,11 +985,13 @@ pass =
 {-| Build `Expect.fail` for any subject.
 
 Fails with the given message.
+
 -}
 fail : String -> Builder a
 fail str =
-    Builder <| \_ ->
-        Err <| Expect.fail str
+    Builder <|
+        \_ ->
+            Err <| Expect.fail str
 
 
 {-| If the given expectation fails, replace its failure message with a custom one.
@@ -953,15 +1003,16 @@ fail str =
 -}
 onFail : String -> Builder a -> Builder a
 onFail str (Builder builder) =
-    Builder <| \a ->
-        case builder a of
-            Ok () ->
-                Ok ()
+    Builder <|
+        \a ->
+            case builder a of
+                Ok () ->
+                    Ok ()
 
-            Err expectation ->
-                expectation
-                    |> Expect.onFail str
-                    |> Err
+                Err expectation ->
+                    expectation
+                        |> Expect.onFail str
+                        |> Err
 
 
 {-| Provide an subject value to extract constant `Builder`.
@@ -974,16 +1025,19 @@ e.g., you can build your original `oneOfListItem` function with `extractOn` and 
             \ls ->
                 if List.isEmpty ls then
                     fail "Expect.Builder.oneOfListItem was given an empty list. You must make at least one expectation to have a valid test!"
-                else if (List.any (\a -> isPass (extractOn a builder)) ls) then
+
+                else if List.any (\a -> isPass (extractOn a builder)) ls then
                     pass
+
                 else
                     fail "Expect.Builder.oneOfListItem passes for none of the given list elements"
 
 -}
 extractOn : a -> Builder a -> Builder ()
 extractOn a (Builder builder) =
-    Builder <| \() ->
-        builder a
+    Builder <|
+        \() ->
+            builder a
 
 
 {-| Check if an extracted `Builder` passes.
@@ -991,6 +1045,7 @@ extractOn a (Builder builder) =
 isPass : Builder () -> Bool
 isPass (Builder builder) =
     builder () == Ok ()
+
 
 
 {---- Private *floating point* helper functions from elm-explorations/test.
@@ -1025,6 +1080,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----}
+
 
 absolute : FloatingPointTolerance -> Float
 absolute tolerance =

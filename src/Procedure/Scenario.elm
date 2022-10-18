@@ -1,10 +1,10 @@
 module Procedure.Scenario exposing
-    ( toTest
-    , toHtml
-    , toMarkdown
-    , Scenario
+    ( Scenario
     , none
     , concat
+    , toTest
+    , toHtml
+    , toMarkdown
     , Section
     , section
     , cases
@@ -27,8 +27,8 @@ module Procedure.Scenario exposing
     , onLayer
     )
 
-
 {-| Module for Scenario-Driven Development.
+
 
 # Core
 
@@ -39,34 +39,41 @@ module Procedure.Scenario exposing
 @docs toHtml
 @docs toMarkdown
 
+
 # Section
 
 @docs Section
 @docs section
 @docs cases
 
+
 # User
 
 @docs User
 @docs defineUser
+
 
 # Session
 
 @docs Session
 @docs defineSession
 
+
 # Primitives
+
 
 ## Comments
 
 @docs userComment
 @docs systemComment
 
+
 ## Expectations
 
 @docs expectCommands
 @docs expectMemory
 @docs expectAppView
+
 
 ## Event Simulators
 
@@ -75,10 +82,12 @@ module Procedure.Scenario exposing
 @docs userEvent
 @docs listenerEvent
 
+
 ## Response Simulators
 
 @docs portResponse
 @docs customResponse
+
 
 # Conditions
 
@@ -87,28 +96,30 @@ module Procedure.Scenario exposing
 
 -}
 
-import Dict
+import Dict exposing (Dict)
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
-import Json.Encode exposing (Value)
-import Mixin.Html as Html exposing (Html)
 import Internal.Channel as Channel exposing (Channel)
-import Internal.Core as Core exposing
-    ( Model(..)
-    , Msg(..)
-    , Key(..)
-    , Pointer
-    , Procedure
-    )
-import Dict exposing (Dict)
+import Internal.Core as Core
+    exposing
+        ( Key(..)
+        , Model(..)
+        , Msg(..)
+        , Pointer
+        , Procedure
+        )
 import Internal.Markup as Markup
+import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
+import Mixin.Html as Html exposing (Html)
 import Test exposing (Test)
 import Url exposing (Url)
 
 
+type alias ExpBuilder a =
+    ExpBuilder.Builder a
 
-type alias ExpBuilder a = ExpBuilder.Builder a
+
 
 -- Scenario
 
@@ -116,6 +127,7 @@ type alias ExpBuilder a = ExpBuilder.Builder a
 {-| Scenario describes how the application reacts to the user operations along the time line.
 
 The Scenario you built can be converted to tests with `toTest`, and to documents with `toHtml` or `toMarkdown`.
+
 -}
 type Scenario flags cmd memory event
     = UserComment
@@ -138,7 +150,7 @@ type Scenario flags cmd memory event
     | UserEvent
         { session : Session
         , description : String
-        , event : ( Channel, memory) -> Maybe (Channel, event)
+        , event : ( Channel, memory ) -> Maybe ( Channel, event )
         , next : Scenario flags cmd memory event
         }
     | ListenerEvent
@@ -189,10 +201,10 @@ type Scenario flags cmd memory event
     | Nil
 
 
-
 type UnexpectedScenario
     = IsNotJust String
     | ScenarioAfterNextCases
+
 
 {-| Return a new Scenario that evaluates given Scenarios sequentially.
 -}
@@ -253,6 +265,7 @@ none =
     Nil
 
 
+
 -- Section
 
 
@@ -276,6 +289,7 @@ liftSection_ pointer (Section r) =
 {-| Constructor for `Section`.
 
 It takes Section title and its sequence of Scenarios.
+
 -}
 section : String -> List (Scenario flags c m e) -> Section flags c m e
 section title scenarios =
@@ -321,7 +335,8 @@ cases sections =
 
 {-| An application user.
 -}
-type User = User
+type User
+    = User
         { name : String
         }
 
@@ -332,7 +347,8 @@ defineUser :
     { name : String
     }
     -> User
-defineUser = User
+defineUser =
+    User
 
 
 {-| Session is a unit that connects one application instance and its user. Basically, it corresponds to a tab in a browser.
@@ -360,10 +376,11 @@ So, for example, if you want to create a scenario where a user opens and operate
             }
 
 -}
-type Session = Session
-    { user : User
-    , name : String
-    }
+type Session
+    = Session
+        { user : User
+        , name : String
+        }
 
 
 {-| Define a session for your Scenario.
@@ -373,12 +390,12 @@ defineSession :
     , user : User
     }
     -> Session
-defineSession = Session
+defineSession =
+    Session
+
 
 
 -- Primitives
-
-
 -- -- Comments
 
 
@@ -392,7 +409,7 @@ defineSession = Session
         , Debug.todo "..."
         ]
 
-This Scenario only affects document generation, and is ignored  for scenario test generation.
+This Scenario only affects document generation, and is ignored for scenario test generation.
 
 You can start with `userComment` and `systemComment` to build the skeleton of your scenario, and gradually replace `userComment` with Event Simulator and `systemComment` with Expectation.
 
@@ -408,7 +425,8 @@ userComment user comment =
 
 {-| System comment.
 
-This Scenario only affects document generation, and is ignored  for scenario test generation.
+This Scenario only affects document generation, and is ignored for scenario test generation.
+
 -}
 systemComment : Session -> String -> Scenario flags c m e
 systemComment session comment =
@@ -419,7 +437,9 @@ systemComment session comment =
         }
 
 
+
 -- -- Expectations
+
 
 {-| Describe your expectations for the commands your application issues at the point.
 Only useful when the app is built with `Procedure.Advanced` package.
@@ -439,6 +459,7 @@ Suppose your application requests user information to the server on loading:
                             case cmd of
                                 RequestUserInfoToServer _ ->
                                     ExpBuilder.pass
+
                                 _ ->
                                     ExpBuilder.fail
                                         "No the expected command"
@@ -453,7 +474,8 @@ You use [elm-expectation-builder]() to describe your expectation flexibly.
 expectCommands :
     Session
     -> String
-    ->  { expectation : ExpBuilder (List command)
+    ->
+        { expectation : ExpBuilder (List command)
         }
     -> Scenario flags command m e
 expectCommands session description { expectation } =
@@ -488,7 +510,8 @@ You use [elm-expectation-builder]() to describe your expectation flexibly.
 expectMemory :
     Session
     -> String
-    ->  { expectation : ExpBuilder memory
+    ->
+        { expectation : ExpBuilder memory
         }
     -> Scenario flags c memory e
 expectMemory session description { expectation } =
@@ -504,21 +527,22 @@ expectMemory session description { expectation } =
 
 Suppose your application has a popup:
 
+    import Html.Attribute exposing (attribute)
     import Test.Html.Query as Query
     import Test.Html.Selector as Selector
-    import Html.Attribute exposing (attribute)
 
     myScenario =
         [ Debug.todo "After some operations..."
         , expectAppView sakuraChanMainSession
             "Show popup message."
-            { expectation = \html ->
-                Query.fromHtml html
-                    |> Query.find [ Selector.id "popup" ]
-                    |> Query.has
-                        [ Selector.attribute
-                            (attribute "aria-hidden" "false")
-                        ]
+            { expectation =
+                \html ->
+                    Query.fromHtml html
+                        |> Query.find [ Selector.id "popup" ]
+                        |> Query.has
+                            [ Selector.attribute
+                                (attribute "aria-hidden" "false")
+                            ]
             }
         , Debug.todo "..."
         ]
@@ -530,17 +554,20 @@ Note that the `expectation` field takes page whole view even if you use it in `o
     onLayer popup
         [ expectAppView sakuraChanMainSession
             "expectation about the whole application view"
-            { expectation = \html ->
-                Debug.todo
-                    "the argument is not the partial view for the Layer, but for the whole page."
+            { expectation =
+                \html ->
+                    Debug.todo
+                        "the argument is not the partial view for the Layer, but for the whole page."
             }
         , Debug.todo "..."
         ]
+
 -}
 expectAppView :
     Session
     -> String
-    ->  { expectation : Html () -> Expectation
+    ->
+        { expectation : Html () -> Expectation
         }
     -> Scenario flags c m event
 expectAppView session description { expectation } =
@@ -608,7 +635,8 @@ type alias Route =
 loadApp :
     Session
     -> String
-    ->  { route : Route
+    ->
+        { route : Route
         , flags : flags
         }
     -> Scenario flags c m e
@@ -643,14 +671,15 @@ The example above publishes `ClickPopupCancelButton` event to the Channel for th
 userEvent :
     Session
     -> String
-    ->  { event : event
+    ->
+        { event : event
         }
     -> Scenario flags c memory event
 userEvent session description o =
     UserEvent
         { session = session
         , description = description
-        , event = \( c, _ ) -> Just (c, o.event)
+        , event = \( c, _ ) -> Just ( c, o.event )
         , next = Nil
         }
 
@@ -666,10 +695,11 @@ Suppose your application has a WebSocket message Listener named "WebSocket messa
         , listenerEvent sakuraChanMainSession
             "Receive WebSocket message"
             { target = "WebSocket message Listener"
-            , event = WebSocketMessage <|
-                JE.object
-                    [ ( "action", JE.string "connected" )
-                    ]
+            , event =
+                WebSocketMessage <|
+                    JE.object
+                        [ ( "action", JE.string "connected" )
+                        ]
             }
         , Debug.todo "..."
         ]
@@ -678,7 +708,8 @@ Suppose your application has a WebSocket message Listener named "WebSocket messa
 listenerEvent :
     Session
     -> String
-    ->  { target : String
+    ->
+        { target : String
         , event : event
         }
     -> Scenario flags c m event
@@ -690,6 +721,8 @@ listenerEvent session description o =
         , event = o.event
         , next = Nil
         }
+
+
 
 -- -- Response Simulators
 
@@ -710,11 +743,13 @@ Suppose your application requests to access localStorage via port request named 
             }
         , Debug.todo "..."
         ]
+
 -}
 portResponse :
     Session
     -> String
-    ->  { target : String
+    ->
+        { target : String
         , response : Value
         }
     -> Scenario flags command m e
@@ -726,6 +761,7 @@ portResponse session description o =
         , response = o.response
         , next = Nil
         }
+
 
 {-| Simulate response to the `Procedure.customResponse`.
 
@@ -741,17 +777,19 @@ Suppose your application requests user infomation to the backend server via cust
             , response =
                 UserInfoResponse <|
                     Ok
-                        { name : "Sakura-chan"
-                        , age : 3
+                        { name = "Sakura-chan"
+                        , age = 3
                         }
             }
         , Debug.todo "..."
         ]
+
 -}
 customResponse :
     Session
     -> String
-    ->  { target : String
+    ->
+        { target : String
         , response : event
         }
     -> Scenario flags command m event
@@ -763,6 +801,8 @@ customResponse session description o =
         , response = o.response
         , next = Nil
         }
+
+
 
 -- Conditions
 
@@ -777,11 +817,13 @@ If the given value is `Nothing`, document generation and tests fails.
         [ Debug.todo "After some operations..."
         , fromJust "Make URL"
             (Url.fromString "https://example.com/foo/")
-            <| \url ->
+          <|
+            \url ->
                 [ Debug.todo "Scenarios that use `url`"
                 ]
         , Debug.todo "..."
         ]
+
 -}
 fromJust : String -> Maybe a -> (a -> List (Scenario flags c m e)) -> Scenario flags c m e
 fromJust description ma f =
@@ -798,7 +840,6 @@ fromJust description ma f =
 
 {-| Run Scenarios on the specified Layer.
 If the Layer is not accessible, tests fail.
-
 -}
 onLayer : Pointer m m1 -> List (Scenario flags c m1 e) -> Scenario flags c m e
 onLayer pointer s1s =
@@ -814,12 +855,14 @@ onLayer_ pointer s =
                 , comment = r.comment
                 , next = onLayer_ pointer r.next
                 }
+
         SystemComment r ->
             SystemComment
                 { session = r.session
                 , comment = r.comment
                 , next = onLayer_ pointer r.next
                 }
+
         LoadApp r ->
             LoadApp
                 { session = r.session
@@ -828,18 +871,21 @@ onLayer_ pointer s =
                 , route = r.route
                 , next = onLayer_ pointer r.next
                 }
+
         UserEvent r ->
             UserEvent
                 { session = r.session
                 , description = r.description
-                , event = \(_, m) ->
-                    pointer.get m
-                        |> Maybe.andThen
-                            (\(c1, m1) ->
-                                r.event (c1, m1)
-                            )
+                , event =
+                    \( _, m ) ->
+                        pointer.get m
+                            |> Maybe.andThen
+                                (\( c1, m1 ) ->
+                                    r.event ( c1, m1 )
+                                )
                 , next = onLayer_ pointer r.next
                 }
+
         ListenerEvent r ->
             ListenerEvent
                 { session = r.session
@@ -865,12 +911,14 @@ onLayer_ pointer s =
                     ExpBuilder.custom <|
                         \c ->
                             case pointer.get c of
-                                Just (_, c1) ->
+                                Just ( _, c1 ) ->
                                     ExpBuilder.extractOn c1 r.expectation
+
                                 _ ->
                                     ExpBuilder.fail "Unexpected memory state."
                 , next = onLayer_ pointer r.next
                 }
+
         ExpectAppView r ->
             ExpectAppView
                 { session = r.session
@@ -878,6 +926,7 @@ onLayer_ pointer s =
                 , expectation = r.expectation
                 , next = onLayer_ pointer r.next
                 }
+
         PortResponse r ->
             PortResponse
                 { session = r.session
@@ -886,6 +935,7 @@ onLayer_ pointer s =
                 , response = r.response
                 , next = onLayer_ pointer r.next
                 }
+
         CustomResponse r ->
             CustomResponse
                 { session = r.session
@@ -894,12 +944,15 @@ onLayer_ pointer s =
                 , response = r.response
                 , next = onLayer_ pointer r.next
                 }
+
         NextCases r ->
             NextCases
                 { cases = List.map (liftSection_ pointer) r.cases
                 }
+
         Unexpected r ->
             Unexpected r
+
         Nil ->
             Nil
 
@@ -913,7 +966,7 @@ onLayer_ pointer s =
 toTest :
     { init : memory
     , procedures : flags -> Url -> Key -> List (Procedure cmd memory event)
-    , view : (Channel, memory) -> Html (Msg event)
+    , view : ( Channel, memory ) -> Html (Msg event)
     , sections : List (Section flags cmd memory event)
     }
     -> Test
@@ -922,10 +975,11 @@ toTest o =
         (\(Section sec) ->
             Test.describe sec.title <|
                 toTests
-                    { view = \m -> Html.map (\_ -> ()) <| o.view (Channel.init, m)
-                    , init = \flags url ->
-                        Core.init o.init
-                            (o.procedures flags url SimKey)
+                    { view = \m -> Html.map (\_ -> ()) <| o.view ( Channel.init, m )
+                    , init =
+                        \flags url ->
+                            Core.init o.init
+                                (o.procedures flags url SimKey)
                     }
                     sec.content
                     Dict.empty
@@ -936,21 +990,25 @@ toTest o =
 
 type alias TestConfig flags c m e =
     { view : m -> Html ()
-    , init : flags -> Url -> (Model c m e, List c)
+    , init : flags -> Url -> ( Model c m e, List c )
     }
 
-toTests : TestConfig flags c m e -> Scenario flags c m e -> Dict String (Model c m e, List c) -> List Test
+
+toTests : TestConfig flags c m e -> Scenario flags c m e -> Dict String ( Model c m e, List c ) -> List Test
 toTests config scenario sessions =
     let
-        onlyOnActiveApp : String -> String -> ((Model c m e, List c) -> List Test) -> List Test
+        onlyOnActiveApp : String -> String -> (( Model c m e, List c ) -> List Test) -> List Test
         onlyOnActiveApp sessionName description action =
             case Dict.get sessionName sessions of
                 Nothing ->
                     [ Test.test
                         ("[" ++ sessionName ++ "] " ++ description)
-                        <| \_ -> Expect.fail
+                      <|
+                        \_ ->
+                            Expect.fail
                                 "The application is not active on the session. Use `loadApp` beforehand."
                     ]
+
                 Just pair ->
                     action pair
     in
@@ -963,7 +1021,9 @@ toTests config scenario sessions =
 
         LoadApp r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
+
                 url =
                     { protocol = Url.Http
                     , host = "example.com"
@@ -980,53 +1040,61 @@ toTests config scenario sessions =
 
         UserEvent r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, _) ->
+                \( model, _ ) ->
                     let
                         memory =
                             case model of
-                                EndOfProcess { lastState } -> lastState
-                                OnGoing { context } -> context.state
+                                EndOfProcess { lastState } ->
+                                    lastState
+
+                                OnGoing { context } ->
+                                    context.state
                     in
-                    case r.event (Channel.init, memory) of
+                    case r.event ( Channel.init, memory ) of
                         Nothing ->
                             [ Test.test
                                 ("[" ++ session.name ++ "] " ++ r.description)
-                                <| \_ -> Expect.fail
+                              <|
+                                \_ ->
+                                    Expect.fail
                                         "The layer is not accessible."
                             ]
-                        Just (c, e) ->
+
+                        Just ( c, e ) ->
                             Dict.insert session.name
-                                ( ChannelMsg
+                                (ChannelMsg
                                     { channel = c
                                     , event = e
                                     }
                                     |> applyMsg model
-
                                 )
                                 sessions
                                 |> toTests config r.next
 
         ListenerEvent r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, _) ->
+                \( model, _ ) ->
                     case model of
                         OnGoing onGoing ->
                             Dict.insert session.name
-                                ( onGoing.context.listeners
+                                (onGoing.context.listeners
                                     |> List.filterMap
                                         (\listener ->
-                                            if (listener.name == r.target) then
+                                            if listener.name == r.target then
                                                 Just <|
                                                     ListenerMsg
                                                         { requestId = listener.requestId
                                                         , event = r.event
                                                         }
+
                                             else
                                                 Nothing
                                         )
@@ -1034,100 +1102,114 @@ toTests config scenario sessions =
                                 )
                                 sessions
                                 |> toTests config r.next
+
                         EndOfProcess _ ->
                             toTests config r.next sessions
 
         ExpectCommands r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, cmds) ->
-                    ( Test.test
+                \( model, cmds ) ->
+                    (Test.test
                         ("[" ++ session.name ++ "] " ++ r.description)
-                        <| \_ ->
+                     <|
+                        \_ ->
                             ExpBuilder.applyTo r.expectation cmds
                     )
-                    ::
-                    ( Dict.insert session.name
-                        ( model, cmds )
-                        sessions
-                        |> toTests config r.next
-                    )
-
+                        :: (Dict.insert session.name
+                                ( model, cmds )
+                                sessions
+                                |> toTests config r.next
+                           )
 
         ExpectMemory r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, cmds) ->
+                \( model, cmds ) ->
                     let
                         memory =
                             case model of
-                                EndOfProcess { lastState } -> lastState
-                                OnGoing { context } -> context.state
+                                EndOfProcess { lastState } ->
+                                    lastState
+
+                                OnGoing { context } ->
+                                    context.state
                     in
-                    ( Test.test
+                    (Test.test
                         ("[" ++ session.name ++ "] " ++ r.description)
-                        <| \_ ->
+                     <|
+                        \_ ->
                             ExpBuilder.applyTo r.expectation memory
                     )
-                    ::
-                    ( Dict.insert session.name
-                        ( model, cmds )
-                        sessions
-                        |> toTests config r.next
-                    )
+                        :: (Dict.insert session.name
+                                ( model, cmds )
+                                sessions
+                                |> toTests config r.next
+                           )
 
         ExpectAppView r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, cmds) ->
+                \( model, cmds ) ->
                     let
                         memory =
                             case model of
-                                EndOfProcess { lastState } -> lastState
-                                OnGoing { context } -> context.state
+                                EndOfProcess { lastState } ->
+                                    lastState
+
+                                OnGoing { context } ->
+                                    context.state
                     in
-                    ( Test.test
+                    (Test.test
                         ("[" ++ session.name ++ "] " ++ r.description)
-                        <| \_ ->
+                     <|
+                        \_ ->
                             r.expectation (config.view memory)
                     )
-                    ::
-                    ( Dict.insert session.name
-                        ( model, cmds )
-                        sessions
-                        |> toTests config r.next
-                    )
+                        :: (Dict.insert session.name
+                                ( model, cmds )
+                                sessions
+                                |> toTests config r.next
+                           )
 
         PortResponse r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, _) ->
+                \( model, _ ) ->
                     case model of
                         EndOfProcess _ ->
                             [ Test.test
                                 ("[" ++ session.name ++ "] " ++ r.description)
-                                <| \_ -> Expect.fail
+                              <|
+                                \_ ->
+                                    Expect.fail
                                         "The port request has been already resolved."
                             ]
+
                         OnGoing onGoing ->
                             Dict.insert session.name
-                                ( onGoing.context.listeners
+                                (onGoing.context.listeners
                                     |> List.filterMap
                                         (\listener ->
-                                            if (listener.name == r.target) then
+                                            if listener.name == r.target then
                                                 Just <|
                                                     PortResponseMsg
                                                         { requestId = listener.requestId
                                                         , response = r.response
                                                         }
+
                                             else
                                                 Nothing
                                         )
@@ -1138,28 +1220,33 @@ toTests config scenario sessions =
 
         CustomResponse r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             onlyOnActiveApp session.name r.description <|
-                \(model, _) ->
+                \( model, _ ) ->
                     case model of
                         EndOfProcess _ ->
                             [ Test.test
                                 ("[" ++ session.name ++ "] " ++ r.description)
-                                <| \_ -> Expect.fail
+                              <|
+                                \_ ->
+                                    Expect.fail
                                         "The request has been already resolved."
                             ]
+
                         OnGoing onGoing ->
                             Dict.insert session.name
-                                ( onGoing.context.listeners
+                                (onGoing.context.listeners
                                     |> List.filterMap
                                         (\listener ->
-                                            if (listener.name == r.target) then
+                                            if listener.name == r.target then
                                                 Just <|
                                                     ResponseMsg
                                                         { requestId = listener.requestId
                                                         , event = r.response
                                                         }
+
                                             else
                                                 Nothing
                                         )
@@ -1175,38 +1262,45 @@ toTests config scenario sessions =
                         toTests config sec.content sessions
                 )
                 r.cases
+
         Unexpected r ->
             [ Test.test "Scenario structure" <|
                 \_ ->
-                    Expect.fail <| case r.reason of
-                        IsNotJust description ->
-                            "ERROR: `fromJust`\n" ++ description
-                        ScenarioAfterNextCases ->
-                            "ERROR: `cases`\nSome scenarios are after `cases`. You must not put any scenarios after `cases`."
+                    Expect.fail <|
+                        case r.reason of
+                            IsNotJust description ->
+                                "ERROR: `fromJust`\n" ++ description
+
+                            ScenarioAfterNextCases ->
+                                "ERROR: `cases`\nSome scenarios are after `cases`. You must not put any scenarios after `cases`."
             ]
+
         Nil ->
             []
 
 
-applyMsg : Model c m e -> Msg e -> (Model c m e, List c)
+applyMsg : Model c m e -> Msg e -> ( Model c m e, List c )
 applyMsg model msg =
     Core.update msg model
 
 
-applyMsgs : Model c m e -> List (Msg e) -> (Model c m e, List c)
+applyMsgs : Model c m e -> List (Msg e) -> ( Model c m e, List c )
 applyMsgs initModel msgs =
     List.foldl
-        (\msg (accModel, accCmds) ->
+        (\msg ( accModel, accCmds ) ->
             let
-                (newModel, newCmds) = Core.update msg accModel
+                ( newModel, newCmds ) =
+                    Core.update msg accModel
             in
-            ( newModel, accCmds ++ newCmds)
+            ( newModel, accCmds ++ newCmds )
         )
-        (initModel, [])
+        ( initModel, [] )
         msgs
 
 
+
 -- Document generation
+
 
 {-| Generate scenario document server.
 -}
@@ -1219,11 +1313,12 @@ toHtml { title, sections } =
     case toMarkup sections of
         Err err ->
             unexpectedReasonHtml err
+
         Ok sec ->
             Html.div
                 [ Mixin.style "margin" "2em"
                 ]
-                [ Markup.toHtml (Mixin.none, title, sec )
+                [ Markup.toHtml ( Mixin.none, title, sec )
                 ]
 
 
@@ -1234,9 +1329,11 @@ unexpectedReasonHtml reason =
             case reason of
                 IsNotJust description ->
                     "ERROR: `fromJust`\n" ++ description
+
                 ScenarioAfterNextCases ->
                     "ERROR: `cases`\nSome scenarios are after `cases`. You must not put any scenarios after `cases`."
         ]
+
 
 toMarkup : List (Section flags c m e) -> Result UnexpectedScenario Markup.Section
 toMarkup sections =
@@ -1250,13 +1347,16 @@ toMarkup sections =
         sections
         |> Result.map Markup.Sections
 
-markupSection : List (Mixin(), Markup.BlockElement) -> Section flags c m e -> Result UnexpectedScenario (List (Mixin (), String, Markup.Section))
+
+markupSection : List ( Mixin (), Markup.BlockElement ) -> Section flags c m e -> Result UnexpectedScenario (List ( Mixin (), String, Markup.Section ))
 markupSection inherit (Section r) =
     let
         context =
-            markupScenario_ r.title r.content
-                { appendSections = \items ->
-                    [ (Mixin.none, r.title, Markup.SectionBody [ (Mixin.none, Markup.ListItems (Mixin.style "list-style-type" "disc") items) ]) ]
+            markupScenario_ r.title
+                r.content
+                { appendSections =
+                    \items ->
+                        [ ( Mixin.none, r.title, Markup.SectionBody [ ( Mixin.none, Markup.ListItems (Mixin.style "list-style-type" "disc") items ) ] ) ]
                 , listItems = inherit
                 , error = Nothing
                 , nextSessionId = 1
@@ -1268,13 +1368,14 @@ markupSection inherit (Section r) =
                 |> List.reverse
                 |> context.appendSections
                 |> Ok
+
         Just err ->
             Err err
 
 
 type alias MarkupContext =
-    { appendSections : List (Mixin (), Markup.BlockElement) -> List (Mixin (), String, Markup.Section)
-    , listItems : List (Mixin (), Markup.BlockElement)
+    { appendSections : List ( Mixin (), Markup.BlockElement ) -> List ( Mixin (), String, Markup.Section )
+    , listItems : List ( Mixin (), Markup.BlockElement )
     , error : Maybe UnexpectedScenario
     , nextSessionId : Int
     }
@@ -1284,34 +1385,38 @@ markupScenario_ : String -> Scenario flags c m e -> MarkupContext -> MarkupConte
 markupScenario_ title scenario context =
     let
         appendListItem : String -> String -> MarkupContext
-        appendListItem name content = Debug.log "context"
+        appendListItem name content =
             { context
                 | listItems =
-                        ( Mixin.none
-                        , Markup.Paragraph
-                          [ ( Mixin.none
-                            , Markup.StrongText name
-                            )
-                          , ( Mixin.none
-                            , Markup.PlainText <|
-                                ": " ++ content
-                            )
-                          ]
-                        ) :: context.listItems
+                    ( Mixin.none
+                    , Markup.Paragraph
+                        [ ( Mixin.none
+                          , Markup.StrongText name
+                          )
+                        , ( Mixin.none
+                          , Markup.PlainText <|
+                                ": "
+                                    ++ content
+                          )
+                        ]
+                    )
+                        :: context.listItems
             }
-
     in
     case scenario of
         UserComment r ->
             let
-                (User user) = r.user
+                (User user) =
+                    r.user
             in
             markupScenario_ title
                 r.next
                 (appendListItem user.name r.comment)
+
         SystemComment r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1319,9 +1424,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] System")
                     r.comment
                 )
+
         LoadApp r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1329,10 +1436,14 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] System")
                     r.description
                 )
+
         UserEvent r ->
             let
-                (Session session) = r.session
-                (User user) = session.user
+                (Session session) =
+                    r.session
+
+                (User user) =
+                    session.user
             in
             markupScenario_ title
                 r.next
@@ -1340,9 +1451,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] " ++ user.name)
                     r.description
                 )
+
         ListenerEvent r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1350,9 +1463,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] " ++ r.target)
                     r.description
                 )
+
         ExpectCommands r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1360,9 +1475,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] System")
                     r.description
                 )
+
         ExpectMemory r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1370,9 +1487,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] System")
                     r.description
                 )
+
         ExpectAppView r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1380,9 +1499,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] System")
                     r.description
                 )
+
         PortResponse r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1390,9 +1511,11 @@ markupScenario_ title scenario context =
                     ("[" ++ session.name ++ "] " ++ r.target)
                     r.description
                 )
+
         CustomResponse r ->
             let
-                (Session session) = r.session
+                (Session session) =
+                    r.session
             in
             markupScenario_ title
                 r.next
@@ -1403,24 +1526,24 @@ markupScenario_ title scenario context =
 
         NextCases r ->
             let
-                rnextCases : Result UnexpectedScenario (List (Mixin (), String, Markup.Section))
+                rnextCases : Result UnexpectedScenario (List ( Mixin (), String, Markup.Section ))
                 rnextCases =
                     List.foldr
                         (\sec acc ->
                             Result.map2 (++)
                                 (markupSection
-                                    [ (Mixin.none
+                                    [ ( Mixin.none
                                       , Markup.Paragraph
-                                        [ ( Mixin.none
-                                          , Markup.PlainText "(After "
-                                          )
-                                        , ( Mixin.none
-                                          , Markup.EmphasizedText title
-                                          )
-                                        , ( Mixin.none
-                                          , Markup.PlainText ")"
-                                          )
-                                        ]
+                                            [ ( Mixin.none
+                                              , Markup.PlainText "(After "
+                                              )
+                                            , ( Mixin.none
+                                              , Markup.EmphasizedText title
+                                              )
+                                            , ( Mixin.none
+                                              , Markup.PlainText ")"
+                                              )
+                                            ]
                                       )
                                     ]
                                     sec
@@ -1433,20 +1556,31 @@ markupScenario_ title scenario context =
             case rnextCases of
                 Err err ->
                     { context | error = Just err }
+
                 Ok nextCases ->
                     { context
-                        | appendSections = \_ ->
-                            (context.listItems
-                                |> List.reverse
-                                |> context.appendSections
-                            ) ++ nextCases
+                        | appendSections =
+                            \_ ->
+                                (context.listItems
+                                    |> List.reverse
+                                    |> context.appendSections
+                                )
+                                    ++ nextCases
                         , listItems = []
                     }
 
         Unexpected r ->
             { context | error = Just r.reason }
+
         Nil ->
             context
 
 
-toMarkdown  = Debug.todo ""
+{-| -}
+toMarkdown :
+    { title : String
+    , sections : List (Section flags c m e)
+    }
+    -> String
+toMarkdown _ =
+    "todo"

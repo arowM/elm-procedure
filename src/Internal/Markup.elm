@@ -1,7 +1,7 @@
 module Internal.Markup exposing
-    ( Section(..)
-    , BlockElement (..)
-    , InlineElement (..)
+    ( BlockElement(..)
+    , InlineElement(..)
+    , Section(..)
     , toHtml
     )
 

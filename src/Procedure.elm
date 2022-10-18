@@ -1,45 +1,30 @@
 module Procedure exposing
     ( Procedure
-    , none
-    , batch
-    , wrapEvent
-    , liftMemory
+    , none, concat
+    , Layer
     , Pointer
     , Channel
+    , channelString
+    , putLayer, onLayer
     , publish
+    , modify, await, async, jump, addListener, quit
+    , when
+    , unless
+    , withMemory
+    , withMaybe
+    , injectCmd
     , element
     , document
     , application
     , Program
     , Document
-    , Msg
-    , mapMsg
-    , modify
-    , push
-    , Request
-    , runRequest
-    , subscribe
-    , subscribeOnce
-    , await
-    , async
-    , asyncOn
-    , sync
-    , race
-    , quit
-    , jump
-    , protected
-    , portRequest
-    , withMemory
-    , when
-    , unless
-    , withMaybe
-    , observe
-    , observeList
     , update
     , elementView
     , documentView
     , subscriptions
     , init
+    , Key, realKey
+    , Msg
     , Model
     , onUrlChange
     , onUrlRequest
@@ -51,74 +36,55 @@ module Procedure exposing
 # Procedure
 
 @docs Procedure
-@docs none
-@docs batch
-@docs wrapEvent
-@docs liftMemory
+@docs none, concat
+
+
+# Layer
+
+@docs Layer
 @docs Pointer
-
-
-# Channel
-
 @docs Channel
+@docs channelString
+@docs putLayer, onLayer
 @docs publish
 
 
-# Entry point
+# Primitive Procedures
+
+@docs modify, await, async, jump, addListener, quit
+
+
+# Helper procedures
+
+@docs when
+@docs unless
+@docs withMemory
+@docs withMaybe
+
+
+# Browser alternatives
 
 [Browser](https://package.elm-lang.org/packages/elm/browser/latest/Browser) alternatives.
 
-The [low level API](#low-level-api) is also available for more advanced use cases, which enables you to introduce TEPA partially into your existing TEA app.
+The [low level API](#connect-to-tea-app) is also available for more advanced use cases, which enables you to introduce TEPA partially into your existing TEA app.
 
+@docs injectCmd
 @docs element
 @docs document
 @docs application
 @docs Program
 @docs Document
-@docs Msg
-@docs mapMsg
 
 
-# Constructors
-
-@docs modify
-@docs push
-@docs Request
-@docs runRequest
-@docs subscribe
-@docs subscribeOnce
-@docs await
-@docs async
-@docs asyncOn
-@docs sync
-@docs race
-@docs quit
-@docs jump
-@docs protected
-
-
-# Helper procedures
-
-@docs portRequest
-@docs withMemory
-@docs when
-@docs unless
-@docs withMaybe
-
-
-# Observing
-
-@docs observe
-@docs observeList
-
-
-# Low level API
+# Connect to TEA app
 
 @docs update
 @docs elementView
 @docs documentView
 @docs subscriptions
 @docs init
+@docs Key, realKey
+@docs Msg
 @docs Model
 @docs onUrlChange
 @docs onUrlRequest
@@ -126,12 +92,13 @@ The [low level API](#low-level-api) is also available for more advanced use case
 -}
 
 import Browser exposing (Document)
-import Browser.Navigation exposing (Key)
+import Browser.Navigation
 import Html exposing (Html)
-import Json.Decode as JD exposing (Decoder)
-import Json.Encode exposing (Value)
-import Platform
-import Procedure.Advanced as Advanced exposing (Msg)
+import Internal.Channel as Channel
+import Internal.Core as Core
+    exposing
+        ( Model(..)
+        )
 import Url exposing (Url)
 
 
@@ -139,75 +106,343 @@ import Url exposing (Url)
 -- Procedure
 
 
-{-| A `Procedure` describes an application behaviour.
+{-| An advanced `Procedure` enables you test for Commands.
+You can start with the simpler `Procedure` module, which provides the specialized `Procedure` without `cmd` parameter.
+
+Procedure takes three parameters:
+
+  - `cmd`: Abstraction of Command in TEA.
+    Since you cannot test the `Cmd msg` value directly, you use a custom type instead.
+    When running as an application, you can use `injectCmd` to convert it to the `Cmd msg` type.
+  - `memory`: Just like Model in TEA.
+    Like Model in TEA, _Memory_ in TEPA is where the application state is managed, but in TEPA, Memory is modified in the Procedures.
+  - `event`: Just like Msg in TEA.
+    Unlike Msg in TEA, an _Event_ in TEPA has its destination; an Event is sent to a specific Layer or specific Listener and cannot be received outside of that target.
+
 -}
-type alias Procedure memory event =
-    Advanced.Procedure (Cmd (Msg event)) memory event
+type alias Procedure cmd memory event =
+    Core.Procedure cmd memory event
 
 
-{-| Construct a `Procedure` instance that does nothing and is just skipped.
+{-| Construct a `Procedure` instance that does nothing.
 -}
-none : Procedure memory event
+none : Procedure c m e
 none =
-    Advanced.none
+    Core.none
 
 
-{-| Batch `Procedure`s together. The elements are evaluated in order.
+{-| Return a new Procedure that evaluates given Procedures sequentially.
 -}
-batch : List (Procedure memory event) -> Procedure memory event
-batch =
-    Advanced.batch
-
-
-{-| -}
-wrapEvent :
-    { wrap : e1 -> e0
-    , unwrap : e0 -> Maybe e1
-    }
-    -> Procedure m e1
-    -> Procedure m e0
-wrapEvent wrapper proc =
-    Advanced.wrapEvent wrapper proc
-        |> Advanced.mapCmd
-            (Cmd.map (mapMsg wrapper.wrap))
-
-
-{-| -}
-liftMemory :
-    Pointer m0 m1
-    -> Procedure m1 e
-    -> Procedure m0 e
-liftMemory =
-    Advanced.liftMemory
+concat : List (Procedure c m e) -> Procedure c m e
+concat =
+    Core.concat
 
 
 
--- Channel
+-- Layer
 
 
-{-| The _Channel_ is the concept, to which you can publish or subscribe _Events_.
+{-| Layer is a concept that deals with a part of the application, and can successfully represent elements that are created or removed during the application runtime. Especially, it matches well with Pages in SPAs. The application itself is also a Layer.
+-}
+type alias Layer m m1 =
+    Core.Layer m m1
+
+
+{-| Pointer indicates where the memory for a certain Layer `m1` should be located in the memory `m`.
+
+Note that Pointer is permanent because it is just a indicator, while Layer may be expired because it is an instance.
+For example, suppose you set the page state of the application to home page with `putLayer`. Next, you change it to the account information page, and then change it back to the home page. In this case, the same Pointer can be used for both the first and the last `putLayer`. On the other hand, the Layer obtained by the first `putLayer` has already expired and it cannot be used anymore. Even if you publish events to the Layer, nothing occurs.
+
+-}
+type alias Pointer m m1 =
+    Core.Pointer m m1
+
+
+{-| Identifier for Layers.
 -}
 type alias Channel =
-    Advanced.Channel
+    Channel.Channel
 
 
-{-| Publish an event to a Channel.
+{-| Convert a Channel into a unique string.
+
+You can use this value as a key for [`Html.Keyed`](https://package.elm-lang.org/packages/elm/html/latest/Html-Keyed) nodes.
+
 -}
-publish : Channel -> e -> Msg e
-publish =
-    Advanced.publish
+channelString : Channel -> String
+channelString =
+    Channel.toString
+
+
+{-| Put new Layer on the application.
+
+Suppose your application have `page` field in its memory:
+
+    type alias Memory =
+        { page : Page
+        }
+
+    type Page
+        = HomePage ( Channel, MemoryForHomePage )
+        | AccountPage ( Channel, MemoryForAccountPage )
+
+You can change pages with `putLayer` as follows:
+
+    homePagePointer : Pointer Memory MemoryForHomePage
+    homePagePointer =
+        { get =
+            \m ->
+                case m.page of
+                    HomePage layer ->
+                        Just layer
+
+                    _ ->
+                        Nothing
+        , set =
+            \layer m ->
+                { m | page = HomePage layer }
+        }
+
+    myProcedures =
+        [ putLayer
+            { pointer = homePagePointer
+            , init =
+                \channelForTheLayer m ->
+                    { m
+                        | page =
+                            HomePage
+                                ( channelForTheLayer
+                                , initMemoryForHomePage
+                                )
+                    }
+            }
+          <|
+            \homePageLayerForThisTimeOnly ->
+                [ onLayer homePageLayerForThisTimeOnly
+                    [ Debug.todo "operations on the home page."
+                    ]
+                ]
+        ]
+
+-}
+putLayer :
+    { pointer : Pointer m m1
+    , init : Channel -> m -> m
+    }
+    -> (Layer m m1 -> List (Procedure c m e))
+    -> Procedure c m e
+putLayer =
+    Core.putLayer
+
+
+{-| Call some Layer Procedures on its parent Layer Procedures.
+-}
+onLayer : Layer m m1 -> List (Procedure c m1 e) -> Procedure c m e
+onLayer =
+    Core.onLayer
+
+
+{-| Publish an event to the specified Layer.
+
+You can use this function inside the View to notify Procedure that an event has occurred in the Layer specified with the given Channel.
+
+-}
+publish : Channel -> event -> Msg event
+publish c e =
+    Core.ChannelMsg
+        { channel = c
+        , event = e
+        }
 
 
 
--- Entry point
+-- Primitive Procedures
+
+
+{-| Construct a `Procedure` instance that modifies the Memory state.
+
+Note that the update operation, passed as the second argument, is performed atomically; it means the state of the Memory is not updated by another process during it is read and written by the `modify`.
+
+-}
+modify : (m -> m) -> Procedure c m e
+modify =
+    Core.modify
+
+
+type alias Promise cmd memory event a =
+    Core.Promise cmd memory event a
+
+
+{-| Await a Promise to be resolved, and then use the result to evaluate the subsequent Procedures.
+-}
+await : Promise c m e a -> (a -> List (Procedure c m e)) -> Procedure c m e
+await =
+    Core.await
+
+
+{-| Construct a `Procedure` instance that evaluates the given Procedures asynchronously:
+
+  - The subsequent sibling Procedures are evaluated immediately
+
+  - The Procedures given as the argument are evaluated concurrently.
+
+  - Even if the subsequent sibling Procedures is completed, the asynchronous Procedures are still alive.
+
+    [ async
+    [ Debug.todo "[Procedure A]: This is executed at the same time as [Procedure B]."
+    , Debug.todo "[Procedure C]: This is not cancelled even if [Procedure B] is completed."
+    ]
+    , Debug.todo "[Procedure B]"
+    ]
+
+Note: When multiple `async`s are called, there is no guarantee that the Procedures generated by the first called `async` will be executed first.
+
+-}
+async : List (Procedure c m e) -> Procedure c m e
+async =
+    Core.async
+
+
+{-| Ignore subsequent Procedures, and evaluate given Procedures instead.
+
+It is convenient for following two situations.
+
+
+## Make recursive Procedure
+
+Calling itself in the Procedure will result in a compile error; the `jump` enables to build recursive Procedures.
+
+    recursiveProcedures =
+        [ await somePromise
+        , jump <| \_ -> recursiveProcedures
+        ]
+
+
+## Safe pruning
+
+Sometimes you may want to handle errors as follows:
+
+    unsafePruning =
+        [ await requestPosts <|
+            \result ->
+                case result of
+                    ReceivePosts (Err error) ->
+                        [ handleError error
+                        ]
+
+                    ReceivePosts (Ok posts) ->
+                        [ modify <|
+                            \m -> { m | posts = posts }
+                        ]
+
+                    _ ->
+                        []
+        , proceduresForNewPosts
+        ]
+
+It appears to be nice, but it does not work as intended. Actually, the above Procedures can evaluate the `proceduresForNewPosts` even after evaluating `handleError`. To avoid this, you can use `jump`:
+
+    safePruning =
+        [ await requestPosts <|
+            \result ->
+                case result of
+                    ReceivePosts (Err error) ->
+                        [ jump <|
+                            \_ -> [ handleError error ]
+                        ]
+
+                    ReceivePosts (Ok posts) ->
+                        [ modify <|
+                            \m -> { m | posts = posts }
+                        ]
+
+                    _ ->
+                        []
+        , proceduresForNewPosts
+        ]
+
+-}
+jump : (() -> List (Procedure c m e)) -> Procedure c m e
+jump =
+    Core.jump
+
+
+{-| Register listener process for a Subscription.
+
+Ensure that it is not used inside a recursive Procedures; otherwise, it will be registered duplicately so that an event will call the handler multiple times.
+
+-}
+addListener :
+    { name : String
+    , subscription : m -> Sub e
+    , handler : e -> List (Procedure c m e)
+    }
+    -> Procedure c m e
+addListener =
+    Core.addListener
+
+
+{-| Just ignore subsequent Procedures.
+-}
+quit : Procedure c m e
+quit =
+    jump <| \_ -> []
+
+
+
+-- Helper procedures
+
+
+{-| Evaluate the given Procedures only if the first argument is `True`, otherwise same as `none`.
+-}
+when : Bool -> List (Procedure c m e) -> Procedure c m e
+when p ps =
+    if p then
+        concat ps
+
+    else
+        none
+
+
+{-| Evaluate the given Procedures only if the first argument is `False`, otherwise same as `none`.
+-}
+unless : Bool -> List (Procedure c m e) -> Procedure c m e
+unless p =
+    when (not p)
+
+
+{-| Determine next Procedures with current Memory state.
+-}
+withMemory : (m -> List (Procedure c m e)) -> Procedure c m e
+withMemory =
+    Core.withMemory
+
+
+{-| Evaluate the Procedures returned by the callback function only if the first argument is `Just`, otherwise same as `none`.
+-}
+withMaybe : Maybe a -> (a -> List (Procedure c m e)) -> Procedure c m e
+withMaybe ma f =
+    case ma of
+        Nothing ->
+            none
+
+        Just a ->
+            concat <| f a
+
+
+
+-- Browser alternatives
 
 
 {-| Procedure version of [Browser.element](https://package.elm-lang.org/packages/elm/browser/latest/Browser#element).
+
+You can use `injectCmd` to inject actual Cmds into your Procedure build with custom type Commands.
+
 -}
 element :
     { init : memory
-    , procedures : flags -> List (Procedure memory event)
-    , view : (Channel, memory) -> Html (Msg event)
+    , procedures : flags -> List (Procedure (Cmd (Msg event)) memory event)
+    , view : ( Channel, memory ) -> Html (Msg event)
     }
     -> Program flags memory event
 element option =
@@ -222,11 +457,14 @@ element option =
 
 
 {-| Procedure version of [Browser.document](https://package.elm-lang.org/packages/elm/browser/latest/Browser#document).
+
+You can use `injectCmd` to inject actual Cmds into your Procedure build with custom type Commands.
+
 -}
 document :
     { init : memory
-    , procedures : flags -> List (Procedure memory event)
-    , view : (Channel, memory) -> Document (Msg event)
+    , procedures : flags -> List (Procedure (Cmd (Msg event)) memory event)
+    , view : ( Channel, memory ) -> Document (Msg event)
     }
     -> Program flags memory event
 document option =
@@ -240,15 +478,22 @@ document option =
         }
 
 
+{-| Inject actual Commands.
+-}
+injectCmd : (c -> Cmd (Msg e)) -> Procedure c m e -> Procedure (Cmd (Msg e)) m e
+injectCmd =
+    Core.mapCmd
+
+
 {-| Procedure version of [Browser.application](https://package.elm-lang.org/packages/elm/browser/latest/Browser#application).
 
-The `onUrlRequest` and `onUrlChange` Events are published to the application root Channel.
+The `onUrlRequest` and `onUrlChange` Events are published to the application root Layer.
 
 -}
 application :
     { init : memory
-    , procedures : flags -> Url -> Key -> List (Procedure memory event)
-    , view : (Channel, memory) -> Document (Msg event)
+    , procedures : flags -> Url -> Key -> List (Procedure (Cmd (Msg event)) memory event)
+    , view : ( Channel, memory ) -> Document (Msg event)
     , onUrlRequest : Browser.UrlRequest -> event
     , onUrlChange : Url -> event
     }
@@ -257,7 +502,7 @@ application option =
     Browser.application
         { init =
             \flags url key ->
-                init option.init (option.procedures flags url key)
+                init option.init (option.procedures flags url (Core.RealKey key))
         , view = documentView option.view
         , update = update
         , subscriptions = subscriptions
@@ -269,7 +514,7 @@ application option =
 {-| An alias for [Platform.Program](https://package.elm-lang.org/packages/elm/core/latest/Platform#Program).
 -}
 type alias Program flags memory event =
-    Platform.Program flags (Model memory event) (Msg event)
+    Platform.Program flags (Model (Cmd (Msg event)) memory event) (Msg event)
 
 
 {-| Reexport [Browser.Document](https://package.elm-lang.org/packages/elm/browser/latest/Browser#Document) for convenience.
@@ -279,487 +524,110 @@ type alias Document event =
 
 
 
--- Constructors
-
-
-{-| Construct a `Procedure` instance that modifies the memory state.
-
-Note that the update operation, passed as the second argument, is performed atomically; it means the state of the memory is not updated by another process during it is read and written by the `modify`.
-
--}
-modify : (m -> m) -> Procedure m e
-modify =
-    Advanced.modify
-
-
-{-| Construct a `Procedure` instance that issues a Command.
-
-Because `push` is a relatively low level function, `request` will be useful for most cases.
-
--}
-push : (m -> (e -> Msg e) -> Cmd (Msg e)) -> Procedure m e
-push =
-    Advanced.push
-
-
-{-| Convenient alias for requests.
--}
-type alias Request msg a =
-    (a -> msg) -> Cmd msg
-
-
-{-| -}
-runRequest : (a -> e) -> Request (Msg e) a -> Procedure m e
-runRequest toEvent req =
-    push <|
-        \_ toMsg ->
-            req (toEvent >> toMsg)
-
-
-{-| Construct a `Procedure` instance that subscribes a Subscription.
-The Subscription lives untill the given Procedure list is completed.
-In other words, the Events issued by this Subscription can only be caught by `await`s inside the given Procedure list.
--}
-subscribe :
-    Sub e
-    -> List (Procedure m e)
-    -> Procedure m e
-subscribe =
-    Advanced.subscribe
-
-
-{-| Like `subscribe`, but it quit subscribing when it receives first event.
--}
-subscribeOnce : Sub e -> Procedure m e
-subscribeOnce =
-    Advanced.subscribeOnce
-
-
-{-| Construct a `Procedure` instance that awaits Events for the Channel.
-If the callback function returns empty list, it awaits again; otherwise, it evaluates the returned `Procedure`.
-For example, the following `await` awaits again if it receives `Event1`; or, it just proceeds to the next procedure if it receives `Event2`.
-
-    [ Procedure.await <|
-        \e _ ->
-            case e of
-                Event1 -> []
-                Event2 -> [ Procedure.none ]
-    , nextProcedures
-    , ...
-
-Note1: The memory state passed to the callback function may become outdated during running the process for the `Procedure` retuned by the function, so it is safe to use this value only to determine whether to accept or ignore events.
-
-Note2: Technically, all the `modify` `push` `async` procedures appeared before the `await` will be executed internally as a single operation. This avoids the situation where an event triggered by a `push` passes through while processing tons of subsequent `modify`s and `push`s, thus ensuring that the `await` always can catch the event caused by the previous procedures.
-
-Note3: `push`s written before an `await` will not necessarily cause events in the written order. For example, if the first `push` sends a request to the server and it fires an event with its result, and the second `push` sleeps for 0.1 seconds and then returns another event, the first event can fire later if the server is slow to respond. To avoid this situation, after using one `push`, catch it with `await` and use the next `push`. The `sync` can be also helpfull for handling such situations.
-
--}
-await : (e -> m -> List (Procedure m e)) -> Procedure m e
-await =
-    Advanced.await
-
-
-{-| Construct a `Procedure` instance that evaluates the given `Procedure`s asynchronously:
-
-  - The subsequent `Procedure`s in the original process are evaluated immediately.
-  - The `Procedure`s given as the argument are also evaluated immediately as the asynchronous process.
-  - Even if the original process completed, the asynchronous process is not cancelled.
-  - If the original process cancelled by `race`, the asynchronous process is also killed.
-
-Note: When multiple `async`s are called, there is no guarantee that the procedures generated by the first called `async` will be executed first.
-
--}
-async : List (Procedure m e) -> Procedure m e
-async =
-    Advanced.async
-
-
-{-| Same as `Procedure.Pointer`.
--}
-type alias Pointer m m1 =
-    { get : m -> Maybe m1
-    , modify : (m1 -> m1) -> m -> m
-    }
-
-
-{-| Similar to `async`, but given Procedures `await` for the given Channel.
--}
-asyncOn :
-    { get : m -> Maybe ( Channel, m1 )
-    , set : m1 -> m -> m
-    }
-    -> Channel
-    -> (Pointer m m1 -> List (Procedure m e))
-    -> Procedure m e
-asyncOn =
-    Advanced.asyncOn
-
-
-{-| Construct a `Procedure` instance that wait for all the given `Procedure`s to be completed.
-
-Each `Procedure` is evaluated in the independent process, but the subsequent `Procedure`s in the original process are **not** evaluated immediately, but wait for all the given `Procedure`s to be completed.
-
--}
-sync : List (Procedure m e) -> Procedure m e
-sync =
-    Advanced.sync
-
-
-{-| Construct a `Procedure` instance that wait for one of the given `Procedure`s to be completed.
-
-Each `Procedure` is evaluated in the independent process, but the subsequent `Procedure`s in the original process are **not** evaluated immediately, but wait for one of the given `Procedure`s to be completed.
-
-Note1: If one of the `Procedure` completed, all other `Procedure`s will be killed after processing until the next `await`, where asynchronous processes spawned by the killed processes are also killed.
-
--}
-race : List (Procedure m e) -> Procedure m e
-race =
-    Advanced.race
-
-
-{-| Quit the thread immediately.
-
-Subsequent `Procedure`s are not evaluated and are discarded.
-
--}
-quit : Procedure m e
-quit =
-    Advanced.quit
-
-
-{-| Ignore subsequent `Procedure`s, and just evaluate given `Procedure`s.
-
-It is convenient for following two situations.
-
-
-## Make recursive Procedure
-
-Calling itself in the Procedure will result in a compile error; the `jump` enables to build recursive `Procedure`s.
-
-    import Procedure exposing (Msg, Procedure)
-    import Time exposing (Posix)
-
-    clockProcedures : List (Procedure Memory Event)
-    clockProcedures =
-        [ Procedure.await <|
-            \event _ ->
-                case event of
-                    ReceiveTick time ->
-                        [ Procedure.modify <|
-                            \m -> { m | time = time }
-                        ]
-
-                    _ ->
-                        []
-        , Procedure.jump <| \_ -> clockProcedures
-        ]
-
-
-## Safe pruning
-
-Sometimes you may want to handle errors as follows:
-
-    unsafePruning : List (Procedure Memory Event)
-    unsafePruning =
-        [ requestPosts
-        , Procedure.await <|
-            \event _ ->
-                case event of
-                    ReceivePosts (Err error) ->
-                        [ handleError error
-                            |> Procedure.batch
-                        ]
-
-                    ReceivePosts (Ok posts) ->
-                        [ Procedure.modify <|
-                            \m -> { m | posts = posts }
-                        ]
-
-                    _ ->
-                        []
-        , Procedure.batch proceduresForNewPosts
-        ]
-
-It appears to be nice, but it does not work as intended. Actually, the above `Procedure`s can evaluate the `proceduresForNewPosts` even after evaluating `handleError`. To avoid this, you can use `jump`:
-
-    safePruning : List (Procedure Memory Event)
-    safePruning =
-        [ requestPosts
-        , Procedure.await <|
-            \event _ ->
-                case event of
-                    ReceivePosts (Err error) ->
-                        [ Procedure.jump <| \_ -> handleError error
-                        ]
-
-                    ReceivePosts (Ok posts) ->
-                        [ Procedure.modify <|
-                            \m -> { m | posts = posts }
-                        ]
-
-                    _ ->
-                        []
-        , Procedure.batch proceduresForNewPosts
-        ]
-
--}
-jump :
-    (() -> List (Procedure m e))
-    -> Procedure m e
-jump =
-    Advanced.jump
-
-
-{-| Construct a `Procedure` instance that uses private Channel.
-
-    sleep : Float -> Procedure m Event
-    sleep msec =
-        Procedure.protected
-            [ Procedure.push <|
-                \_ toMsg ->
-                    -- This publishes `WakeUp` event for private Channel,
-                    -- so it only affects within `protected`.
-                    Process.sleep msec
-                        |> Task.perform (\() -> toMsg WakeUp)
-            , Procedure.await <|
-                \event _ ->
-                    case event of
-                        WakeUp ->
-                            -- Do nothing, but do not await the next event.
-                            [ Procedure.none
-                            ]
-
-                        _ ->
-                            -- Do nothing, and await the next event again.
-                            []
-            ]
-
-If the given `Modifier` has already expired, it does nothing and is just skipped.
-
--}
-protected :
-    List (Procedure m e)
-    -> Procedure m e
-protected =
-    Advanced.protected
-
-
-
--- Helper procedures
-
-
-{-| Determine next Procedures with current memory state.
--}
-withMemory : (m -> List (Procedure m e)) -> Procedure m e
-withMemory =
-    Advanced.withMemory
-
-
-{-| Evaluate the given `Procedure`s only if the first argument is `True`, otherwise same as `none`.
--}
-when : Bool -> List (Procedure m e) -> Procedure m e
-when =
-    Advanced.when
-
-
-{-| Evaluate the given `Procedure`s only if the first argument is `False`, otherwise same as `none`.
--}
-unless : Bool -> List (Procedure m e) -> Procedure m e
-unless =
-    Advanced.unless
-
-
-{-| Evaluate the `Procedure`s returned by the callback function only if the first argument is `Just`, otherwise same as `none`.
--}
-withMaybe : Maybe a -> (a -> List (Procedure m e)) -> Procedure m e
-withMaybe =
-    Advanced.withMaybe
-
-
-
--- Local procedures
-
-
-{-| Helper function to do subscribe and send for a port in one safe operation.
-
-For example, we can use `portRequest` to get localStorage value safely.
-
-In JavaScript side:
-
-```js
-app.ports.requestGetLocalName.subscribe((req) => {
-  try {
-    app.ports.receiveGetLocalName.send({
-      // The `id` value, generated by TEPA, links
-      // the subscribe port to the relevant send port.
-      id: req.id,
-      body: {
-        name: localStorage.getItem(`Name.${req.body.userId}`),
-      },
-    });
-  } catch {
-    app.ports.receiveGetLocalName.send({
-      id: req.id,
-      body: {
-        name: null,
-      },
-    });
-  }
-});
-```
-
-In Elm side:
-
-    import App.UserId as UserId exposing (UserId)
-    import Json.Decode as JD
-    import Json.Encode as JE
-    import Procedure exposing (Procedure, Request)
-
-
-    getLocalName : UserId -> Procedure Memory Event
-    getLocalName uid =
-        Procedure.portRequest
-            { requestPort = requestGetLocalName
-            , requestBody = \_ ->
-                JE.object
-                    [ ( "userId", UserId.toValue uid )
-                    ]
-            , responsePort = receiveGetLocalName
-            , responseBody = JD.field "name" (JD.nullable JD.string)
-            }
-            ReceiveLocalName
-
-
-    myProcedures : UserId -> List (Procedure Memory Event)
-    myProcedures uid =
-        [ getLocalName uid
-        , Procedure.await <|
-            \event _ ->
-                case event of
-                    ReceiveLocalName name ->
-                        [ Procedure.modify <|
-                            \m -> setUserName uid name m
-                        ]
-
-                    _ ->
-                        []
-        , ...
-        ]
-
--}
-portRequest :
-    { requestPort : Value -> Cmd (Msg e)
-    , requestBody : m -> Value
-    , responsePort : (Value -> Msg e) -> Sub (Msg e)
-    , responseBody : Decoder a
-    }
-    -> (Result JD.Error a -> e)
-    -> Procedure m e
-portRequest =
-    Advanced.portRequest
-
-
-
--- Observing
-
-
-{-| Start observing a resource.
-
-See [spa-sample](https://github.com/arowM/elm-procedure-architecture/tree/main/spa-sample) for real usage.
-
--}
-observe :
-    r
-    -> (( Channel, r ) -> List (Procedure m e))
-    -> Procedure m e
-observe =
-    Advanced.observe
-
-
-{-| Start observing a list resource.
-
-See [spa-sample](https://github.com/arowM/elm-procedure-architecture/tree/main/spa-sample) for real usage.
-
--}
-observeList :
-    List r
-    -> (List ( Channel, r ) -> List (Procedure m e))
-    -> Procedure m e
-observeList =
-    Advanced.observeList
-
-
-
--- Low level API
+-- Connect to TEA app
 
 
 {-| TEA update function implementation for running your Procedures.
 -}
-update : Msg event -> Model memory event -> ( Model memory event, Cmd (Msg event) )
+update : Msg event -> Model (Cmd (Msg event)) memory event -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 update msg model =
-    Advanced.update msg model
+    Core.update msg model
         |> Tuple.mapSecond Cmd.batch
+
+
+{-| Construct the TEA element view function.
+-}
+elementView : (( Channel, memory ) -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
+elementView f model =
+    let
+        memory =
+            case model of
+                OnGoing { context } ->
+                    context.state
+
+                EndOfProcess { lastState } ->
+                    lastState
+    in
+    f ( Channel.init, memory )
+
+
+{-| Just like `Procedure.documentView`.
+-}
+documentView : (( Channel, memory ) -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
+documentView f model =
+    let
+        memory =
+            case model of
+                OnGoing { context } ->
+                    context.state
+
+                EndOfProcess { lastState } ->
+                    lastState
+    in
+    f ( Channel.init, memory )
 
 
 {-| TEA subscriptions function implementation for running your Procedures.
 -}
-subscriptions : Model memory event -> Sub (Msg event)
-subscriptions =
-    Advanced.subscriptions
+subscriptions : Model cmd memory event -> Sub (Msg event)
+subscriptions model =
+    case model of
+        EndOfProcess _ ->
+            Sub.none
+
+        OnGoing { context } ->
+            context.listeners
+                |> List.map .sub
+                |> Sub.batch
 
 
 {-| Construct the initial TEA data from `Procedure`s.
 -}
 init :
     memory
-    -> List (Procedure memory event)
-    -> ( Model memory event, Cmd (Msg event) )
-init initialMemory procs =
-    Advanced.init initialMemory procs
+    -> List (Procedure (Cmd (Msg event)) memory event)
+    -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
+init memory procs =
+    Core.init memory procs
         |> Tuple.mapSecond Cmd.batch
 
 
-{-| Construct the TEA element view function.
+{-| `Browser.Navigation.Key` alternative.
 -}
-elementView : ((Channel, memory) -> Html (Msg event)) -> Model memory event -> Html (Msg event)
-elementView =
-    Advanced.elementView
+type alias Key =
+    Core.Key
 
 
-{-| Construct the TEA document view function.
+{-| Retrieve real `Browser.Navigation.Key` from TEPA `Key`.
+It always results in `Just` when evaluating Procedure in the real application;
+it results in `Nothing` when testing as scenario or generating documentation.
 -}
-documentView : ((Channel, memory) -> Document (Msg event)) -> Model memory event -> Document (Msg event)
-documentView =
-    Advanced.documentView
-
-
-{-| Construct the TEA `onUrlChange` property value.
--}
-onUrlChange : (Url -> event) -> Url -> Msg event
-onUrlChange =
-    Advanced.onUrlChange
-
-
-{-| Construct the TEA `onUrlRequest` property value.
--}
-onUrlRequest : (Browser.UrlRequest -> event) -> Browser.UrlRequest -> Msg event
-onUrlRequest =
-    Advanced.onUrlRequest
-
+realKey : Key -> Maybe Browser.Navigation.Key
+realKey = Core.realKey
 
 {-| TEA Message that wraps your events.
 -}
 type alias Msg event =
-    Advanced.Msg event
-
-
-{-| -}
-mapMsg : (a -> b) -> Msg a -> Msg b
-mapMsg =
-    Advanced.mapMsg
+    Core.Msg event
 
 
 {-| TEA Model that stores your Procedure state.
 -}
-type alias Model memory event =
-    Advanced.Model (Cmd (Msg event)) memory event
+type alias Model c m e =
+    Core.Model c m e
+
+
+{-| Construct a TEA `onUrlChange` property value.
+The Event you provided as an argument can be received on the root Layer.
+-}
+onUrlChange : (Url -> event) -> Url -> Msg event
+onUrlChange f =
+    f >> publish Channel.init
+
+
+{-| Construct a TEA `onUrlRequest` property value.
+The Event you provided as an argument can be received on the root Layer.
+-}
+onUrlRequest : (Browser.UrlRequest -> event) -> Browser.UrlRequest -> Msg event
+onUrlRequest f =
+    f >> publish Channel.init

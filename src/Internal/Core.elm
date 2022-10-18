@@ -2,8 +2,6 @@ module Internal.Core exposing
     ( Model(..)
     , Msg(..)
     , Key(..)
-    , Context
-    , LayerChannel(..)
     , Promise(..)
     , succeedPromise
     , mapPromise
@@ -15,8 +13,9 @@ module Internal.Core exposing
     , none, concat
     , mapCmd
     , modify, await, awaitMsg, async, withMemory, jump, addListener
-    , putLayer, onLayer, Pointer
+    , putLayer, onLayer
     , init, update
+    , Context, Layer(..), LayerChannel(..), Pointer, realKey, requestChannelEvent
     )
 
 {-|
@@ -27,9 +26,11 @@ module Internal.Core exposing
 @docs Model
 @docs Msg
 
+
 # Key
 
 @docs Key
+
 
 # Promise
 
@@ -104,12 +105,14 @@ type alias Context memory event =
     , nextChannel : Channel
     }
 
+
 type alias Listener event =
-        { channel : Channel
-        , requestId : RequestId
-        , name : String
-        , sub : Sub (Msg event)
-        }
+    { channel : Channel
+    , requestId : RequestId
+    , name : String
+    , sub : Sub (Msg event)
+    }
+
 
 mapContextMemory :
     Layer_ m m1
@@ -164,12 +167,25 @@ type Msg event
     | NoOp
 
 
+
 -- Key
 
 
 type Key
-    = NavKey Nav.Key
+    = RealKey Nav.Key
     | SimKey
+
+
+realKey : Key -> Maybe Nav.Key
+realKey key =
+    case key of
+        RealKey k ->
+            Just k
+
+        _ ->
+            Nothing
+
+
 
 -- Promise
 
@@ -354,21 +370,27 @@ liftPromiseMemory o (Promise prom1) =
 
 mapPromiseCmd : (c -> cmd) -> Promise c m e a -> Promise cmd m e a
 mapPromiseCmd f (Promise prom) =
-    Promise <| \context ->
-        let
-            eff = prom context
-        in
-        { newContext = eff.newContext
-        , cmds = List.map f eff.cmds
-        , handler = \m msg ->
-            case eff.handler m msg of
-                Resolved a -> Resolved a
-                Reject -> Reject
-                AwaitAgain nextProm ->
-                    AwaitAgain
-                        (mapPromiseCmd f nextProm)
-        }
+    Promise <|
+        \context ->
+            let
+                eff =
+                    prom context
+            in
+            { newContext = eff.newContext
+            , cmds = List.map f eff.cmds
+            , handler =
+                \m msg ->
+                    case eff.handler m msg of
+                        Resolved a ->
+                            Resolved a
 
+                        Reject ->
+                            Reject
+
+                        AwaitAgain nextProm ->
+                            AwaitAgain
+                                (mapPromiseCmd f nextProm)
+            }
 
 
 awaitOnce : (m -> Msg e -> List (Procedure c m e)) -> Promise c m e (Procedure c m e)
@@ -386,6 +408,36 @@ awaitOnce f =
 
                         procs ->
                             Resolved <| concat procs
+            }
+
+
+requestChannelEvent : (e -> Maybe a) -> Promise c m e a
+requestChannelEvent f =
+    Promise <|
+        \context ->
+            let
+                (LayerChannel thisChannel) =
+                    context.layerChannel
+            in
+            { newContext = context
+            , cmds = []
+            , handler =
+                \_ msg ->
+                    case msg of
+                        ChannelMsg r ->
+                            if r.channel /= thisChannel then
+                                AwaitAgain <| requestChannelEvent f
+
+                            else
+                                case f r.event of
+                                    Nothing ->
+                                        AwaitAgain <| requestChannelEvent f
+
+                                    Just a ->
+                                        Resolved a
+
+                        _ ->
+                            AwaitAgain <| requestChannelEvent f
             }
 
 
@@ -458,6 +510,7 @@ mappend p1 p2 =
         WithMemory r ->
             WithMemory
                 { r | next = \m -> mappend (r.next m) p2 }
+
         Jump r ->
             Jump r
 
@@ -516,17 +569,21 @@ liftMemory_ o proc =
 
         WithMemory r ->
             WithMemory
-                { next = \m ->
-                    case o.get m of
-                        Nothing ->
-                            Nil
-                        Just m1 ->
-                            liftMemory_ o (r.next m1)
+                { next =
+                    \m ->
+                        case o.get m of
+                            Nothing ->
+                                Nil
+
+                            Just m1 ->
+                                liftMemory_ o (r.next m1)
                 }
+
         Jump r ->
             Jump
                 { jumpTo = liftMemory_ o r.jumpTo
                 }
+
         Nil ->
             Nil
 
@@ -539,31 +596,40 @@ mapCmd f proc =
                 { modify = r.modify
                 , next = mapCmd f r.next
                 }
+
         RunPromise r ->
             RunPromise
-                { promise = mapPromiseCmd f r.promise
-                    |> mapPromise (mapCmd f)
+                { promise =
+                    mapPromiseCmd f r.promise
+                        |> mapPromise (mapCmd f)
                 }
+
         Async r ->
             Async
                 { async = mapCmd f r.async
                 , next = mapCmd f r.next
                 }
+
         WithNewChannel r ->
             WithNewChannel
-                { withNewChannel = \m c ->
+                { withNewChannel =
+                    \m c ->
                         mapCmd f (r.withNewChannel m c)
                 , next = mapCmd f r.next
                 }
+
         WithMemory r ->
             WithMemory
                 { next = \m -> mapCmd f (r.next m)
                 }
+
         Jump r ->
             Jump
                 { jumpTo = mapCmd f r.jumpTo }
+
         Nil ->
             Nil
+
 
 
 -- Primitive Procedures
@@ -616,6 +682,7 @@ withMemory f =
         { next = \m -> concat (f m)
         }
 
+
 type Layer m m1
     = Layer (Layer_ m m1)
 
@@ -628,9 +695,10 @@ type alias Layer_ m m1 =
 
 
 type alias Pointer m m1 =
-    { get : m -> Maybe ( Channel, m1)
+    { get : m -> Maybe ( Channel, m1 )
     , set : ( Channel, m1 ) -> m -> m
     }
+
 
 withNewChannel : (Channel -> List (Procedure c m e)) -> Procedure c m e
 withNewChannel f =
@@ -681,7 +749,7 @@ addListener :
     , handler : e -> List (Procedure c m e)
     }
     -> Procedure c m e
-addListener {name, subscription, handler } =
+addListener { name, subscription, handler } =
     async
         [ runPromise <|
             Promise <|
@@ -747,10 +815,11 @@ addListener {name, subscription, handler } =
 
 portRequest :
     String
-    -> { request : m -> RequestId -> c
-       , receiver : (Value -> Msg e) -> Sub (Msg e)
-       , requestId : Value -> Maybe RequestId
-       }
+    ->
+        { request : m -> RequestId -> c
+        , receiver : (Value -> Msg e) -> Sub (Msg e)
+        , requestId : Value -> Maybe RequestId
+        }
     -> Promise c m e Value
 portRequest name o =
     Promise <|
@@ -794,22 +863,23 @@ portRequest name o =
                         { channel = layerChannel
                         , requestId = myRequestId
                         , name = name
-                        , sub = o.receiver
-                            (\resp ->
-                                case o.requestId resp of
-                                    Nothing ->
-                                        NoOp
-
-                                    Just requestId ->
-                                        if requestId == myRequestId then
-                                            PortResponseMsg
-                                                { requestId = myRequestId
-                                                , response = resp
-                                                }
-
-                                        else
+                        , sub =
+                            o.receiver
+                                (\resp ->
+                                    case o.requestId resp of
+                                        Nothing ->
                                             NoOp
-                            )
+
+                                        Just requestId ->
+                                            if requestId == myRequestId then
+                                                PortResponseMsg
+                                                    { requestId = myRequestId
+                                                    , response = resp
+                                                    }
+
+                                            else
+                                                NoOp
+                                )
                         }
                             :: context.listeners
                 }
@@ -885,7 +955,6 @@ customRequest name f =
                 ]
             , handler = handler
             }
-
 
 
 
@@ -971,7 +1040,6 @@ toModel context proc =
             in
             toModel newContext (mappend newProc r.next)
 
-
         WithMemory r ->
             toModel context (r.next context.state)
 
@@ -1004,6 +1072,7 @@ concurrent p1 p2 =
                         { r2
                             | next = concurrent p1 r2.next
                         }
+
                 RunPromise r2 ->
                     concurrentRequest r1 r2
 
@@ -1024,11 +1093,13 @@ concurrent p1 p2 =
                         { r2
                             | next = \m -> concurrent p1 (r2.next m)
                         }
+
                 Jump r2 ->
                     Jump
                         { r2
                             | jumpTo = concurrent p1 r2.jumpTo
                         }
+
                 Nil ->
                     p1
 

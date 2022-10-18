@@ -49,6 +49,9 @@ config =
             , "src/Internal.elm"
             ]
     , NoUnused.CustomTypeConstructors.rule []
+        |> Rule.ignoreErrorsForFiles
+            [ "src/Internal/Markup.elm"
+            ]
     , NoUnused.Dependencies.rule
     -- , NoUnused.Exports.rule
     , NoUnused.Modules.rule

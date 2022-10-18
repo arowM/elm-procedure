@@ -3,6 +3,7 @@ module Internal.Core exposing
     , Msg(..)
     , Key(..)
     , Promise(..)
+    , PromiseResult(..)
     , succeedPromise
     , mapPromise
     , andAsyncPromise
@@ -70,6 +71,7 @@ import Browser.Navigation as Nav
 import Internal.Channel as Channel exposing (Channel)
 import Internal.RequestId as RequestId exposing (RequestId)
 import Json.Encode exposing (Value)
+import Json.Decode as JD exposing (Decoder)
 
 
 
@@ -204,7 +206,7 @@ type alias PromiseEffect c m e a =
 type PromiseResult c m e a
     = Resolved a
     | AwaitAgain (Promise c m e a)
-    | Reject
+    | Rejected
 
 
 mapPromise : (a -> b) -> Promise c m e a -> Promise c m e b
@@ -227,8 +229,8 @@ mapPromise f (Promise prom) =
                             AwaitAgain <|
                                 mapPromise f nextProm
 
-                        Reject ->
-                            Reject
+                        Rejected ->
+                            Rejected
             }
 
 
@@ -274,11 +276,11 @@ andAsyncPromise (Promise promA) (Promise promF) =
                             AwaitAgain <|
                                 andAsyncPromise nextPromA nextPromF
 
-                        ( Reject, _ ) ->
-                            Reject
+                        ( Rejected, _ ) ->
+                            Rejected
 
-                        ( _, Reject ) ->
-                            Reject
+                        ( _, Rejected ) ->
+                            Rejected
             }
 
 
@@ -308,10 +310,10 @@ andRacePromise (Promise prom2) (Promise prom1) =
                             AwaitAgain <|
                                 andRacePromise nextProm2 nextProm1
 
-                        ( Reject, res2 ) ->
+                        ( Rejected, res2 ) ->
                             res2
 
-                        ( res1, Reject ) ->
+                        ( res1, Rejected ) ->
                             res1
             }
 
@@ -339,7 +341,7 @@ liftPromiseMemory o (Promise prom1) =
                                     context.listeners
                         }
                     , cmds = []
-                    , handler = \_ _ -> Reject
+                    , handler = \_ _ -> Rejected
                     }
 
                 Just context1 ->
@@ -353,7 +355,7 @@ liftPromiseMemory o (Promise prom1) =
                         \m msg ->
                             case o.get m of
                                 Nothing ->
-                                    Reject
+                                    Rejected
 
                                 Just m1 ->
                                     case eff1.handler m1 msg of
@@ -363,8 +365,8 @@ liftPromiseMemory o (Promise prom1) =
                                         AwaitAgain next1 ->
                                             AwaitAgain <| liftPromiseMemory o next1
 
-                                        Reject ->
-                                            Reject
+                                        Rejected ->
+                                            Rejected
                     }
 
 
@@ -384,8 +386,8 @@ mapPromiseCmd f (Promise prom) =
                         Resolved a ->
                             Resolved a
 
-                        Reject ->
-                            Reject
+                        Rejected ->
+                            Rejected
 
                         AwaitAgain nextProm ->
                             AwaitAgain
@@ -814,14 +816,13 @@ addListener { name, subscription, handler } =
 
 
 portRequest :
-    String
-    ->
-        { request : m -> RequestId -> c
-        , receiver : (Value -> Msg e) -> Sub (Msg e)
-        , requestId : Value -> Maybe RequestId
-        }
-    -> Promise c m e Value
-portRequest name o =
+    { name : String
+    , request : m -> { requestId : Value } -> c
+    , receiver : (Value -> Msg e) -> Sub (Msg e)
+    , response : Decoder RequestId -> Decoder (RequestId, resp)
+    }
+    -> Promise c m e resp
+portRequest o =
     Promise <|
         \context ->
             let
@@ -831,21 +832,31 @@ portRequest name o =
                 (LayerChannel layerChannel) =
                     context.layerChannel
 
-                handler : m -> Msg e -> PromiseResult c m e Value
+                handler : m -> Msg e -> PromiseResult c m e resp
                 handler _ msg =
                     case msg of
                         PortResponseMsg respMsg ->
-                            if respMsg.requestId == myRequestId then
-                                Resolved respMsg.response
+                            case JD.decodeValue (o.response RequestId.decoder) respMsg.response of
+                                Ok (requestId, resp) ->
+                                    if requestId == myRequestId then
+                                        Resolved resp
 
-                            else
-                                AwaitAgain <|
-                                    Promise <|
-                                        \nextContext ->
-                                            { newContext = nextContext
-                                            , cmds = []
-                                            , handler = handler
-                                            }
+                                    else
+                                        AwaitAgain <|
+                                            Promise <|
+                                                \nextContext ->
+                                                    { newContext = nextContext
+                                                    , cmds = []
+                                                    , handler = handler
+                                                    }
+                                Err _ ->
+                                    AwaitAgain <|
+                                        Promise <|
+                                            \nextContext ->
+                                                { newContext = nextContext
+                                                , cmds = []
+                                                , handler = handler
+                                                }
 
                         _ ->
                             AwaitAgain <|
@@ -862,19 +873,19 @@ portRequest name o =
                     , listeners =
                         { channel = layerChannel
                         , requestId = myRequestId
-                        , name = name
+                        , name = o.name
                         , sub =
                             o.receiver
-                                (\resp ->
-                                    case o.requestId resp of
-                                        Nothing ->
+                                (\respValue ->
+                                    case JD.decodeValue (o.response RequestId.decoder) respValue of
+                                        Err _ ->
                                             NoOp
 
-                                        Just requestId ->
+                                        Ok (requestId, _) ->
                                             if requestId == myRequestId then
                                                 PortResponseMsg
                                                     { requestId = myRequestId
-                                                    , response = resp
+                                                    , response = respValue
                                                     }
 
                                             else
@@ -886,17 +897,18 @@ portRequest name o =
             , cmds =
                 [ o.request
                     context.state
-                    myRequestId
+                    { requestId = RequestId.toValue myRequestId }
                 ]
             , handler = handler
             }
 
 
 customRequest :
-    String
-    -> (m -> RequestId -> (e -> Msg e) -> c)
+    { name : String
+    , request : m -> RequestId -> (e -> Msg e) -> c
+    }
     -> Promise c m e e
-customRequest name f =
+customRequest o =
     Promise <|
         \context ->
             let
@@ -937,13 +949,13 @@ customRequest name f =
                     , listeners =
                         { channel = layerChannel
                         , requestId = myRequestId
-                        , name = name
+                        , name = o.name
                         , sub = Sub.none
                         }
                             :: context.listeners
                 }
             , cmds =
-                [ f
+                [ o.request
                     context.state
                     myRequestId
                     (\e ->
@@ -1008,7 +1020,7 @@ toModel context proc =
                         Resolved nextProc ->
                             toModel nextContext nextProc
 
-                        Reject ->
+                        Rejected ->
                             ( EndOfProcess
                                 { lastState = nextContext.state
                                 }

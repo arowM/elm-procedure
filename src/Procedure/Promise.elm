@@ -4,24 +4,44 @@ module Procedure.Promise exposing
     , map
     , andAsync
     , andRace
+    , andThen
     , layerEvent
     , portRequest
     , customRequest
+    , pushUrl, replaceUrl, back, forward
+    , load, reload, reloadAndSkipCache
     )
 
 {-|
 
+# Core
+
 @docs Promise
 @docs succeed
 @docs map
+
+# Composition
+
 @docs andAsync
 @docs andRace
+@docs andThen
+
+# Common Promises
+
 @docs layerEvent
 @docs portRequest
 @docs customRequest
 
+# Browser.Navigation alternatives
+
+## Navigate within Page
+@docs pushUrl, replaceUrl, back, forward
+
+## Navigate to other Pages
+@docs load, reload, reloadAndSkipCache
 -}
 
+import Browser.Navigation as Nav
 import Internal.Core as Core exposing
     (Promise(..)
     , PromiseResult(..)
@@ -81,6 +101,11 @@ May you want to set timeout on your request:
 -}
 andRace : Promise c m e a -> Promise c m e a -> Promise c m e a
 andRace = Core.andRacePromise
+
+{-| Build a new Promise that evaluate two Promises sequentially.
+-}
+andThen : (a -> Promise c m e b) -> Promise c m e a -> Promise c m e b
+andThen = Core.andThenPromise
 
 
 {-|
@@ -201,3 +226,28 @@ customRequest :
     }
     -> Promise c m e e
 customRequest = Core.customRequest
+
+
+{-| -}
+push : (m -> c) -> Promise c m e ()
+push f =
+    Promise <|
+
+-- Browser.Navigation alternatives
+
+navHelper : (Key -> Cmd msg) -> Promise c m e ()
+navHelper f =
+    Promise <|
+        \context ->
+            
+
+-- -- Navigate within Page
+
+{-| Change the URL, but do not trigger a page load.
+
+Alternative to `Browser.Navigation.pushUrl`.
+-}
+pushUrl : Key -> String -> Promise c m e ()
+pushUrl =
+
+-- -- Navigate to other Pages

@@ -3,17 +3,18 @@ module Internal.Core exposing
     , Msg(..)
     , Key(..)
     , Promise(..)
-    , PromiseResult(..)
     , succeedPromise
     , mapPromise
     , andAsyncPromise
     , andRacePromise
+    , andThenPromise
     , liftPromiseMemory
     , portRequest, customRequest
+    , push
     , Procedure(..)
     , none, concat
     , mapCmd
-    , modify, await, awaitMsg, async, withMemory, jump, addListener
+    , modify, await, async, withMemory, jump, addListener
     , putLayer, onLayer
     , init, update
     , Context, Layer(..), LayerChannel(..), Pointer, realKey, requestChannelEvent
@@ -40,8 +41,10 @@ module Internal.Core exposing
 @docs mapPromise
 @docs andAsyncPromise
 @docs andRacePromise
+@docs andThenPromise
 @docs liftPromiseMemory
 @docs portRequest, customRequest
+@docs push
 
 
 # Procedure
@@ -53,7 +56,7 @@ module Internal.Core exposing
 
 # Primitive Procedures
 
-@docs modify, await, awaitMsg, async, withMemory, jump, addListener
+@docs modify, await, async, withMemory, jump, addListener
 
 
 # Layer
@@ -199,14 +202,14 @@ type Promise c m e a
 type alias PromiseEffect c m e a =
     { newContext : Context m e
     , cmds : List c
-    , handler : m -> Msg e -> PromiseResult c m e a
+    , handler : PromiseHandler c m e a
     }
 
 
-type PromiseResult c m e a
+type PromiseHandler c m e a
     = Resolved a
-    | AwaitAgain (Promise c m e a)
     | Rejected
+    | AwaitMsg (Msg e -> Promise c m e a)
 
 
 mapPromise : (a -> b) -> Promise c m e a -> Promise c m e b
@@ -220,17 +223,15 @@ mapPromise f (Promise prom) =
             { newContext = effA.newContext
             , cmds = effA.cmds
             , handler =
-                \m msg ->
-                    case effA.handler m msg of
-                        Resolved a ->
-                            Resolved <| f a
-
-                        AwaitAgain nextProm ->
-                            AwaitAgain <|
-                                mapPromise f nextProm
-
-                        Rejected ->
-                            Rejected
+                case effA.handler of
+                    Resolved a ->
+                        Resolved <| f a
+                    Rejected ->
+                        Rejected
+                    AwaitMsg next ->
+                        AwaitMsg <|
+                            \msg ->
+                                mapPromise f (next msg)
             }
 
 
@@ -240,10 +241,18 @@ succeedPromise a =
         \context ->
             { newContext = context
             , cmds = []
-            , handler =
-                \_ _ -> Resolved a
+            , handler = Resolved a
             }
 
+
+justAwaitPromise : (Msg e -> Promise c m e a) -> Promise c m e a
+justAwaitPromise f =
+    Promise <|
+        \context ->
+            { newContext =context
+            , cmds =[]
+            ,handler = AwaitMsg f
+            }
 
 andAsyncPromise : Promise c m e a -> Promise c m e (a -> b) -> Promise c m e b
 andAsyncPromise (Promise promA) (Promise promF) =
@@ -259,28 +268,30 @@ andAsyncPromise (Promise promA) (Promise promF) =
             { newContext = effA.newContext
             , cmds = effF.cmds ++ effA.cmds
             , handler =
-                \m msg ->
-                    case ( effF.handler m msg, effA.handler m msg ) of
-                        ( Resolved f, Resolved a ) ->
-                            Resolved <| f a
+                case (effF.handler, effA.handler) of
+                    ( Resolved f, Resolved a ) ->
+                        Resolved <| f a
 
-                        ( Resolved f, AwaitAgain nextPromA ) ->
-                            AwaitAgain <|
-                                mapPromise f nextPromA
+                    ( Resolved f, AwaitMsg nextPromA ) ->
+                        AwaitMsg <|
+                            \msg ->
+                                mapPromise f (nextPromA msg)
 
-                        ( AwaitAgain nextPromF, Resolved a ) ->
-                            AwaitAgain <|
-                                mapPromise (\f -> f a) nextPromF
+                    ( AwaitMsg nextPromF, Resolved a ) ->
+                        AwaitMsg <|
+                            \msg ->
+                                mapPromise (\f -> f a) (nextPromF msg)
 
-                        ( AwaitAgain nextPromF, AwaitAgain nextPromA ) ->
-                            AwaitAgain <|
-                                andAsyncPromise nextPromA nextPromF
+                    ( AwaitMsg nextPromF, AwaitMsg nextPromA ) ->
+                        AwaitMsg <|
+                            \msg ->
+                                andAsyncPromise (nextPromA msg) (nextPromF msg)
 
-                        ( Rejected, _ ) ->
-                            Rejected
+                    ( Rejected, _ ) ->
+                        Rejected
 
-                        ( _, Rejected ) ->
-                            Rejected
+                    ( _, Rejected ) ->
+                        Rejected
             }
 
 
@@ -298,24 +309,59 @@ andRacePromise (Promise prom2) (Promise prom1) =
             { newContext = eff2.newContext
             , cmds = eff1.cmds ++ eff2.cmds
             , handler =
-                \m msg ->
-                    case ( eff1.handler m msg, eff2.handler m msg ) of
-                        ( Resolved a1, _ ) ->
-                            Resolved a1
+                case ( eff1.handler, eff2.handler ) of
+                    ( Resolved a1, _ ) ->
+                        Resolved a1
 
-                        ( _, Resolved a2 ) ->
-                            Resolved a2
+                    ( _, Resolved a2 ) ->
+                        Resolved a2
 
-                        ( AwaitAgain nextProm1, AwaitAgain nextProm2 ) ->
-                            AwaitAgain <|
-                                andRacePromise nextProm2 nextProm1
+                    ( Rejected, res2 ) ->
+                        res2
 
-                        ( Rejected, res2 ) ->
-                            res2
+                    ( res1, Rejected ) ->
+                        res1
+                    ( AwaitMsg nextProm1, AwaitMsg nextProm2 ) ->
+                        AwaitMsg <|
+                            \msg ->
+                                andRacePromise
+                                    (nextProm2 msg)
+                                    (nextProm1 msg)
 
-                        ( res1, Rejected ) ->
-                            res1
             }
+
+
+andThenPromise : (a -> Promise c m e b) -> Promise c m e a -> Promise c m e b
+andThenPromise f (Promise promA) =
+    Promise <|
+        \context ->
+            let
+                effA = promA context
+            in
+            case effA.handler of
+                Resolved a ->
+                    let
+                        (Promise promB) = f a
+                        effB = promB effA.newContext
+                    in
+                    { newContext = effB.newContext
+                    , cmds = effA.cmds ++ effB.cmds
+                    , handler = effB.handler
+                    }
+                Rejected ->
+                    { newContext = effA.newContext
+                    , cmds = effA.cmds
+                    , handler = Rejected
+                    }
+
+                AwaitMsg promNextA ->
+                    { newContext = effA.newContext
+                    , cmds = effA.cmds
+                    , handler = AwaitMsg <|
+                        \msg ->
+                            promNextA msg
+                                |> andThenPromise f
+                    }
 
 
 liftPromiseMemory :
@@ -341,7 +387,7 @@ liftPromiseMemory o (Promise prom1) =
                                     context.listeners
                         }
                     , cmds = []
-                    , handler = \_ _ -> Rejected
+                    , handler = Rejected
                     }
 
                 Just context1 ->
@@ -349,24 +395,20 @@ liftPromiseMemory o (Promise prom1) =
                         eff1 =
                             prom1 context1
                     in
-                    { newContext = setContext o eff1.newContext context
+                    { newContext =
+                        setContext o eff1.newContext context
                     , cmds = eff1.cmds
                     , handler =
-                        \m msg ->
-                            case o.get m of
-                                Nothing ->
-                                    Rejected
+                        case eff1.handler of
+                            Resolved a ->
+                                Resolved a
 
-                                Just m1 ->
-                                    case eff1.handler m1 msg of
-                                        Resolved a ->
-                                            Resolved a
+                            Rejected ->
+                                Rejected
 
-                                        AwaitAgain next1 ->
-                                            AwaitAgain <| liftPromiseMemory o next1
-
-                                        Rejected ->
-                                            Rejected
+                            AwaitMsg nextProm ->
+                                AwaitMsg <| \msg ->
+                                    liftPromiseMemory o (nextProm msg)
                     }
 
 
@@ -381,35 +423,17 @@ mapPromiseCmd f (Promise prom) =
             { newContext = eff.newContext
             , cmds = List.map f eff.cmds
             , handler =
-                \m msg ->
-                    case eff.handler m msg of
-                        Resolved a ->
-                            Resolved a
+                case eff.handler of
+                    Resolved a ->
+                        Resolved a
 
-                        Rejected ->
-                            Rejected
+                    Rejected ->
+                        Rejected
 
-                        AwaitAgain nextProm ->
-                            AwaitAgain
-                                (mapPromiseCmd f nextProm)
-            }
-
-
-awaitOnce : (m -> Msg e -> List (Procedure c m e)) -> Promise c m e (Procedure c m e)
-awaitOnce f =
-    Promise <|
-        \context ->
-            { newContext = context
-            , cmds = []
-            , handler =
-                \m msg ->
-                    case f m msg of
-                        [] ->
-                            AwaitAgain <|
-                                awaitOnce f
-
-                        procs ->
-                            Resolved <| concat procs
+                    AwaitMsg nextProm ->
+                        AwaitMsg <|
+                            \msg ->
+                                (mapPromiseCmd f (nextProm msg))
             }
 
 
@@ -428,18 +452,18 @@ requestChannelEvent f =
                     case msg of
                         ChannelMsg r ->
                             if r.channel /= thisChannel then
-                                AwaitAgain <| requestChannelEvent f
+                                AwaitMsg <| requestChannelEvent f
 
                             else
                                 case f r.event of
                                     Nothing ->
-                                        AwaitAgain <| requestChannelEvent f
+                                        AwaitMsg <| requestChannelEvent f
 
                                     Just a ->
                                         Resolved a
 
                         _ ->
-                            AwaitAgain <| requestChannelEvent f
+                            AwaitMsg <| requestChannelEvent f
             }
 
 
@@ -658,11 +682,6 @@ await prom f =
         |> runPromise
 
 
-awaitMsg : (m -> Msg e -> List (Procedure c m e)) -> Procedure c m e
-awaitMsg f =
-    runPromise <| awaitOnce f
-
-
 async : List (Procedure c m e) -> Procedure c m e
 async procs =
     Async
@@ -795,10 +814,10 @@ addListener { name, subscription, handler } =
                                                 ]
 
                                     else
-                                        AwaitAgain <| listenerPromise m
+                                        AwaitMsg <| listenerPromise m
 
                                 _ ->
-                                    AwaitAgain <| listenerPromise m
+                                    AwaitMsg <| listenerPromise m
 
                         listenerPromise _ =
                             Promise <|
@@ -832,40 +851,23 @@ portRequest o =
                 (LayerChannel layerChannel) =
                     context.layerChannel
 
-                handler : m -> Msg e -> PromiseResult c m e resp
-                handler _ msg =
+                nextPromise : Msg e -> Promise c m e resp
+                nextPromise msg =
                     case msg of
                         PortResponseMsg respMsg ->
                             case JD.decodeValue (o.response RequestId.decoder) respMsg.response of
                                 Ok (requestId, resp) ->
                                     if requestId == myRequestId then
-                                        Resolved resp
+                                        succeedPromise resp
 
                                     else
-                                        AwaitAgain <|
-                                            Promise <|
-                                                \nextContext ->
-                                                    { newContext = nextContext
-                                                    , cmds = []
-                                                    , handler = handler
-                                                    }
+                                        justAwaitPromise nextPromise
                                 Err _ ->
-                                    AwaitAgain <|
-                                        Promise <|
-                                            \nextContext ->
-                                                { newContext = nextContext
-                                                , cmds = []
-                                                , handler = handler
-                                                }
+                                    justAwaitPromise nextPromise
 
                         _ ->
-                            AwaitAgain <|
-                                Promise <|
-                                    \nextContext ->
-                                        { newContext = nextContext
-                                        , cmds = []
-                                        , handler = handler
-                                        }
+                            justAwaitPromise nextPromise
+
             in
             { newContext =
                 { context
@@ -899,7 +901,7 @@ portRequest o =
                     context.state
                     { requestId = RequestId.toValue myRequestId }
                 ]
-            , handler = handler
+            , handler = AwaitMsg nextPromise
             }
 
 
@@ -918,30 +920,18 @@ customRequest o =
                 (LayerChannel layerChannel) =
                     context.layerChannel
 
-                handler : m -> Msg e -> PromiseResult c m e e
-                handler _ msg =
+                nextPromise : Msg e -> Promise c m e e
+                nextPromise msg =
                     case msg of
                         ResponseMsg respMsg ->
                             if respMsg.requestId == myRequestId then
-                                Resolved respMsg.event
+                                succeedPromise respMsg.event
 
                             else
-                                AwaitAgain <|
-                                    Promise <|
-                                        \nextContext ->
-                                            { newContext = nextContext
-                                            , cmds = []
-                                            , handler = handler
-                                            }
+                                justAwaitPromise nextPromise
 
                         _ ->
-                            AwaitAgain <|
-                                Promise <|
-                                    \nextContext ->
-                                        { newContext = nextContext
-                                        , cmds = []
-                                        , handler = handler
-                                        }
+                            justAwaitPromise nextPromise
             in
             { newContext =
                 { context
@@ -965,9 +955,18 @@ customRequest o =
                             }
                     )
                 ]
-            , handler = handler
+            , handler = AwaitMsg nextPromise
             }
 
+
+push : (m -> List c) -> Promise c m e ()
+push f =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = f context.state
+            , handler = Resolved ()
+            }
 
 
 -- TEA
@@ -1009,30 +1008,31 @@ toModel context proc =
                 eff =
                     prom context
 
-                next : Msg e -> Context m e -> ( Model c m e, List c )
-                next msg nextContext =
-                    case eff.handler nextContext.state msg of
-                        AwaitAgain nextPromise ->
-                            toModel nextContext <|
-                                RunPromise
-                                    { promise = nextPromise }
-
-                        Resolved nextProc ->
-                            toModel nextContext nextProc
-
-                        Rejected ->
-                            ( EndOfProcess
-                                { lastState = nextContext.state
-                                }
-                            , []
-                            )
             in
-            ( OnGoing
-                { context = eff.newContext
-                , next = next
-                }
-            , eff.cmds
-            )
+            case eff.handler of
+                Resolved nextProm ->
+                    let
+                        (newModel, newCmds) = toModel eff.newContext nextProm
+                    in
+                    (newModel, eff.cmds ++ newCmds)
+
+                Rejected ->
+                    ( EndOfProcess
+                        { lastState = eff.newContext.state
+                        }
+                    , eff.cmds
+                    )
+
+                AwaitMsg nextProm ->
+                    ( OnGoing
+                        { context = eff.newContext
+                        , next = \msg nextContext ->
+                            toModel
+                                nextContext
+                                (runPromise (nextProm msg))
+                        }
+                    , eff.cmds
+                    )
 
         Async r ->
             toModel context (concurrent r.async r.next)

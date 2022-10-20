@@ -40,8 +40,8 @@ import Http
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
-import Procedure.Channel as Channel exposing (Channel)
+import Procedure as Procedure exposing (LayerId, Msg, Procedure)
+import Procedure.Promise as Promise exposing (Promise)
 import Process
 import Task
 
@@ -74,7 +74,7 @@ type Memory
 
 
 type alias Memory_ =
-    { items : List ( Channel, ToastItemMemory )
+    { items : List ( LayerId, ToastItemMemory )
     }
 
 

@@ -1067,7 +1067,7 @@ toTests config scenario sessions =
                         Just ( c, e ) ->
                             Dict.insert session.name
                                 (LayerMsg
-                                    { channel = c
+                                    { layerId = c
                                     , event = e
                                     }
                                     |> applyMsg model
@@ -1085,7 +1085,7 @@ toTests config scenario sessions =
                     case model of
                         OnGoing onGoing ->
                             Dict.insert session.name
-                                (onGoing.context.listeners
+                                (onGoing.listeners
                                     |> List.filterMap
                                         (\listener ->
                                             if listener.name == r.target then
@@ -1200,7 +1200,7 @@ toTests config scenario sessions =
 
                         OnGoing onGoing ->
                             Dict.insert session.name
-                                (onGoing.context.listeners
+                                (onGoing.listeners
                                     |> List.filterMap
                                         (\listener ->
                                             if listener.name == r.target then
@@ -1237,7 +1237,7 @@ toTests config scenario sessions =
 
                         OnGoing onGoing ->
                             Dict.insert session.name
-                                (onGoing.context.listeners
+                                (onGoing.listeners
                                     |> List.filterMap
                                         (\listener ->
                                             if listener.name == r.target then

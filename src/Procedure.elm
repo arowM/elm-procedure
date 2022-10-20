@@ -100,6 +100,7 @@ import Internal.Core as Core
         ( Model(..)
         )
 import Internal.LayerId as LayerId
+import Procedure.Promise as Promise
 import Url exposing (Url)
 
 
@@ -287,7 +288,7 @@ modify =
 
 
 type alias Promise cmd memory event a =
-    Core.Promise cmd memory event a
+    Promise.Promise cmd memory event a
 
 
 {-| Await a Promise to be resolved, and then use the result to evaluate the subsequent Procedures.

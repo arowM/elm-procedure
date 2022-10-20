@@ -11,7 +11,6 @@ module Page.Home exposing
 
 import App.Route as Route
 import App.Session exposing (Session)
-import Browser.Navigation exposing (Key)
 import Expect.Builder as ExpBuilder
 import Http
 import Json.Encode exposing (Value)
@@ -19,7 +18,7 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
-import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
+import Procedure exposing (Key, LayerId, Msg, Procedure)
 import Procedure.Scenario as Scenario
 import Widget.Toast as Toast
 
@@ -54,12 +53,12 @@ type Event
 
 
 {-| -}
-view : ( Channel, Memory ) -> Html (Msg Event)
-view ( channel, memory ) =
+view : ( LayerId, Memory ) -> Html (Msg Event)
+view ( layerId, memory ) =
     Html.div
         [ localClass "page"
         ]
-        [ editAccountFormView (channel, memory.editAccountForm)
+        [ editAccountFormView (layerId, memory.editAccountForm)
         , Html.div
             [ localClass "dashboard_links"
             ]
@@ -98,11 +97,11 @@ initEditAccountForm session =
     }
 
 
-editAccountFormView : (Channel, EditAccountFormMemory) -> Html (Msg Event)
-editAccountFormView (channel, memory) =
+editAccountFormView : (LayerId, EditAccountFormMemory) -> Html (Msg Event)
+editAccountFormView (layerId, memory) =
     let
         publish =
-            Procedure.publish channel
+            Procedure.publish layerId
 
         errors =
             EditAccount.toFormErrors memory.form
@@ -213,7 +212,7 @@ editAccountFormProcedures key =
                             }
                     }
     in
-    [ Procedure.await <|
+    [ Procedure.awaitLayerEvent <|
         \event _ ->
             case event of
                 ChangeEditAccountFormAccountId str ->
@@ -260,12 +259,10 @@ submitAccountProcedures key =
                     ]
 
                 Ok editAccount ->
-                    [ Procedure.push <|
-                        \_ toMsg -> RequestEditAccount (ReceiveEditAccountResp >> toMsg) editAccount
-                    , Procedure.await <|
-                        \event _ ->
-                            case event of
-                                ReceiveEditAccountResp (Err err) ->
+                    [ Procedure.await requestEditAccount <|
+                        \response ->
+                            case response of
+                                Err err ->
                                     [ Toast.pushHttpError err
                                         |> runToastProcedure
                                     , modifyEditAccountFormMemory <|
@@ -276,7 +273,7 @@ submitAccountProcedures key =
                                             editAccountFormProcedures key
                                     ]
 
-                                ReceiveEditAccountResp (Ok resp) ->
+                                Ok resp ->
                                     [ Procedure.modify <|
                                         \m ->
                                             { m
@@ -299,6 +296,15 @@ submitAccountProcedures key =
     ]
 
 
+requestEditAccount : EditAccount.EditAccount -> Promise Command Memory Event (Result Http.Error EditAccount.Response)
+requestEditAccount editAccount =
+    Promise.cutsomRequest
+        { name = "requestEditAccount"
+        , request = \m rid toMsg ->
+            RequestEditAccount (ReceiveEditAccountResp >> toMsg) editAccount
+        }
+
+
 -- Toast
 
 
@@ -319,7 +325,7 @@ runToastProcedure =
         }
         >> Procedure.mapCmd ToastCommand
         >> Procedure.liftMemory
-            { get = .toast >> Just
+            { get = .toast
             , modify = \f m -> { m | toast = f m.toast }
             }
 

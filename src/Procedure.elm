@@ -1,18 +1,17 @@
 module Procedure exposing
     ( Procedure
-    , none, concat
+    , none, concat, mapCmd, liftEvent
     , Layer
     , Pointer
     , LayerId
-    , channelString
+    , layerKey
     , putLayer, onLayer
     , publish
-    , modify, await, async, jump, addListener, quit
+    , modify, await, awaitLayerEvent, async, jump, addListener, quit
     , when
     , unless
     , withMemory
     , withMaybe
-    , injectCmd
     , element
     , document
     , application
@@ -25,6 +24,7 @@ module Procedure exposing
     , init
     , Key, runNavCmd
     , Msg
+    , mapMsg
     , Model
     , onUrlChange
     , onUrlRequest
@@ -37,6 +37,7 @@ module Procedure exposing
 
 @docs Procedure
 @docs none, concat
+@docs mapCmd, liftEvent
 
 
 # Layer
@@ -44,14 +45,14 @@ module Procedure exposing
 @docs Layer
 @docs Pointer
 @docs LayerId
-@docs channelString
+@docs layerKey
 @docs putLayer, onLayer
 @docs publish
 
 
 # Primitive Procedures
 
-@docs modify, await, async, jump, addListener, quit
+@docs modify, await, awaitLayerEvent, async, jump, addListener, quit
 
 
 # Helper procedures
@@ -68,7 +69,6 @@ module Procedure exposing
 
 The [low level API](#connect-to-tea-app) is also available for more advanced use cases, which enables you to introduce TEPA partially into your existing TEA app.
 
-@docs injectCmd
 @docs element
 @docs document
 @docs application
@@ -85,6 +85,7 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 @docs init
 @docs Key, runNavCmd
 @docs Msg
+@docs mapMsg
 @docs Model
 @docs onUrlChange
 @docs onUrlRequest
@@ -113,7 +114,7 @@ Procedure takes three parameters:
 
   - `cmd`: Abstraction of Command in TEA.
     Since you cannot test the `Cmd msg` value directly, you use a custom type instead.
-    When running as an application, you can use `injectCmd` to convert it to the `Cmd msg` type.
+    When running as an application, you can use `mapCmd` to convert it to the `Cmd msg` type.
   - `memory`: Just like Model in TEA.
     Like Model in TEA, _Memory_ in TEPA is where the application state is managed, but in TEPA, Memory is modified in the Procedures.
   - `event`: Just like Msg in TEA.
@@ -137,6 +138,22 @@ concat : List (Procedure c m e) -> Procedure c m e
 concat =
     Core.concat
 
+{-| Transform the Commands produced by a Procedure.
+
+You can use this to inject actual Commands.
+-}
+mapCmd : (c1 -> c0) -> Procedure c1 m e -> Procedure c0 m e
+mapCmd =
+    Core.mapCmd
+
+
+{-| Transform the Events produced or consumed by a Procedure.
+-}
+liftEvent :
+    { wrap : e1 -> e0
+    , unwrap : e0 -> Maybe e1
+    } -> Procedure c m e1 -> Procedure c m e0
+liftEvent = Core.liftEvent
 
 
 -- Layer
@@ -169,8 +186,8 @@ type alias LayerId =
 You can use this value as a key for [`Html.Keyed`](https://package.elm-lang.org/packages/elm/html/latest/Html-Keyed) nodes.
 
 -}
-channelString : LayerId -> String
-channelString =
+layerKey : LayerId -> String
+layerKey =
     LayerId.toString
 
 
@@ -250,7 +267,7 @@ You can use this function inside the View to notify Procedure that an event has 
 publish : LayerId -> event -> Msg event
 publish c e =
     Core.LayerMsg
-        { channel = c
+        { layerId = c
         , event = e
         }
 
@@ -278,6 +295,40 @@ type alias Promise cmd memory event a =
 await : Promise c m e a -> (a -> List (Procedure c m e)) -> Procedure c m e
 await =
     Core.await
+
+
+{-| Helper function to handle Layer Events.
+Your callback function is called event time the Layer for Memory `m` receives an Event.
+If the callback function returns empty List, it awaits another Event for the Layer; otherwise the Promise evaluates the returned Procedures before proceeding to the sibling Procedures.
+
+You may want to use this for just pause your Procedure:
+
+```elm
+myProcedures =
+    [ awaitLayerEvent <|
+        \e _ ->
+            case e of
+                CancelPause ->
+                    -- Do nothing and proceed to next
+                    [ none ]
+
+                _ ->
+                    -- Do nothing and await again
+                    []
+    , Debug.todo "Evaluated after receiving CancelPause"
+    ]
+
+-}
+awaitLayerEvent : (e -> m -> List (Procedure c m e)) -> Procedure c m e
+awaitLayerEvent f =
+    await
+        (Core.layerEvent <|
+            \e m ->
+                case f e m of
+                    [] -> Nothing
+                    ls -> Just ls
+        )
+        identity
 
 
 {-| Construct a `Procedure` instance that evaluates the given Procedures asynchronously:
@@ -436,7 +487,7 @@ withMaybe ma f =
 
 {-| Procedure version of [Browser.element](https://package.elm-lang.org/packages/elm/browser/latest/Browser#element).
 
-You can use `injectCmd` to inject actual Cmds into your Procedure build with custom type Commands.
+You can use `mapCmd` to inject actual Cmds into your Procedure build with custom type Commands.
 
 -}
 element :
@@ -458,7 +509,7 @@ element option =
 
 {-| Procedure version of [Browser.document](https://package.elm-lang.org/packages/elm/browser/latest/Browser#document).
 
-You can use `injectCmd` to inject actual Cmds into your Procedure build with custom type Commands.
+You can use `mapCmd` to inject actual Cmds into your Procedure build with custom type Commands.
 
 -}
 document :
@@ -476,13 +527,6 @@ document option =
         , update = update
         , subscriptions = subscriptions
         }
-
-
-{-| Inject actual Commands.
--}
-injectCmd : (c -> Cmd (Msg e)) -> Procedure c m e -> Procedure (Cmd (Msg e)) m e
-injectCmd =
-    Core.mapCmd
 
 
 {-| Procedure version of [Browser.application](https://package.elm-lang.org/packages/elm/browser/latest/Browser#application).
@@ -575,8 +619,8 @@ subscriptions model =
         EndOfProcess _ ->
             Sub.none
 
-        OnGoing { context } ->
-            context.listeners
+        OnGoing { listeners } ->
+            listeners
                 |> List.map .sub
                 |> Sub.batch
 
@@ -611,6 +655,11 @@ runNavCmd =
 -}
 type alias Msg event =
     Core.Msg event
+
+
+{-| -}
+mapMsg : (event1 -> event0) -> Msg event1 -> Msg event0
+mapMsg = Core.mapMsg
 
 
 {-| TEA Model that stores your Procedure state.

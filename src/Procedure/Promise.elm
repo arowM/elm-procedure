@@ -109,8 +109,10 @@ andThen =
     Core.andThenPromise
 
 
-{-| -}
-layerEvent : (event -> Maybe a) -> Promise c m event a
+{-| Await Layer events. Your callback function is called every time the Layer for Memory `m` receives an Event.
+If the callback function returns `Nothing`, it awaits another Event for the Layer; otherwise the Promise is resolved your `Just` value.
+-}
+layerEvent : (event -> m -> Maybe a) -> Promise c m event a
 layerEvent =
     Core.layerEvent
 

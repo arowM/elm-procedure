@@ -7,7 +7,6 @@
     "exposed-modules": [
         "Expect.Builder",
         "Procedure",
-        "Procedure.Navigation",
         "Procedure.Promise",
         "Procedure.Scenario"
     ],

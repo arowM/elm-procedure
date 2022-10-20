@@ -99,7 +99,6 @@ module Procedure.Scenario exposing
 import Dict exposing (Dict)
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
-import Internal.Channel as Channel exposing (Channel)
 import Internal.Core as Core
     exposing
         ( Key(..)
@@ -108,6 +107,7 @@ import Internal.Core as Core
         , Pointer
         , Procedure
         )
+import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.Markup as Markup
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -150,7 +150,7 @@ type Scenario flags cmd memory event
     | UserEvent
         { session : Session
         , description : String
-        , event : ( Channel, memory ) -> Maybe ( Channel, event )
+        , event : ( LayerId, memory ) -> Maybe ( LayerId, event )
         , next : Scenario flags cmd memory event
         }
     | ListenerEvent
@@ -665,7 +665,7 @@ Suppose your application has a popup:
         , Debug.todo "..."
         ]
 
-The example above publishes `ClickPopupCancelButton` event to the Channel for the `popup` Layer.
+The example above publishes `ClickPopupCancelButton` event to the LayerId for the `popup` Layer.
 
 -}
 userEvent :
@@ -966,7 +966,7 @@ onLayer_ pointer s =
 toTest :
     { init : memory
     , procedures : flags -> Url -> Key -> List (Procedure cmd memory event)
-    , view : ( Channel, memory ) -> Html (Msg event)
+    , view : ( LayerId, memory ) -> Html (Msg event)
     , sections : List (Section flags cmd memory event)
     }
     -> Test
@@ -975,7 +975,7 @@ toTest o =
         (\(Section sec) ->
             Test.describe sec.title <|
                 toTests
-                    { view = \m -> Html.map (\_ -> ()) <| o.view ( Channel.init, m )
+                    { view = \m -> Html.map (\_ -> ()) <| o.view ( LayerId.init, m )
                     , init =
                         \flags url ->
                             Core.init o.init
@@ -1054,7 +1054,7 @@ toTests config scenario sessions =
                                 OnGoing { context } ->
                                     context.state
                     in
-                    case r.event ( Channel.init, memory ) of
+                    case r.event ( LayerId.init, memory ) of
                         Nothing ->
                             [ Test.test
                                 ("[" ++ session.name ++ "] " ++ r.description)
@@ -1066,7 +1066,7 @@ toTests config scenario sessions =
 
                         Just ( c, e ) ->
                             Dict.insert session.name
-                                (ChannelMsg
+                                (LayerMsg
                                     { channel = c
                                     , event = e
                                     }

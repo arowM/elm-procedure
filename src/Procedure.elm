@@ -3,7 +3,7 @@ module Procedure exposing
     , none, concat
     , Layer
     , Pointer
-    , Channel
+    , LayerId
     , channelString
     , putLayer, onLayer
     , publish
@@ -43,7 +43,7 @@ module Procedure exposing
 
 @docs Layer
 @docs Pointer
-@docs Channel
+@docs LayerId
 @docs channelString
 @docs putLayer, onLayer
 @docs publish
@@ -94,11 +94,11 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Html exposing (Html)
-import Internal.Channel as Channel
 import Internal.Core as Core
     exposing
         ( Model(..)
         )
+import Internal.LayerId as LayerId
 import Url exposing (Url)
 
 
@@ -160,18 +160,18 @@ type alias Pointer m m1 =
 
 {-| Identifier for Layers.
 -}
-type alias Channel =
-    Channel.Channel
+type alias LayerId =
+    LayerId.LayerId
 
 
-{-| Convert a Channel into a unique string.
+{-| Convert a LayerId into a unique string.
 
 You can use this value as a key for [`Html.Keyed`](https://package.elm-lang.org/packages/elm/html/latest/Html-Keyed) nodes.
 
 -}
-channelString : Channel -> String
+channelString : LayerId -> String
 channelString =
-    Channel.toString
+    LayerId.toString
 
 
 {-| Put new Layer on the application.
@@ -183,8 +183,8 @@ Suppose your application have `page` field in its memory:
         }
 
     type Page
-        = HomePage ( Channel, MemoryForHomePage )
-        | AccountPage ( Channel, MemoryForAccountPage )
+        = HomePage ( LayerId, MemoryForHomePage )
+        | AccountPage ( LayerId, MemoryForAccountPage )
 
 You can change pages with `putLayer` as follows:
 
@@ -227,7 +227,7 @@ You can change pages with `putLayer` as follows:
 -}
 putLayer :
     { pointer : Pointer m m1
-    , init : Channel -> m -> m
+    , init : LayerId -> m -> m
     }
     -> (Layer m m1 -> List (Procedure c m e))
     -> Procedure c m e
@@ -244,12 +244,12 @@ onLayer =
 
 {-| Publish an event to the specified Layer.
 
-You can use this function inside the View to notify Procedure that an event has occurred in the Layer specified with the given Channel.
+You can use this function inside the View to notify Procedure that an event has occurred in the Layer specified with the given LayerId.
 
 -}
-publish : Channel -> event -> Msg event
+publish : LayerId -> event -> Msg event
 publish c e =
-    Core.ChannelMsg
+    Core.LayerMsg
         { channel = c
         , event = e
         }
@@ -442,7 +442,7 @@ You can use `injectCmd` to inject actual Cmds into your Procedure build with cus
 element :
     { init : memory
     , procedures : flags -> List (Procedure (Cmd (Msg event)) memory event)
-    , view : ( Channel, memory ) -> Html (Msg event)
+    , view : ( LayerId, memory ) -> Html (Msg event)
     }
     -> Program flags memory event
 element option =
@@ -464,7 +464,7 @@ You can use `injectCmd` to inject actual Cmds into your Procedure build with cus
 document :
     { init : memory
     , procedures : flags -> List (Procedure (Cmd (Msg event)) memory event)
-    , view : ( Channel, memory ) -> Document (Msg event)
+    , view : ( LayerId, memory ) -> Document (Msg event)
     }
     -> Program flags memory event
 document option =
@@ -493,7 +493,7 @@ The `onUrlRequest` and `onUrlChange` Events are published to the application roo
 application :
     { init : memory
     , procedures : flags -> Url -> Key -> List (Procedure (Cmd (Msg event)) memory event)
-    , view : ( Channel, memory ) -> Document (Msg event)
+    , view : ( LayerId, memory ) -> Document (Msg event)
     , onUrlRequest : Browser.UrlRequest -> event
     , onUrlChange : Url -> event
     }
@@ -537,7 +537,7 @@ update msg model =
 
 {-| Construct the TEA element view function.
 -}
-elementView : (( Channel, memory ) -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
+elementView : (( LayerId, memory ) -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
 elementView f model =
     let
         memory =
@@ -548,12 +548,12 @@ elementView f model =
                 EndOfProcess { lastState } ->
                     lastState
     in
-    f ( Channel.init, memory )
+    f ( LayerId.init, memory )
 
 
 {-| Just like `Procedure.documentView`.
 -}
-documentView : (( Channel, memory ) -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
+documentView : (( LayerId, memory ) -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
 documentView f model =
     let
         memory =
@@ -564,7 +564,7 @@ documentView f model =
                 EndOfProcess { lastState } ->
                     lastState
     in
-    f ( Channel.init, memory )
+    f ( LayerId.init, memory )
 
 
 {-| TEA subscriptions function implementation for running your Procedures.
@@ -624,7 +624,7 @@ The Event you provided as an argument can be received on the root Layer.
 -}
 onUrlChange : (Url -> event) -> Url -> Msg event
 onUrlChange f =
-    f >> publish Channel.init
+    f >> publish LayerId.init
 
 
 {-| Construct a TEA `onUrlRequest` property value.
@@ -632,4 +632,4 @@ The Event you provided as an argument can be received on the root Layer.
 -}
 onUrlRequest : (Browser.UrlRequest -> event) -> Browser.UrlRequest -> Msg event
 onUrlRequest f =
-    f >> publish Channel.init
+    f >> publish LayerId.init

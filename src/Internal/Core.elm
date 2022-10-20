@@ -18,7 +18,7 @@ module Internal.Core exposing
     , modify, await, async, withMemory, jump, addListener
     , putLayer, onLayer
     , init, update
-    , Context, Layer(..), LayerChannel(..), Pointer, requestChannelEvent, runNavCmd
+    , Context, Layer(..), Pointer, ThisLayerId(..), requestLayerIdEvent, runNavCmd
     )
 
 {-|
@@ -73,7 +73,7 @@ module Internal.Core exposing
 -}
 
 import Browser.Navigation as Nav
-import Internal.Channel as Channel exposing (Channel)
+import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.RequestId as RequestId exposing (RequestId)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
@@ -107,14 +107,14 @@ type alias EndOfProcess_ m =
 type alias Context memory event =
     { state : memory
     , listeners : List (Listener event)
-    , layerChannel : LayerChannel memory
+    , thisLayerId : ThisLayerId memory
     , nextRequestId : RequestId
-    , nextChannel : Channel
+    , nextLayerId : LayerId
     }
 
 
 type alias Listener event =
-    { channel : Channel
+    { channel : LayerId
     , requestId : RequestId
     , name : String
     , sub : Sub (Msg event)
@@ -131,9 +131,9 @@ mapContextMemory layer context =
             (\m1 ->
                 { state = m1
                 , listeners = context.listeners
-                , layerChannel = layer.channel
+                , thisLayerId = layer.channel
                 , nextRequestId = context.nextRequestId
-                , nextChannel = context.nextChannel
+                , nextLayerId = context.nextLayerId
                 }
             )
 
@@ -155,8 +155,8 @@ setContext layer context1 context =
 
 
 type Msg event
-    = ChannelMsg
-        { channel : Channel
+    = LayerMsg
+        { channel : LayerId
         , event : event
         }
     | ResponseMsg
@@ -385,7 +385,7 @@ liftPromiseMemory o (Promise prom1) =
             case mapContextMemory o context of
                 Nothing ->
                     let
-                        (LayerChannel closedChannel) =
+                        (ThisLayerId closedLayerId) =
                             o.channel
                     in
                     { newContext =
@@ -393,7 +393,7 @@ liftPromiseMemory o (Promise prom1) =
                             | listeners =
                                 List.filter
                                     (\sub ->
-                                        sub.channel /= closedChannel
+                                        sub.channel /= closedLayerId
                                     )
                                     context.listeners
                         }
@@ -449,19 +449,19 @@ mapPromiseCmd f (Promise prom) =
             }
 
 
-requestChannelEvent : (e -> Maybe a) -> Promise c m e a
-requestChannelEvent f =
+requestLayerIdEvent : (e -> Maybe a) -> Promise c m e a
+requestLayerIdEvent f =
     Promise <|
         \context ->
             let
-                (LayerChannel thisChannel) =
-                    context.layerChannel
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
 
                 handler : Msg e -> Promise c m e a
                 handler msg =
                     case msg of
-                        ChannelMsg r ->
-                            if r.channel /= thisChannel then
+                        LayerMsg r ->
+                            if r.channel /= thisLayerId then
                                 justAwaitPromise handler
 
                             else
@@ -497,9 +497,9 @@ type Procedure c m e
         { async : Procedure c m e
         , next : Procedure c m e
         }
-    | WithNewChannel
+    | WithNewLayerId
         -- Supply `m` parameter not to assign new channel on expired Layers.
-        { withNewChannel : m -> Channel -> Procedure c m e
+        { withNewLayerId : m -> LayerId -> Procedure c m e
         , next : Procedure c m e
         }
     | WithMemory
@@ -543,8 +543,8 @@ mappend p1 p2 =
             Async
                 { r | next = mappend r.next p2 }
 
-        WithNewChannel r ->
-            WithNewChannel
+        WithNewLayerId r ->
+            WithNewLayerId
                 { r | next = mappend r.next p2 }
 
         WithMemory r ->
@@ -558,8 +558,8 @@ mappend p1 p2 =
             p2
 
 
-type LayerChannel m
-    = LayerChannel Channel
+type ThisLayerId m
+    = ThisLayerId LayerId
 
 
 liftMemory_ :
@@ -594,16 +594,16 @@ liftMemory_ o proc =
                 , next = liftMemory_ o r.next
                 }
 
-        WithNewChannel r ->
-            WithNewChannel
-                { withNewChannel =
+        WithNewLayerId r ->
+            WithNewLayerId
+                { withNewLayerId =
                     \m c ->
                         case o.get m of
                             Nothing ->
                                 Nil
 
                             Just m1 ->
-                                liftMemory_ o (r.withNewChannel m1 c)
+                                liftMemory_ o (r.withNewLayerId m1 c)
                 , next = liftMemory_ o r.next
                 }
 
@@ -650,11 +650,11 @@ mapCmd f proc =
                 , next = mapCmd f r.next
                 }
 
-        WithNewChannel r ->
-            WithNewChannel
-                { withNewChannel =
+        WithNewLayerId r ->
+            WithNewLayerId
+                { withNewLayerId =
                     \m c ->
-                        mapCmd f (r.withNewChannel m c)
+                        mapCmd f (r.withNewLayerId m c)
                 , next = mapCmd f r.next
                 }
 
@@ -725,32 +725,32 @@ type Layer m m1
 type alias Layer_ m m1 =
     { get : m -> Maybe m1
     , set : m1 -> m -> m
-    , channel : LayerChannel m1
+    , channel : ThisLayerId m1
     }
 
 
 type alias Pointer m m1 =
-    { get : m -> Maybe ( Channel, m1 )
-    , set : ( Channel, m1 ) -> m -> m
+    { get : m -> Maybe ( LayerId, m1 )
+    , set : ( LayerId, m1 ) -> m -> m
     }
 
 
-withNewChannel : (Channel -> List (Procedure c m e)) -> Procedure c m e
-withNewChannel f =
-    WithNewChannel
-        { withNewChannel = \_ -> f >> concat
+withNewLayerId : (LayerId -> List (Procedure c m e)) -> Procedure c m e
+withNewLayerId f =
+    WithNewLayerId
+        { withNewLayerId = \_ -> f >> concat
         , next = Nil
         }
 
 
 putLayer :
     { pointer : Pointer m m1
-    , init : Channel -> m -> m
+    , init : LayerId -> m -> m
     }
     -> (Layer m m1 -> List (Procedure c m e))
     -> Procedure c m e
 putLayer o f =
-    withNewChannel <|
+    withNewLayerId <|
         \c ->
             [ modify (o.init c)
             , concat <|
@@ -768,7 +768,7 @@ putLayer o f =
                                                 Nothing
                                         )
                         , set = \m1 -> o.pointer.set ( c, m1 )
-                        , channel = LayerChannel c
+                        , channel = ThisLayerId c
                         }
             ]
 
@@ -793,14 +793,14 @@ addListener { name, subscription, handler } =
                         myRequestId =
                             context.nextRequestId
 
-                        (LayerChannel layerChannel) =
-                            context.layerChannel
+                        (ThisLayerId thisLayerId) =
+                            context.thisLayerId
 
                         newContext =
                             { context
                                 | nextRequestId = RequestId.inc context.nextRequestId
                                 , listeners =
-                                    { channel = layerChannel
+                                    { channel = thisLayerId
                                     , requestId = myRequestId
                                     , name = name
                                     , sub = subscription context.state |> Sub.map toListenerMsg
@@ -855,8 +855,8 @@ portRequest o =
                 myRequestId =
                     context.nextRequestId
 
-                (LayerChannel layerChannel) =
-                    context.layerChannel
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
 
                 nextPromise : Msg e -> Promise c m e resp
                 nextPromise msg =
@@ -880,7 +880,7 @@ portRequest o =
                 { context
                     | nextRequestId = RequestId.inc context.nextRequestId
                     , listeners =
-                        { channel = layerChannel
+                        { channel = thisLayerId
                         , requestId = myRequestId
                         , name = o.name
                         , sub =
@@ -924,8 +924,8 @@ customRequest o =
                 myRequestId =
                     context.nextRequestId
 
-                (LayerChannel layerChannel) =
-                    context.layerChannel
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
 
                 nextPromise : Msg e -> Promise c m e e
                 nextPromise msg =
@@ -944,7 +944,7 @@ customRequest o =
                 { context
                     | nextRequestId = RequestId.inc context.nextRequestId
                     , listeners =
-                        { channel = layerChannel
+                        { channel = thisLayerId
                         , requestId = myRequestId
                         , name = o.name
                         , sub = Sub.none
@@ -981,14 +981,14 @@ layerEvent f =
     Promise <|
         \context ->
             let
-                (LayerChannel thisChannel) =
-                    context.layerChannel
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
 
                 handler : Msg e -> Promise c m e a
                 handler msg =
                     case msg of
-                        ChannelMsg r ->
-                            if r.channel /= thisChannel then
+                        LayerMsg r ->
+                            if r.channel /= thisLayerId then
                                 justAwaitPromise handler
 
                             else
@@ -1024,9 +1024,9 @@ initContext : m -> Context m e
 initContext memory =
     { state = memory
     , listeners = []
-    , layerChannel = LayerChannel Channel.init
+    , thisLayerId = ThisLayerId LayerId.init
     , nextRequestId = RequestId.init
-    , nextChannel = Channel.inc Channel.init
+    , nextLayerId = LayerId.inc LayerId.init
     }
 
 
@@ -1078,18 +1078,18 @@ toModel context proc =
         Async r ->
             toModel context (concurrent r.async r.next)
 
-        WithNewChannel r ->
+        WithNewLayerId r ->
             let
-                newChannel =
-                    context.nextChannel
+                newLayerId =
+                    context.nextLayerId
 
                 newContext =
                     { context
-                        | nextChannel = Channel.inc context.nextChannel
+                        | nextLayerId = LayerId.inc context.nextLayerId
                     }
 
                 newProc =
-                    r.withNewChannel context.state newChannel
+                    r.withNewLayerId context.state newLayerId
             in
             toModel newContext (mappend newProc r.next)
 
@@ -1135,8 +1135,8 @@ concurrent p1 p2 =
                             | next = concurrent p1 r2.next
                         }
 
-                WithNewChannel r2 ->
-                    WithNewChannel
+                WithNewLayerId r2 ->
+                    WithNewLayerId
                         { r2
                             | next = concurrent p1 r2.next
                         }
@@ -1173,8 +1173,8 @@ concurrent p1 p2 =
                             | next = concurrent r1.next p2
                         }
 
-                WithNewChannel r1 ->
-                    WithNewChannel
+                WithNewLayerId r1 ->
+                    WithNewLayerId
                         { r1
                             | next = concurrent r1.next p2
                         }
@@ -1215,7 +1215,7 @@ update msg model =
                 NoOp ->
                     ( model, [] )
 
-                ChannelMsg _ ->
+                LayerMsg _ ->
                     onGoing.next msg context
 
                 ListenerMsg _ ->

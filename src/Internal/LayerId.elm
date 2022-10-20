@@ -1,5 +1,5 @@
-module Internal.Channel exposing
-    ( Channel
+module Internal.LayerId exposing
+    ( LayerId
     , init
     , inc
     , decoder
@@ -9,7 +9,7 @@ module Internal.Channel exposing
 
 {-|
 
-@docs Channel
+@docs LayerId
 @docs init
 @docs inc
 @docs decoder
@@ -24,26 +24,26 @@ import Json.Encode as JE exposing (Value)
 
 
 {-| -}
-type Channel
-    = Channel (List SafeInt)
+type LayerId
+    = LayerId (List SafeInt)
 
 
 {-| Initial value.
 -}
-init : Channel
+init : LayerId
 init =
-    Channel [ SafeInt.minBound ]
+    LayerId [ SafeInt.minBound ]
 
 
 {-| -}
-inc : Channel -> Channel
-inc (Channel ls) =
+inc : LayerId -> LayerId
+inc (LayerId ls) =
     case incList ls of
         ( True, new ) ->
-            Channel <| SafeInt.minBound :: new
+            LayerId <| SafeInt.minBound :: new
 
         ( False, new ) ->
-            Channel new
+            LayerId new
 
 
 incList : List SafeInt -> ( Bool, List SafeInt )
@@ -61,21 +61,21 @@ incList =
 
 
 {-| -}
-toString : Channel -> String
-toString (Channel ls) =
+toString : LayerId -> String
+toString (LayerId ls) =
     List.map SafeInt.toString ls
         |> String.join "_"
-        |> (\str -> "tid_" ++ str)
+        |> (\str -> "lid_" ++ str)
 
 
 {-| -}
-decoder : Decoder Channel
+decoder : Decoder LayerId
 decoder =
     JD.list SafeInt.decoder
-        |> JD.map Channel
+        |> JD.map LayerId
 
 
 {-| -}
-toValue : Channel -> Value
-toValue (Channel ls) =
+toValue : LayerId -> Value
+toValue (LayerId ls) =
     JE.list SafeInt.toValue ls

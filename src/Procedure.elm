@@ -23,7 +23,7 @@ module Procedure exposing
     , documentView
     , subscriptions
     , init
-    , Key, realKey
+    , Key, runNavCmd
     , Msg
     , Model
     , onUrlChange
@@ -83,7 +83,7 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 @docs documentView
 @docs subscriptions
 @docs init
-@docs Key, realKey
+@docs Key, runNavCmd
 @docs Msg
 @docs Model
 @docs onUrlChange
@@ -92,7 +92,7 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 -}
 
 import Browser exposing (Document)
-import Browser.Navigation
+import Browser.Navigation as Nav
 import Html exposing (Html)
 import Internal.Channel as Channel
 import Internal.Core as Core
@@ -599,11 +599,13 @@ type alias Key =
 
 
 {-| Retrieve real `Browser.Navigation.Key` from TEPA `Key`.
-It always results in `Just` when evaluating Procedure in the real application;
-it results in `Nothing` when testing as scenario or generating documentation.
+It always provide real `Browser.Navigation.Key` when evaluating Procedure in the real application;
+it returns `Cmd.none` when testing as scenario or generating documentation.
 -}
-realKey : Key -> Maybe Browser.Navigation.Key
-realKey = Core.realKey
+runNavCmd : (Nav.Key -> Cmd msg) -> Key -> Cmd msg
+runNavCmd =
+    Core.runNavCmd
+
 
 {-| TEA Message that wraps your events.
 -}

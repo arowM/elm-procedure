@@ -1,25 +1,25 @@
 module Internal.Core exposing
     ( Model(..)
-    , Msg(..)
+    , Msg (..)
     , mapMsg
     , Key(..)
-    , Promise(..)
+    , runNavCmd
+    , Promise
+    , Layer
+    , Pointer
+    , layerView
     , succeedPromise
     , mapPromise
-    , andAsyncPromise
     , andRacePromise
     , andThenPromise
-    , liftPromiseMemory
+    , syncPromise
+    , liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
     , portRequest, customRequest
-    , push
     , layerEvent
-    , Procedure(..)
-    , none, concat
-    , mapCmd, liftEvent
-    , modify, await, async, withMemory, jump, addListener
-    , putLayer, onLayer
+    , none, sequence, concurrent
+    , modify, push, currentState, reject, listen
+    , newLayer, onLayer
     , init, update
-    , Context, Layer(..), Pointer, ThisLayerId(..), runNavCmd
     )
 
 {-|
@@ -42,30 +42,23 @@ module Internal.Core exposing
 @docs Promise
 @docs succeedPromise
 @docs mapPromise
-@docs andAsyncPromise
 @docs andRacePromise
 @docs andThenPromise
-@docs liftPromiseMemory
+@docs syncPromise
+@docs liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
 @docs portRequest, customRequest
-@docs push
 @docs layerEvent
-
-
-# Procedure
-
-@docs Procedure
-@docs none, concat
-@docs mapCmd, liftEvent
-
+@docs Layer, Pointer
+@docs none, sequence, concurrent
 
 # Primitive Procedures
 
-@docs modify, await, async, withMemory, jump, addListener
+@docs modify, push, currentState, reject, listen
 
 
 # Layer
 
-@docs putLayer, onLayer
+@docs newLayer, onLayer
 
 
 # TEA
@@ -75,6 +68,7 @@ module Internal.Core exposing
 -}
 
 import Browser.Navigation as Nav
+import Html exposing (Html)
 import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.RequestId as RequestId exposing (RequestId)
 import Json.Decode as JD exposing (Decoder)
@@ -105,7 +99,7 @@ type alias EndOfProcess_ m =
     }
 
 
-{-| Execution time context for procedures
+{-| Execution time context for Procedures
 -}
 type alias Context memory =
     { state : memory
@@ -325,8 +319,8 @@ justAwaitPromise f =
             }
 
 
-andAsyncPromise : Promise c m e a -> Promise c m e (a -> b) -> Promise c m e b
-andAsyncPromise (Promise promA) (Promise promF) =
+syncPromise : Promise c m e a -> Promise c m e (a -> b) -> Promise c m e b
+syncPromise (Promise promA) (Promise promF) =
     Promise <|
         \context ->
             let
@@ -358,7 +352,7 @@ andAsyncPromise (Promise promA) (Promise promF) =
                     ( AwaitMsg nextPromF, AwaitMsg nextPromA ) ->
                         AwaitMsg <|
                             \msg m ->
-                                andAsyncPromise (nextPromA msg m) (nextPromF msg m)
+                                syncPromise (nextPromA msg m) (nextPromF msg m)
 
                     ( Rejected, _ ) ->
                         Rejected
@@ -452,7 +446,7 @@ andThenPromise f (Promise promA) =
 
 
 liftPromiseMemory :
-    Layer_ m m1
+    Pointer_ m m1
     -> Promise c m1 e a
     -> Promise c m e a
 liftPromiseMemory o (Promise prom1) =
@@ -569,407 +563,235 @@ liftPromiseEvent o (Promise prom1) =
             }
 
 
--- Procedure
 
 
-type Procedure c m e
-    = Modify
-        { modify : m -> m
-        , next : Procedure c m e
-        }
-    | RunPromise
-        { promise : Promise c m e (Procedure c m e)
-        }
-    | Async
-        { async : Procedure c m e
-        , next : Procedure c m e
-        }
-    | WithNewLayerId
-        -- Supply `m` parameter not to assign new Layer Id on expired Layers.
-        { withNewLayerId : m -> LayerId -> Procedure c m e
-        , next : Procedure c m e
-        }
-    | WithMemory
-        { next : m -> Procedure c m e
-        }
-    | Jump
-        { jumpTo : Procedure c m e
-        }
-    | Nil
+-- Primitive Promises
 
 
-none : Procedure c m e
+none : Promise c m e ()
 none =
-    Nil
+    succeedPromise ()
 
 
-concat : List (Procedure c m e) -> Procedure c m e
-concat =
-    List.foldr mappend Nil
+sequence : List (Promise c m e ()) -> Promise c m e ()
+sequence =
+    List.foldl
+        (\a acc ->
+            acc
+                |> andThenPromise
+                    (\() -> a)
+        )
+        none
+
+concurrent : List (Promise c m e ()) -> Promise c m e ()
+concurrent =
+    List.foldl
+        (\a acc ->
+            acc
+                |> mapPromise
+                    (\() _ -> ())
+                |> syncPromise a
+        )
+        none
+
+currentState : Promise c m e m
+currentState =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = []
+            , addListeners = []
+            , closedLayers = []
+            , handler = Resolved context.state
+            }
 
 
-mappend : Procedure c m e -> Procedure c m e -> Procedure c m e
-mappend p1 p2 =
-    case p1 of
-        Modify r ->
-            Modify
-                { r | next = mappend r.next p2 }
+genNewLayerId : Promise c m e LayerId
+genNewLayerId =
+    Promise <|
+        \context ->
+            let
+                newLayerId = context.nextLayerId
+                newContext =
+                    { context | nextLayerId = LayerId.inc newLayerId }
+            in
+            { newContext = newContext
+            , cmds = []
+            , addListeners = []
+            , closedLayers = []
+            , handler = Resolved newLayerId
+            }
 
-        RunPromise r ->
-            RunPromise
-                { r
-                    | promise =
-                        mapPromise
-                            (\resolved ->
-                                mappend resolved p2
-                            )
-                            r.promise
+
+modify : (m -> m) -> Promise c m e ()
+modify f =
+    Promise <|
+        \context ->
+            { newContext =
+                { context
+                    | state = f context.state
                 }
+            , cmds = []
+            , addListeners = []
+            , closedLayers = []
+            , handler = Resolved ()
+            }
 
-        Async r ->
-            Async
-                { r | next = mappend r.next p2 }
 
-        WithNewLayerId r ->
-            WithNewLayerId
-                { r | next = mappend r.next p2 }
+push : (m -> List c) -> Promise c m e ()
+push f =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = f context.state
+            , addListeners = []
+            , closedLayers = []
+            , handler = Resolved ()
+            }
 
-        WithMemory r ->
-            WithMemory
-                { r | next = \m -> mappend (r.next m) p2 }
 
-        Jump r ->
-            Jump r
 
-        Nil ->
-            p2
+reject : Promise c m e ()
+reject =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = []
+            , addListeners = []
+            , closedLayers = []
+            , handler = Rejected
+            }
+
+
+type Layer m = Layer LayerId m
+
+
+newLayer :
+    { get : (Layer m1 -> Maybe m1) -> m -> Maybe m1
+    , modify : (Layer m1 -> Layer m1) -> m -> m
+    }
+    -> m1 -> Promise c m e (Layer m1, Pointer m m1)
+newLayer o m1 =
+    genNewLayerId
+        |> andThenPromise
+            (\layerId ->
+                let
+                    unwrapper : Layer m1 -> Maybe m1
+                    unwrapper (Layer layerId_ m1_) =
+                        if layerId_ == layerId then
+                            Just m1_
+                        else
+                            Nothing
+
+                    modifier : m1 -> Layer m1 -> Layer m1
+                    modifier newM1 (Layer layerId_ oldM1) =
+                        if layerId_ == layerId then
+                            Layer layerId newM1
+                        else
+                            Layer layerId_ oldM1
+                in
+                succeedPromise <|
+                    ( Layer layerId m1
+                    , Pointer
+                        { get =
+                            \m ->
+                                o.get unwrapper m
+                        , set = \newM1 ->
+                            o.modify (modifier newM1)
+                        , layerId = ThisLayerId layerId
+                        }
+                    )
+            )
+
+
+onLayer : Pointer m m1 -> Promise c m1 e a -> Promise c m e a
+onLayer (Pointer layer) procs =
+    liftPromiseMemory layer procs
+
+
+layerView : Layer m -> (m -> Html e) -> (String, Html (Msg e))
+layerView (Layer layerId m) f =
+    ( LayerId.toString layerId
+    , f m
+        |> Html.map
+            (\e -> LayerMsg
+                { layerId = layerId
+                , event = e
+                }
+            )
+    )
 
 
 type ThisLayerId m
     = ThisLayerId LayerId
 
-
-liftMemory_ :
-    Layer_ m m1
-    -> Procedure c m1 e
-    -> Procedure c m e
-liftMemory_ o proc =
-    case proc of
-        Modify r ->
-            Modify
-                { modify =
-                    \m ->
-                        case o.get m of
-                            Just m1 ->
-                                o.set (r.modify m1) m
-
-                            Nothing ->
-                                m
-                , next = liftMemory_ o r.next
-                }
-
-        RunPromise r ->
-            RunPromise
-                { promise =
-                    mapPromise (liftMemory_ o) r.promise
-                        |> liftPromiseMemory o
-                }
-
-        Async r ->
-            Async
-                { async = liftMemory_ o r.async
-                , next = liftMemory_ o r.next
-                }
-
-        WithNewLayerId r ->
-            WithNewLayerId
-                { withNewLayerId =
-                    \m c ->
-                        case o.get m of
-                            Nothing ->
-                                Nil
-
-                            Just m1 ->
-                                liftMemory_ o (r.withNewLayerId m1 c)
-                , next = liftMemory_ o r.next
-                }
-
-        WithMemory r ->
-            WithMemory
-                { next =
-                    \m ->
-                        case o.get m of
-                            Nothing ->
-                                Nil
-
-                            Just m1 ->
-                                liftMemory_ o (r.next m1)
-                }
-
-        Jump r ->
-            Jump
-                { jumpTo = liftMemory_ o r.jumpTo
-                }
-
-        Nil ->
-            Nil
+type Pointer m m1
+    = Pointer (Pointer_ m m1)
 
 
-mapCmd : (c -> cmd) -> Procedure c m e -> Procedure cmd m e
-mapCmd f proc =
-    case proc of
-        Modify r ->
-            Modify
-                { modify = r.modify
-                , next = mapCmd f r.next
-                }
-
-        RunPromise r ->
-            RunPromise
-                { promise =
-                    mapPromiseCmd f r.promise
-                        |> mapPromise (mapCmd f)
-                }
-
-        Async r ->
-            Async
-                { async = mapCmd f r.async
-                , next = mapCmd f r.next
-                }
-
-        WithNewLayerId r ->
-            WithNewLayerId
-                { withNewLayerId =
-                    \m c ->
-                        mapCmd f (r.withNewLayerId m c)
-                , next = mapCmd f r.next
-                }
-
-        WithMemory r ->
-            WithMemory
-                { next = \m -> mapCmd f (r.next m)
-                }
-
-        Jump r ->
-            Jump
-                { jumpTo = mapCmd f r.jumpTo }
-
-        Nil ->
-            Nil
-
-
-liftEvent :
-    { wrap : e1 -> e0
-    , unwrap : e0 -> Maybe e1
-    } -> Procedure c m e1 -> Procedure c m e0
-liftEvent o proc =
-    case proc of
-        Modify r ->
-            Modify
-            { modify = r.modify
-            , next = liftEvent o r.next
-            }
-
-        RunPromise r ->
-            RunPromise
-            { promise =
-                liftPromiseEvent o r.promise
-                    |> mapPromise (liftEvent o)
-            }
-
-        Async r ->
-            Async
-            { async = liftEvent o r.async
-            , next = liftEvent o r.next
-            }
-
-        WithNewLayerId r ->
-            WithNewLayerId
-            { withNewLayerId = \m lid ->
-                liftEvent o (r.withNewLayerId m lid)
-            , next = liftEvent o r.next
-            }
-        WithMemory r ->
-            WithMemory
-            { next = \m ->
-                liftEvent o (r.next m)
-            }
-        Jump r ->
-            Jump
-            { jumpTo = liftEvent o r.jumpTo
-            }
-        Nil ->
-            Nil
-
-
--- Primitive Procedures
-
-
-modify : (m -> m) -> Procedure c m e
-modify f =
-    Modify
-        { modify = f
-        , next = Nil
-        }
-
-
-runPromise : Promise c m e (Procedure c m e) -> Procedure c m e
-runPromise prom =
-    RunPromise
-        { promise = prom
-        }
-
-
-await : Promise c m e a -> (a -> List (Procedure c m e)) -> Procedure c m e
-await prom f =
-    mapPromise (f >> concat) prom
-        |> runPromise
-
-
-async : List (Procedure c m e) -> Procedure c m e
-async procs =
-    Async
-        { async = concat procs
-        , next = Nil
-        }
-
-
-jump : (() -> List (Procedure c m e)) -> Procedure c m e
-jump f =
-    Jump
-        { jumpTo = concat <| f ()
-        }
-
-
-withMemory : (m -> List (Procedure c m e)) -> Procedure c m e
-withMemory f =
-    WithMemory
-        { next = \m -> concat (f m)
-        }
-
-
-type Layer m m1
-    = Layer (Layer_ m m1)
-
-
-type alias Layer_ m m1 =
+type alias Pointer_ m m1 =
     { get : m -> Maybe m1
     , set : m1 -> m -> m
     , layerId : ThisLayerId m1
     }
 
 
-type alias Pointer m m1 =
-    { get : m -> Maybe ( LayerId, m1 )
-    , set : ( LayerId, m1 ) -> m -> m
-    }
-
-
-withNewLayerId : (LayerId -> List (Procedure c m e)) -> Procedure c m e
-withNewLayerId f =
-    WithNewLayerId
-        { withNewLayerId = \_ -> f >> concat
-        , next = Nil
-        }
-
-
-putLayer :
-    { pointer : Pointer m m1
-    , init : LayerId -> m -> m
-    }
-    -> (Layer m m1 -> List (Procedure c m e))
-    -> Procedure c m e
-putLayer o f =
-    withNewLayerId <|
-        \c ->
-            [ modify (o.init c)
-            , concat <|
-                f <|
-                    Layer
-                        { get =
-                            \m ->
-                                o.pointer.get m
-                                    |> Maybe.andThen
-                                        (\( c_, m1 ) ->
-                                            if c_ == c then
-                                                Just m1
-
-                                            else
-                                                Nothing
-                                        )
-                        , set = \m1 -> o.pointer.set ( c, m1 )
-                        , layerId = ThisLayerId c
-                        }
-            ]
-
-
-onLayer : Layer m m1 -> List (Procedure c m1 e) -> Procedure c m e
-onLayer (Layer layer) procs =
-    liftMemory_ layer <| concat procs
-
-
-addListener :
+listen :
     { name : String
     , subscription : m -> Sub e
-    , handler : e -> List (Procedure c m e)
+    , handler : e -> List (Promise c m e ())
     }
-    -> Procedure c m e
-addListener { name, subscription, handler } =
-    async
-        [ runPromise <|
-            Promise <|
-                \context ->
-                    let
-                        myRequestId =
-                            context.nextRequestId
+    -> Promise c m e ()
+listen { name, subscription, handler } =
+    Promise <|
+        \context ->
+            let
+                myRequestId =
+                    context.nextRequestId
 
-                        (ThisLayerId thisLayerId) =
-                            context.thisLayerId
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
 
-                        newContext =
-                            { context
-                                | nextRequestId = RequestId.inc context.nextRequestId
-                            }
-
-                        toListenerMsg e =
-                            ListenerMsg
-                                { requestId = myRequestId
-                                , event = e
-                                }
-
-                        awaitForever : Msg e -> m -> Promise c m e (Procedure c m e)
-                        awaitForever msg _ =
-                            case msg of
-                                ListenerMsg listenerMsg ->
-                                    if listenerMsg.requestId == myRequestId then
-                                        succeedPromise <|
-                                            concat
-                                                [ async
-                                                    [ runPromise <| justAwaitPromise awaitForever
-                                                    ]
-                                                , handler listenerMsg.event
-                                                    |> concat
-                                                ]
-
-                                    else
-                                        justAwaitPromise awaitForever
-
-                                _ ->
-                                    justAwaitPromise awaitForever
-                    in
-                    { newContext = newContext
-                    , cmds = []
-                    , addListeners =
-                        [ { layerId = thisLayerId
-                          , requestId = myRequestId
-                          , name = name
-                          , sub = subscription context.state |> Sub.map toListenerMsg
-                          }
-                        ]
-                    , closedLayers = []
-                    , handler = AwaitMsg awaitForever
+                newContext =
+                    { context
+                        | nextRequestId = RequestId.inc context.nextRequestId
                     }
-        ]
+
+                toListenerMsg e =
+                    ListenerMsg
+                        { requestId = myRequestId
+                        , event = e
+                        }
+
+                awaitForever : Msg e -> m -> Promise c m e ()
+                awaitForever msg _ =
+                    case msg of
+                        ListenerMsg listenerMsg ->
+                            if listenerMsg.requestId == myRequestId then
+                                concurrent
+                                    [ justAwaitPromise awaitForever
+                                    , handler listenerMsg.event
+                                        |> sequence
+                                    ]
+
+                            else
+                                justAwaitPromise awaitForever
+
+                        _ ->
+                            justAwaitPromise awaitForever
+            in
+            { newContext = newContext
+            , cmds = []
+            , addListeners =
+                [ { layerId = thisLayerId
+                  , requestId = myRequestId
+                  , name = name
+                  , sub = subscription context.state |> Sub.map toListenerMsg
+                  }
+                ]
+            , closedLayers = []
+            , handler = AwaitMsg awaitForever
+            }
 
 
 portRequest :
@@ -1099,40 +921,23 @@ customRequest o =
             }
 
 
-push : (m -> List c) -> Promise c m e ()
-push f =
-    Promise <|
-        \context ->
-            { newContext = context
-            , cmds = f context.state
-            , addListeners = []
-            , closedLayers = []
-            , handler = Resolved ()
-            }
-
-
-layerEvent : (e -> m -> Maybe a) -> Promise c m e a
-layerEvent f =
+layerEvent : Promise c m e e
+layerEvent =
     Promise <|
         \context ->
             let
                 (ThisLayerId thisLayerId) =
                     context.thisLayerId
 
-                handler : Msg e -> m -> Promise c m e a
-                handler msg m =
+                handler : Msg e -> m -> Promise c m e e
+                handler msg _ =
                     case msg of
                         LayerMsg r ->
                             if r.layerId /= thisLayerId then
                                 justAwaitPromise handler
 
                             else
-                                case f r.event m of
-                                    Nothing ->
-                                        justAwaitPromise handler
-
-                                    Just a ->
-                                        succeedPromise a
+                                succeedPromise r.event
 
                         _ ->
                             justAwaitPromise handler
@@ -1151,10 +956,10 @@ layerEvent f =
 
 init :
     memory
-    -> List (Procedure cmd memory event)
+    -> List (Promise cmd memory event ())
     -> ( Model cmd memory event, List cmd )
-init m procs =
-    toModel (initContext m) [] (concat procs)
+init m proms =
+    toModel (initContext m) [] (sequence proms)
 
 
 initContext : m -> Context m
@@ -1166,22 +971,9 @@ initContext memory =
     }
 
 
-toModel : Context m -> List (Listener e) -> Procedure c m e -> ( Model c m e, List c )
-toModel context listeners proc =
-    case proc of
-        Modify r ->
-            toModel
-                { context
-                    | state = r.modify context.state
-                }
-                listeners
-                r.next
-
-        RunPromise r ->
+toModel : Context m -> List (Listener e) -> Promise c m e () -> ( Model c m e, List c )
+toModel context listeners (Promise prom) =
             let
-                (Promise prom) =
-                    r.promise
-
                 eff =
                     prom context
                 newListeners =
@@ -1192,15 +984,12 @@ toModel context listeners proc =
                             )
             in
             case eff.handler of
-                Resolved nextProm ->
-                    let
-                        ( newModel, newCmds ) =
-                            toModel
-                                eff.newContext
-                                newListeners
-                                nextProm
-                    in
-                    ( newModel, eff.cmds ++ newCmds )
+                Resolved () ->
+                    ( EndOfProcess
+                        { lastState = eff.newContext.state
+                        }
+                    , eff.cmds
+                    )
 
                 Rejected ->
                     ( EndOfProcess
@@ -1219,132 +1008,10 @@ toModel context listeners proc =
                                 toModel
                                     nextContext
                                     nextListeners
-                                    (runPromise (nextProm msg nextContext.state))
+                                    (nextProm msg nextContext.state)
                         }
                     , eff.cmds
                     )
-
-        Async r ->
-            toModel context listeners (concurrent r.async r.next)
-
-        WithNewLayerId r ->
-            let
-                newLayerId =
-                    context.nextLayerId
-
-                newContext =
-                    { context
-                        | nextLayerId = LayerId.inc context.nextLayerId
-                    }
-
-                newProc =
-                    r.withNewLayerId context.state newLayerId
-            in
-            toModel newContext listeners (mappend newProc r.next)
-
-        WithMemory r ->
-            toModel context listeners (r.next context.state)
-
-        Jump r ->
-            toModel context listeners r.jumpTo
-
-        Nil ->
-            ( EndOfProcess
-                { lastState = context.state
-                }
-            , []
-            )
-
-
-concurrent : Procedure c m e -> Procedure c m e -> Procedure c m e
-concurrent p1 p2 =
-    let
-        concurrentRequest r1 r2 =
-            RunPromise
-                { promise =
-                    mapPromise concurrent r1.promise
-                        |> andAsyncPromise r2.promise
-                }
-    in
-    case ( p1, p2 ) of
-        ( RunPromise r1, _ ) ->
-            case p2 of
-                Modify r2 ->
-                    Modify
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
-                RunPromise r2 ->
-                    concurrentRequest r1 r2
-
-                Async r2 ->
-                    Async
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
-                WithNewLayerId r2 ->
-                    WithNewLayerId
-                        { r2
-                            | next = concurrent p1 r2.next
-                        }
-
-                WithMemory r2 ->
-                    WithMemory
-                        { r2
-                            | next = \m -> concurrent p1 (r2.next m)
-                        }
-
-                Jump r2 ->
-                    Jump
-                        { r2
-                            | jumpTo = concurrent p1 r2.jumpTo
-                        }
-
-                Nil ->
-                    p1
-
-        ( _, RunPromise r2 ) ->
-            case p1 of
-                Modify r1 ->
-                    Modify
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
-                RunPromise r1 ->
-                    concurrentRequest r1 r2
-
-                Async r1 ->
-                    Async
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
-                WithNewLayerId r1 ->
-                    WithNewLayerId
-                        { r1
-                            | next = concurrent r1.next p2
-                        }
-
-                WithMemory r1 ->
-                    WithMemory
-                        { r1
-                            | next = \m -> concurrent (r1.next m) p2
-                        }
-
-                Jump r1 ->
-                    Jump
-                        { r1
-                            | jumpTo = concurrent r1.jumpTo p2
-                        }
-
-                Nil ->
-                    p2
-
-        _ ->
-            mappend p1 p2
 
 
 update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List cmd )

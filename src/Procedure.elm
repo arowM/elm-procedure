@@ -1,10 +1,8 @@
 module Procedure exposing
-    ( Procedure
-    , none, concat, mapCmd, liftEvent
-    , Layer
     , Pointer
     , LayerId
     , layerKey
+
     , putLayer, onLayer
     , publish
     , modify, await, awaitLayerEvent, async, jump, addListener, quit
@@ -37,7 +35,6 @@ module Procedure exposing
 
 @docs Procedure
 @docs none, concat
-@docs mapCmd, liftEvent
 
 
 # Layer
@@ -50,16 +47,10 @@ module Procedure exposing
 @docs publish
 
 
-# Primitive Procedures
-
-@docs modify, await, awaitLayerEvent, async, jump, addListener, quit
-
-
-# Helper procedures
+# Helper Procedures
 
 @docs when
 @docs unless
-@docs withMemory
 @docs withMaybe
 
 
@@ -277,13 +268,6 @@ publish c e =
 -- Primitive Procedures
 
 
-{-| Construct a `Procedure` instance that modifies the Memory state.
-
-Note that the update operation, passed as the second argument, is performed atomically; it means the state of the Memory is not updated by another process during it is read and written by the `modify`.
-
--}
-modify : (m -> m) -> Procedure c m e
-modify =
     Core.modify
 
 

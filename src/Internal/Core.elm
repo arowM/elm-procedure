@@ -1,13 +1,9 @@
 module Internal.Core exposing
-    ( Model(..)
-    , Msg (..)
+    ( Model(..), memoryState
+    , Msg(..), rootLayerMsg
     , mapMsg
     , Key(..)
-    , runNavCmd
     , Promise
-    , Layer
-    , Pointer
-    , layerView
     , succeedPromise
     , mapPromise
     , andRacePromise
@@ -16,10 +12,22 @@ module Internal.Core exposing
     , liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
     , portRequest, customRequest
     , layerEvent
+    , Layer(..), Pointer(..), Pointer_
+    , layerView, keyedLayerView, layerDocument
     , none, sequence, concurrent
     , modify, push, currentState, reject, listen
     , newLayer, onLayer
     , init, update
+    , elementView, documentView, subscriptions
+    , runNavCmd
+    , Scenario(..)
+    , TestModel(..)
+    , noneScenario, noneTest
+    , concatScenario
+    , toTest
+    , Section
+    , section
+    , cases
     )
 
 {-|
@@ -27,8 +35,8 @@ module Internal.Core exposing
 
 # Core
 
-@docs Model
-@docs Msg
+@docs Model, memoryState
+@docs Msg, rootLayerMsg
 @docs mapMsg
 
 
@@ -49,7 +57,9 @@ module Internal.Core exposing
 @docs portRequest, customRequest
 @docs layerEvent
 @docs Layer, Pointer
+@docs layerView, keyedLayerView, layerDocument
 @docs none, sequence, concurrent
+
 
 # Primitive Procedures
 
@@ -64,15 +74,33 @@ module Internal.Core exposing
 # TEA
 
 @docs init, update
+@docs elementView, documentView, subscriptions
+
+
+# Scenario
+
+@docs Scenario, TestModel
+@docs noneScenario, noneTest
+@docs concatScenario
+@docs toTest
+@docs Section
+@docs section
+@docs cases
 
 -}
 
+import Browser exposing (Document)
 import Browser.Navigation as Nav
+import Dict exposing (Dict)
+import Expect
 import Html exposing (Html)
 import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.RequestId as RequestId exposing (RequestId)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
+import Test exposing (Test)
+import Test.Sequence as SeqTest
+import Url exposing (Url)
 
 
 
@@ -83,6 +111,15 @@ type Model cmd memory event
     = OnGoing (OnGoing_ cmd memory event)
     | EndOfProcess (EndOfProcess_ memory)
 
+
+memoryState : Model cmd memory event -> memory
+memoryState model =
+            case model of
+                OnGoing { context } ->
+                    context.state
+
+                EndOfProcess { lastState } ->
+                    lastState
 
 type alias OnGoing_ c m e =
     -- New context after the evaluation.
@@ -121,7 +158,7 @@ wrapListener : (e1 -> e0) -> Listener e1 -> Listener e0
 wrapListener wrap listener1 =
     { layerId = listener1.layerId
     , requestId = listener1.requestId
-    , name =listener1.name
+    , name = listener1.name
     , sub = Sub.map (mapMsg wrap) listener1.sub
     }
 
@@ -150,6 +187,14 @@ type Msg event
     | NoOp
 
 
+rootLayerMsg : e -> Msg e
+rootLayerMsg e =
+    LayerMsg
+        { layerId = LayerId.init
+        , event = e
+        }
+
+
 mapMsg : (event1 -> event0) -> Msg event1 -> Msg event0
 mapMsg f msg1 =
     case msg1 of
@@ -158,21 +203,25 @@ mapMsg f msg1 =
                 { layerId = r.layerId
                 , event = f r.event
                 }
+
         ResponseMsg r ->
             ResponseMsg
                 { requestId = r.requestId
                 , event = f r.event
                 }
+
         PortResponseMsg r ->
             PortResponseMsg
                 { requestId = r.requestId
                 , response = r.response
                 }
+
         ListenerMsg r ->
             ListenerMsg
                 { requestId = r.requestId
                 , event = f r.event
                 }
+
         NoOp ->
             NoOp
 
@@ -184,33 +233,41 @@ unwrapMsg f msg1 =
             case f r.event of
                 Nothing ->
                     NoOp
+
                 Just e1 ->
                     LayerMsg
                         { layerId = r.layerId
                         , event = e1
                         }
+
         ResponseMsg r ->
             case f r.event of
                 Nothing ->
                     NoOp
+
                 Just e1 ->
                     ResponseMsg
                         { requestId = r.requestId
                         , event = e1
                         }
+
         PortResponseMsg r ->
             PortResponseMsg
                 { requestId = r.requestId
                 , response = r.response
                 }
+
         ListenerMsg r ->
             case f r.event of
-                Nothing -> NoOp
+                Nothing ->
+                    NoOp
+
                 Just e ->
                     ListenerMsg
                         { requestId = r.requestId
                         , event = e
                         }
+
         NoOp ->
             NoOp
 
@@ -295,6 +352,7 @@ succeedPromise a =
             , handler = Resolved a
             }
 
+
 failPromise : Promise c m e a
 failPromise =
     Promise <|
@@ -303,7 +361,7 @@ failPromise =
             , cmds = []
             , addListeners = []
             , closedLayers = []
-            , handler= Rejected
+            , handler = Rejected
             }
 
 
@@ -498,6 +556,7 @@ liftPromiseMemory o (Promise prom1) =
                                         case o.get m of
                                             Nothing ->
                                                 failPromise
+
                                             Just m1 ->
                                                 liftPromiseMemory o (nextProm msg m1)
                     }
@@ -508,7 +567,8 @@ mapPromiseCmd f (Promise prom) =
     Promise <|
         \context ->
             let
-                eff = prom context
+                eff =
+                    prom context
             in
             { newContext = eff.newContext
             , cmds = List.map f eff.cmds
@@ -533,12 +593,14 @@ liftPromiseEvent :
     { wrap : e1 -> e0
     , unwrap : e0 -> Maybe e1
     }
-    -> Promise c m e1 a -> Promise c m e0 a
+    -> Promise c m e1 a
+    -> Promise c m e0 a
 liftPromiseEvent o (Promise prom1) =
     Promise <|
         \context ->
             let
-                eff1 = prom1 context
+                eff1 =
+                    prom1 context
             in
             { newContext = eff1.newContext
             , cmds = eff1.cmds
@@ -564,7 +626,6 @@ liftPromiseEvent o (Promise prom1) =
 
 
 
-
 -- Primitive Promises
 
 
@@ -583,6 +644,7 @@ sequence =
         )
         none
 
+
 concurrent : List (Promise c m e ()) -> Promise c m e ()
 concurrent =
     List.foldl
@@ -593,6 +655,7 @@ concurrent =
                 |> syncPromise a
         )
         none
+
 
 currentState : Promise c m e m
 currentState =
@@ -611,7 +674,9 @@ genNewLayerId =
     Promise <|
         \context ->
             let
-                newLayerId = context.nextLayerId
+                newLayerId =
+                    context.nextLayerId
+
                 newContext =
                     { context | nextLayerId = LayerId.inc newLayerId }
             in
@@ -650,7 +715,6 @@ push f =
             }
 
 
-
 reject : Promise c m e ()
 reject =
     Promise <|
@@ -663,14 +727,16 @@ reject =
             }
 
 
-type Layer m = Layer LayerId m
+type Layer m
+    = Layer LayerId m
 
 
 newLayer :
     { get : (Layer m1 -> Maybe m1) -> m -> Maybe m1
     , modify : (Layer m1 -> Layer m1) -> m -> m
     }
-    -> m1 -> Promise c m e (Layer m1, Pointer m m1)
+    -> m1
+    -> Promise c m e ( Layer m1, Pointer m m1 )
 newLayer o m1 =
     genNewLayerId
         |> andThenPromise
@@ -680,6 +746,7 @@ newLayer o m1 =
                     unwrapper (Layer layerId_ m1_) =
                         if layerId_ == layerId then
                             Just m1_
+
                         else
                             Nothing
 
@@ -687,6 +754,7 @@ newLayer o m1 =
                     modifier newM1 (Layer layerId_ oldM1) =
                         if layerId_ == layerId then
                             Layer layerId newM1
+
                         else
                             Layer layerId_ oldM1
                 in
@@ -696,8 +764,9 @@ newLayer o m1 =
                         { get =
                             \m ->
                                 o.get unwrapper m
-                        , set = \newM1 ->
-                            o.modify (modifier newM1)
+                        , set =
+                            \newM1 ->
+                                o.modify (modifier newM1)
                         , layerId = ThisLayerId layerId
                         }
                     )
@@ -709,21 +778,55 @@ onLayer (Pointer layer) procs =
     liftPromiseMemory layer procs
 
 
-layerView : Layer m -> (m -> Html e) -> (String, Html (Msg e))
+layerView : Layer m -> (m -> Html e) -> Html (Msg e)
 layerView (Layer layerId m) f =
+    f m
+        |> Html.map
+            (\e ->
+                LayerMsg
+                    { layerId = layerId
+                    , event = e
+                    }
+            )
+
+
+keyedLayerView : Layer m -> (m -> Html e) -> ( String, Html (Msg e) )
+keyedLayerView (Layer layerId m) f =
     ( LayerId.toString layerId
     , f m
         |> Html.map
-            (\e -> LayerMsg
-                { layerId = layerId
-                , event = e
-                }
+            (\e ->
+                LayerMsg
+                    { layerId = layerId
+                    , event = e
+                    }
             )
     )
 
 
+layerDocument : Layer m -> (m -> Document e) -> Document (Msg e)
+layerDocument (Layer layerId m) f =
+    f m
+        |> (\doc ->
+                { title = doc.title
+                , body =
+                    doc.body
+                        |> List.map
+                            (Html.map
+                                (\e ->
+                                    LayerMsg
+                                        { layerId = layerId
+                                        , event = e
+                                        }
+                                )
+                            )
+                }
+           )
+
+
 type ThisLayerId m
     = ThisLayerId LayerId
+
 
 type Pointer m m1
     = Pointer (Pointer_ m m1)
@@ -838,22 +941,22 @@ portRequest o =
                   , requestId = myRequestId
                   , name = o.name
                   , sub =
-                      o.receiver
-                          (\respValue ->
-                              case JD.decodeValue (o.response RequestId.decoder) respValue of
-                                  Err _ ->
-                                      NoOp
+                        o.receiver
+                            (\respValue ->
+                                case JD.decodeValue (o.response RequestId.decoder) respValue of
+                                    Err _ ->
+                                        NoOp
 
-                                  Ok ( requestId, _ ) ->
-                                      if requestId == myRequestId then
-                                          PortResponseMsg
-                                              { requestId = myRequestId
-                                              , response = respValue
-                                              }
+                                    Ok ( requestId, _ ) ->
+                                        if requestId == myRequestId then
+                                            PortResponseMsg
+                                                { requestId = myRequestId
+                                                , response = respValue
+                                                }
 
-                                      else
-                                          NoOp
-                          )
+                                        else
+                                            NoOp
+                            )
                   }
                 ]
             , closedLayers = []
@@ -973,45 +1076,46 @@ initContext memory =
 
 toModel : Context m -> List (Listener e) -> Promise c m e () -> ( Model c m e, List c )
 toModel context listeners (Promise prom) =
-            let
-                eff =
-                    prom context
-                newListeners =
-                    eff.addListeners ++ listeners
-                        |> List.filter
-                            (\listener ->
-                                not (List.member listener.layerId eff.closedLayers)
-                            )
-            in
-            case eff.handler of
-                Resolved () ->
-                    ( EndOfProcess
-                        { lastState = eff.newContext.state
-                        }
-                    , eff.cmds
-                    )
+    let
+        eff =
+            prom context
 
-                Rejected ->
-                    ( EndOfProcess
-                        { lastState = eff.newContext.state
-                        }
-                    , eff.cmds
+        newListeners =
+            eff.addListeners
+                ++ listeners
+                |> List.filter
+                    (\listener ->
+                        not (List.member listener.layerId eff.closedLayers)
                     )
+    in
+    case eff.handler of
+        Resolved () ->
+            ( EndOfProcess
+                { lastState = eff.newContext.state
+                }
+            , eff.cmds
+            )
 
-                AwaitMsg nextProm ->
-                    ( OnGoing
-                        { context = eff.newContext
-                        , listeners = newListeners
+        Rejected ->
+            ( EndOfProcess
+                { lastState = eff.newContext.state
+                }
+            , eff.cmds
+            )
 
-                        , next =
-                            \msg nextContext nextListeners ->
-                                toModel
-                                    nextContext
-                                    nextListeners
-                                    (nextProm msg nextContext.state)
-                        }
-                    , eff.cmds
-                    )
+        AwaitMsg nextProm ->
+            ( OnGoing
+                { context = eff.newContext
+                , listeners = newListeners
+                , next =
+                    \msg nextContext nextListeners ->
+                        toModel
+                            nextContext
+                            nextListeners
+                            (nextProm msg nextContext.state)
+                }
+            , eff.cmds
+            )
 
 
 update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List cmd )
@@ -1024,7 +1128,8 @@ update msg model =
 
         OnGoing onGoing ->
             let
-                { context, listeners } = onGoing
+                { context, listeners } =
+                    onGoing
             in
             case msg of
                 NoOp ->
@@ -1039,21 +1144,172 @@ update msg model =
                 ResponseMsg r ->
                     let
                         newListeners =
-                                    List.filter
-                                        (\sub ->
-                                            sub.requestId /= r.requestId
-                                        )
-                                        listeners
+                            List.filter
+                                (\sub ->
+                                    sub.requestId /= r.requestId
+                                )
+                                listeners
                     in
                     onGoing.next msg context newListeners
 
                 PortResponseMsg r ->
                     let
                         newListeners =
-                                    List.filter
-                                        (\sub ->
-                                            sub.requestId /= r.requestId
-                                        )
-                                        listeners
+                            List.filter
+                                (\sub ->
+                                    sub.requestId /= r.requestId
+                                )
+                                listeners
                     in
                     onGoing.next msg context newListeners
+
+
+elementView : (Layer memory -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)
+elementView f model =
+    f (Layer LayerId.init (memoryState model))
+
+
+documentView : (Layer memory -> Document (Msg event)) -> Model cmd memory event -> Document (Msg event)
+documentView f model =
+    f (Layer LayerId.init (memoryState model))
+
+
+subscriptions : Model cmd memory event -> Sub (Msg event)
+subscriptions model =
+    case model of
+        EndOfProcess _ ->
+            Sub.none
+
+        OnGoing { listeners } ->
+            listeners
+                |> List.map .sub
+                |> Sub.batch
+
+
+-- Scenario
+
+
+type Scenario flags c m e =
+    Scenario
+        { test : TestConfig flags c m e -> TestContext c m e -> SeqTest.Sequence (TestModel c m e)
+        , markup : ()
+        }
+
+type TestModel c m e
+    = OnGoingTest (TestContext c m e)
+    | TestAfterCases
+
+
+type alias TestConfig flags c m e =
+    { view : m -> Html ()
+    , init : flags -> Url -> ( Model c m e, List c )
+    }
+
+type alias TestContext c m e =
+    Dict SessionId (Model c m e, List c)
+
+type alias SessionId = String
+
+noneScenario : Scenario flags c m e
+noneScenario =
+    Scenario
+        { test = noneTest
+        , markup = ()
+        }
+
+noneTest : TestConfig flags c m e -> TestContext c m e -> SeqTest.Sequence (TestModel c m e)
+noneTest _ =
+    SeqTest.pass >> SeqTest.map OnGoingTest
+
+concatScenario : List (Scenario flags c m e) -> Scenario flags c m e
+concatScenario =
+    List.foldl
+        (\a acc ->
+            mappendScenario acc a
+        )
+        noneScenario
+
+mappendScenario : Scenario flags c m e -> Scenario flags c m e -> Scenario flags c m e
+mappendScenario (Scenario s1) (Scenario s2) =
+    Scenario
+        { test = \config context ->
+            s1.test config context
+                |> SeqTest.andThen
+                    (\m ->
+                        case m of
+                            OnGoingTest nextContext ->
+                                s2.test config nextContext
+                            TestAfterCases ->
+                                SeqTest.fail "Scenario structure" <|
+                                    \_ ->
+                                        Expect.fail "should not have sibling scenarios after `cases`."
+                    )
+        , markup = ()
+        }
+
+
+toTest :
+    { init : memory
+    , procedure : flags -> Url -> Key -> List (Promise cmd memory event ())
+    , view : Layer memory -> Html (Msg event)
+    , sections : List (Section flags cmd memory event)
+    }
+    -> Test
+toTest o =
+    List.map
+        (\(Section sec) ->
+            let
+                (Scenario { test }) = sec.content
+            in
+            test
+                { view = \m -> Html.map (\_ -> ()) <| o.view ( Layer LayerId.init m )
+                , init =
+                    \flags url ->
+                        init o.init
+                            (o.procedure flags url SimKey)
+                }
+                Dict.empty
+            |> SeqTest.run sec.title
+        )
+        o.sections
+        |> Test.describe "Scenario tests"
+
+
+type Section flags command memory event
+    = Section
+        { title : String
+        , content : Scenario flags command memory event
+        }
+
+
+section : String -> List (Scenario flags c m e) -> Section flags c m e
+section title scenarios =
+    Section
+        { title = title
+        , content = concatScenario scenarios
+        }
+
+
+cases : List (Section flags c m e) -> Scenario flags c m e
+cases sections =
+    Scenario
+        { test =
+            \config context ->
+                SeqTest.pass ()
+                    |> SeqTest.namedCases
+                        (\() ->
+                            List.map
+                                (\(Section sec) ->
+                                    let
+                                        (Scenario { test }) = sec.content
+                                    in
+                                    ( sec.title
+                                    , test config context
+                                        |> SeqTest.map (\_ -> ())
+                                    )
+                                )
+                                sections
+                        )
+                    |> SeqTest.map (\_ -> TestAfterCases)
+        , markup = ()
+        }

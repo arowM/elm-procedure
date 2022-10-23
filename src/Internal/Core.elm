@@ -12,22 +12,25 @@ module Internal.Core exposing
     , liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
     , portRequest, customRequest
     , layerEvent
-    , Layer(..), Pointer(..), Pointer_
+    , Layer(..), Pointer(..)
     , layerView, keyedLayerView, layerDocument
     , none, sequence, concurrent
     , modify, push, currentState, reject, listen
     , newLayer, onLayer
     , init, update
     , elementView, documentView, subscriptions
-    , runNavCmd
-    , Scenario(..)
-    , TestModel(..)
+    , Scenario(..), TestModel(..)
     , noneScenario, noneTest
     , concatScenario
+    , putListItemMarkup
     , toTest
+    , toMarkup
+    , InvalidMarkupReason(..)
+    , invalidMarkup
     , Section
     , section
     , cases
+    , Pointer_, runNavCmd
     )
 
 {-|
@@ -82,7 +85,11 @@ module Internal.Core exposing
 @docs Scenario, TestModel
 @docs noneScenario, noneTest
 @docs concatScenario
+@docs putListItemMarkup
 @docs toTest
+@docs toMarkup
+@docs InvalidMarkupReason
+@docs invalidMarkup
 @docs Section
 @docs section
 @docs cases
@@ -95,9 +102,11 @@ import Dict exposing (Dict)
 import Expect
 import Html exposing (Html)
 import Internal.LayerId as LayerId exposing (LayerId)
+import Internal.Markup as Markup
 import Internal.RequestId as RequestId exposing (RequestId)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
+import Mixin exposing (Mixin)
 import Test exposing (Test)
 import Test.Sequence as SeqTest
 import Url exposing (Url)
@@ -114,12 +123,13 @@ type Model cmd memory event
 
 memoryState : Model cmd memory event -> memory
 memoryState model =
-            case model of
-                OnGoing { context } ->
-                    context.state
+    case model of
+        OnGoing { context } ->
+            context.state
 
-                EndOfProcess { lastState } ->
-                    lastState
+        EndOfProcess { lastState } ->
+            lastState
+
 
 type alias OnGoing_ c m e =
     -- New context after the evaluation.
@@ -1186,14 +1196,16 @@ subscriptions model =
                 |> Sub.batch
 
 
+
 -- Scenario
 
 
-type Scenario flags c m e =
-    Scenario
+type Scenario flags c m e
+    = Scenario
         { test : TestConfig flags c m e -> TestContext c m e -> SeqTest.Sequence (TestModel c m e)
-        , markup : ()
+        , markup : MarkupContext -> MarkupBuilder
         }
+
 
 type TestModel c m e
     = OnGoingTest (TestContext c m e)
@@ -1205,21 +1217,59 @@ type alias TestConfig flags c m e =
     , init : flags -> Url -> ( Model c m e, List c )
     }
 
-type alias TestContext c m e =
-    Dict SessionId (Model c m e, List c)
 
-type alias SessionId = String
+type alias TestContext c m e =
+    Dict SessionId ( Model c m e, List c )
+
+
+type alias SessionId =
+    String
+
+
+type alias MarkupContext =
+    List ( Mixin (), Markup.BlockElement ) -> Markup.Section
+
+
+type MarkupBuilder
+    = OnGoingMarkup MarkupContext
+    | MarkupAfterCases (List Markup.Section)
+    | InvalidMarkup InvalidMarkupReason
+
+
+invalidMarkup : InvalidMarkupReason -> MarkupContext -> MarkupBuilder
+invalidMarkup reason _ =
+    InvalidMarkup reason
+
+
+type InvalidMarkupReason
+    = SiblingScenarioAfterCases
+    | OtherInvalidMarkup String
+
 
 noneScenario : Scenario flags c m e
 noneScenario =
     Scenario
         { test = noneTest
-        , markup = ()
+        , markup = noneMarkup
         }
+
 
 noneTest : TestConfig flags c m e -> TestContext c m e -> SeqTest.Sequence (TestModel c m e)
 noneTest _ =
     SeqTest.pass >> SeqTest.map OnGoingTest
+
+
+noneMarkup : MarkupContext -> MarkupBuilder
+noneMarkup =
+    OnGoingMarkup
+
+
+putListItemMarkup : Markup.BlockElement -> MarkupContext -> MarkupBuilder
+putListItemMarkup item context =
+    OnGoingMarkup <|
+        \ls ->
+            context (( Mixin.none, item ) :: ls)
+
 
 concatScenario : List (Scenario flags c m e) -> Scenario flags c m e
 concatScenario =
@@ -1229,22 +1279,35 @@ concatScenario =
         )
         noneScenario
 
+
 mappendScenario : Scenario flags c m e -> Scenario flags c m e -> Scenario flags c m e
 mappendScenario (Scenario s1) (Scenario s2) =
     Scenario
-        { test = \config context ->
-            s1.test config context
-                |> SeqTest.andThen
-                    (\m ->
-                        case m of
-                            OnGoingTest nextContext ->
-                                s2.test config nextContext
-                            TestAfterCases ->
-                                SeqTest.fail "Scenario structure" <|
-                                    \_ ->
-                                        Expect.fail "should not have sibling scenarios after `cases`."
-                    )
-        , markup = ()
+        { test =
+            \config context ->
+                s1.test config context
+                    |> SeqTest.andThen
+                        (\m ->
+                            case m of
+                                OnGoingTest nextContext ->
+                                    s2.test config nextContext
+
+                                TestAfterCases ->
+                                    SeqTest.fail "Scenario structure" <|
+                                        \_ ->
+                                            Expect.fail "should not have sibling scenarios after `cases`."
+                        )
+        , markup =
+            \context ->
+                case s1.markup context of
+                    MarkupAfterCases _ ->
+                        InvalidMarkup SiblingScenarioAfterCases
+
+                    InvalidMarkup reason ->
+                        InvalidMarkup reason
+
+                    OnGoingMarkup nextContext ->
+                        s2.markup nextContext
         }
 
 
@@ -1259,20 +1322,74 @@ toTest o =
     List.map
         (\(Section sec) ->
             let
-                (Scenario { test }) = sec.content
+                (Scenario { test }) =
+                    sec.content
             in
             test
-                { view = \m -> Html.map (\_ -> ()) <| o.view ( Layer LayerId.init m )
+                { view = \m -> Html.map (\_ -> ()) <| o.view (Layer LayerId.init m)
                 , init =
                     \flags url ->
                         init o.init
                             (o.procedure flags url SimKey)
                 }
                 Dict.empty
-            |> SeqTest.run sec.title
+                |> SeqTest.run sec.title
         )
         o.sections
         |> Test.describe "Scenario tests"
+
+
+toMarkup :
+    { title : String
+    , sections : List (Section flags c m e)
+    }
+    -> Result InvalidMarkupReason Markup.Section
+toMarkup o =
+    List.foldl
+        (\a acc ->
+            Result.map2 (++) acc a
+        )
+        (Ok [])
+        (List.map toMarkupSection o.sections)
+        |> Result.map
+            (\children ->
+                Markup.Section
+                    { title = o.title
+                    , titleMixin = Mixin.none
+                    , body = []
+                    , bodyMixin = Mixin.none
+                    , children = children
+                    }
+            )
+
+
+toMarkupSection : Section flags c m e -> Result InvalidMarkupReason (List Markup.Section)
+toMarkupSection (Section sec) =
+    let
+        (Scenario scenario) =
+            sec.content
+
+        initMarkupContext : MarkupContext
+        initMarkupContext items =
+            Markup.Section
+                { title = sec.title
+                , titleMixin = Mixin.none
+                , body =
+                    [ ( Mixin.none, Markup.ListItems Mixin.none items )
+                    ]
+                , bodyMixin = Mixin.none
+                , children = []
+                }
+    in
+    case scenario.markup initMarkupContext of
+        OnGoingMarkup context ->
+            Ok [ context [] ]
+
+        MarkupAfterCases secs ->
+            Ok secs
+
+        InvalidMarkup reason ->
+            Err reason
 
 
 type Section flags command memory event
@@ -1301,7 +1418,8 @@ cases sections =
                             List.map
                                 (\(Section sec) ->
                                     let
-                                        (Scenario { test }) = sec.content
+                                        (Scenario { test }) =
+                                            sec.content
                                     in
                                     ( sec.title
                                     , test config context
@@ -1311,5 +1429,23 @@ cases sections =
                                 sections
                         )
                     |> SeqTest.map (\_ -> TestAfterCases)
-        , markup = ()
+        , markup =
+            \context ->
+                let
+                    sectionMarkups =
+                        List.foldl
+                            (\a acc ->
+                                Result.map2 (++) acc a
+                            )
+                            (Ok [])
+                            (List.map toMarkupSection sections)
+                in
+                case sectionMarkups of
+                    Err err ->
+                        InvalidMarkup err
+
+                    Ok markups ->
+                        MarkupAfterCases <|
+                            context []
+                                :: markups
         }

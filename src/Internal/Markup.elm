@@ -11,8 +11,13 @@ import Mixin.Html as Html exposing (Html)
 
 {-| -}
 type Section
-    = Sections (List ( Mixin (), String, Section ))
-    | SectionBody (List ( Mixin (), BlockElement ))
+    = Section
+        { title : String
+        , titleMixin : Mixin ()
+        , body : List ( Mixin (), BlockElement )
+        , bodyMixin : Mixin ()
+        , children : List Section
+        }
 
 
 {-| -}
@@ -34,21 +39,17 @@ type InlineElement
     | StrongText String
 
 
-toHtml : ( Mixin (), String, Section ) -> Html ()
+toHtml : Section -> Html ()
 toHtml =
     htmlSection 1
 
 
-htmlSection : Int -> ( Mixin (), String, Section ) -> Html ()
-htmlSection n ( mixin, title, content ) =
-    Html.div [] <|
-        htmlHeading n [ mixin ] [ Html.text title ]
-            :: (case content of
-                    Sections ls ->
-                        List.map (htmlSection (n + 1)) ls
-
-                    SectionBody blocks ->
-                        List.map htmlBlockElement blocks
+htmlSection : Int -> Section -> Html ()
+htmlSection n (Section sec) =
+    Html.div [ sec.bodyMixin ] <|
+        htmlHeading n [ sec.titleMixin ] [ Html.text sec.title ]
+            :: (List.map htmlBlockElement sec.body
+                    ++ List.map (htmlSection (n + 1)) sec.children
                )
 
 

@@ -4,7 +4,6 @@ module Tepa.Scenario exposing
     , concat
     , toTest
     , toHtml
-    , toMarkdown
     , Section
     , section
     , cases
@@ -24,6 +23,7 @@ module Tepa.Scenario exposing
     , portResponse
     , customResponse
     , fromJust
+    -- , toMarkdown
     )
 
 {-| Module for Scenario-Driven Development.
@@ -36,7 +36,6 @@ module Tepa.Scenario exposing
 @docs concat
 @docs toTest
 @docs toHtml
-@docs toMarkdown
 
 
 # Section
@@ -94,21 +93,21 @@ module Tepa.Scenario exposing
 
 -}
 
-import Dict exposing (Dict)
+import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Internal.Core as Core
     exposing
         ( Key(..)
+        , Layer(..)
         , Model(..)
         , Msg(..)
         , Pointer(..)
-        , Layer(..)
-        , Pointer
         , Promise
         )
+import Internal.Markup as Markup
 import Json.Encode exposing (Value)
-import Mixin exposing (Mixin)
+import Mixin
 import Mixin.Html as Html exposing (Html)
 import Test exposing (Test)
 import Test.Sequence as SeqTest
@@ -138,6 +137,7 @@ none : Scenario flags c m e
 none =
     Core.noneScenario
 
+
 {-| Return a new Scenario that evaluates given Scenarios sequentially.
 -}
 concat : List (Scenario flags c m e) -> Scenario flags c m e
@@ -151,8 +151,8 @@ concat =
 
 {-| Titled Sequence of Scenarios.
 -}
-type alias Section flags command memory event
-    = Core.Section flags command memory event
+type alias Section flags command memory event =
+    Core.Section flags command memory event
 
 
 {-| Constructor for `Section`.
@@ -279,11 +279,27 @@ You can start with `userComment` and `systemComment` to build the skeleton of yo
 
 -}
 userComment : User -> String -> Scenario flags c m e
-userComment user comment =
+userComment (User user) comment =
     Core.Scenario
         { test = Core.noneTest
-        , markup = ()
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph user.name comment
         }
+
+
+listItemParagraph : String -> String -> Markup.BlockElement
+listItemParagraph name content =
+    Markup.Paragraph
+        [ ( Mixin.none
+          , Markup.StrongText name
+          )
+        , ( Mixin.none
+          , Markup.PlainText <|
+                ": "
+                    ++ content
+          )
+        ]
 
 
 {-| System comment.
@@ -295,7 +311,11 @@ systemComment : Session -> String -> Scenario flags c m e
 systemComment (Session session) comment =
     Core.Scenario
         { test = Core.noneTest
-        , markup = ()
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] System")
+                    comment
         }
 
 
@@ -341,20 +361,25 @@ expectCommands :
     -> Scenario flags command m e
 expectCommands (Session session) description { expectation } =
     Core.Scenario
-        { test = \_ context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "expectCommands: The application is not active on the session. Use `loadApp` beforehand."
+        { test =
+            \_ context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "expectCommands: The application is not active on the session. Use `loadApp` beforehand."
 
-                Just (_, cmds) ->
-                    SeqTest.pass cmds
-                        |> SeqTest.assert description
-                            (ExpBuilder.applyTo expectation)
-                        |> SeqTest.map (\_ -> Core.OnGoingTest context)
-        , markup = ()
+                    Just ( _, cmds ) ->
+                        SeqTest.pass cmds
+                            |> SeqTest.assert description
+                                (ExpBuilder.applyTo expectation)
+                            |> SeqTest.map (\_ -> Core.OnGoingTest context)
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] System")
+                    description
         }
 
 
@@ -387,20 +412,25 @@ expectMemory :
     -> Scenario flags c memory e
 expectMemory (Session session) description { expectation } =
     Core.Scenario
-        { test = \_ context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "expectMemory: The application is not active on the session. Use `loadApp` beforehand."
+        { test =
+            \_ context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "expectMemory: The application is not active on the session. Use `loadApp` beforehand."
 
-                Just (model, _) ->
-                    SeqTest.pass (Core.memoryState model)
-                        |> SeqTest.assert description
-                            (ExpBuilder.applyTo expectation)
-                        |> SeqTest.map (\_ -> Core.OnGoingTest context)
-        , markup = ()
+                    Just ( model, _ ) ->
+                        SeqTest.pass (Core.memoryState model)
+                            |> SeqTest.assert description
+                                (ExpBuilder.applyTo expectation)
+                            |> SeqTest.map (\_ -> Core.OnGoingTest context)
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] System")
+                    description
         }
 
 
@@ -453,23 +483,29 @@ expectAppView :
     -> Scenario flags c m event
 expectAppView (Session session) description { expectation } =
     Core.Scenario
-        { test = \config context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "expectAppView: The application is not active on the session. Use `loadApp` beforehand."
+        { test =
+            \config context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "expectAppView: The application is not active on the session. Use `loadApp` beforehand."
 
-                Just (model, _) ->
-                    SeqTest.pass
-                        (Core.memoryState model
-                            |> config.view
-                        )
-                        |> SeqTest.assert description expectation
-                        |> SeqTest.map (\_ -> Core.OnGoingTest context)
-        , markup = ()
+                    Just ( model, _ ) ->
+                        SeqTest.pass
+                            (Core.memoryState model
+                                |> config.view
+                            )
+                            |> SeqTest.assert description expectation
+                            |> SeqTest.map (\_ -> Core.OnGoingTest context)
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] System")
+                    description
         }
+
 
 
 -- -- Event Simulators
@@ -544,13 +580,18 @@ loadApp (Session session) description o =
             }
     in
     Core.Scenario
-        { test = \config context ->
-            Dict.insert session.uniqueName
-                (config.init o.flags url)
-                context
-                |> Core.OnGoingTest
-                |> SeqTest.pass
-        , markup = ()
+        { test =
+            \config context ->
+                Dict.insert session.uniqueName
+                    (config.init o.flags url)
+                    context
+                    |> Core.OnGoingTest
+                    |> SeqTest.pass
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] System")
+                    description
         }
 
 
@@ -581,33 +622,44 @@ userEvent :
         }
     -> Scenario flags c memory event
 userEvent (Session session) description o =
+    let
+        (User user) =
+            session.user
+    in
     Core.Scenario
-        { test = \_ context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "userEvent: The application is not active on the session. Use `loadApp` beforehand."
-                Just (model, _) ->
-                    case o.target (Core.memoryState model) of
-                        Nothing ->
-                            SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                                \_ ->
-                                    Expect.fail
-                                        "userEvent: The Layer is not accessible."
-                        Just (Core.Layer lid _) ->
-                            Dict.insert session.uniqueName
-                                (Core.LayerMsg
-                                    { layerId = lid
-                                    , event = o.event
-                                    }
-                                    |> applyMsg model
-                                )
-                                context
-                                |> Core.OnGoingTest
-                                |> SeqTest.pass
-        , markup = ()
+        { test =
+            \_ context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "userEvent: The application is not active on the session. Use `loadApp` beforehand."
+
+                    Just ( model, _ ) ->
+                        case o.target (Core.memoryState model) of
+                            Nothing ->
+                                SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                                    \_ ->
+                                        Expect.fail
+                                            "userEvent: The Layer is not accessible."
+
+                            Just (Core.Layer lid _) ->
+                                Dict.insert session.uniqueName
+                                    (Core.LayerMsg
+                                        { layerId = lid
+                                        , event = o.event
+                                        }
+                                        |> applyMsg model
+                                    )
+                                    context
+                                    |> Core.OnGoingTest
+                                    |> SeqTest.pass
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] " ++ user.name)
+                    description
         }
 
 
@@ -642,39 +694,45 @@ listenerEvent :
     -> Scenario flags c m event
 listenerEvent (Session session) description o =
     Core.Scenario
-        { test = \_ context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "listenerEvent: The application is not active on the session. Use `loadApp` beforehand."
-                Just (model, _) ->
-                    case model of
-                        Core.OnGoing onGoing ->
-                            Dict.insert session.uniqueName
-                                (onGoing.listeners
-                                    |> List.filterMap
-                                        (\listener ->
-                                            if listener.name == o.target then
-                                                Just <|
-                                                    ListenerMsg
-                                                        { requestId = listener.requestId
-                                                        , event = o.event
-                                                        }
+        { test =
+            \_ context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "listenerEvent: The application is not active on the session. Use `loadApp` beforehand."
 
-                                            else
-                                                Nothing
-                                        )
-                                    |> applyMsgs (OnGoing onGoing)
-                                )
-                                context
-                                |> Core.OnGoingTest
-                                |> SeqTest.pass
+                    Just ( model, _ ) ->
+                        case model of
+                            Core.OnGoing onGoing ->
+                                Dict.insert session.uniqueName
+                                    (onGoing.listeners
+                                        |> List.filterMap
+                                            (\listener ->
+                                                if listener.name == o.target then
+                                                    Just <|
+                                                        ListenerMsg
+                                                            { requestId = listener.requestId
+                                                            , event = o.event
+                                                            }
 
-                        EndOfProcess _ ->
-                            SeqTest.pass (Core.OnGoingTest context)
-        , markup = ()
+                                                else
+                                                    Nothing
+                                            )
+                                        |> applyMsgs (OnGoing onGoing)
+                                    )
+                                    context
+                                    |> Core.OnGoingTest
+                                    |> SeqTest.pass
+
+                            EndOfProcess _ ->
+                                SeqTest.pass (Core.OnGoingTest context)
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] " ++ o.target)
+                    description
         }
 
 
@@ -710,44 +768,50 @@ portResponse :
     -> Scenario flags command m e
 portResponse (Session session) description o =
     Core.Scenario
-        { test = \_ context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "portResponse: The application is not active on the session. Use `loadApp` beforehand."
-                Just (model, _) ->
-                    case model of
-                        Core.EndOfProcess _ ->
-                            SeqTest.fail
-                                ("[" ++ session.uniqueName ++ "] " ++ description)
-                              <|
-                                \_ ->
-                                    Expect.fail
-                                        "portResponse: The port request has been already resolved."
+        { test =
+            \_ context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "portResponse: The application is not active on the session. Use `loadApp` beforehand."
 
-                        Core.OnGoing onGoing ->
-                            Dict.insert session.uniqueName
-                                (onGoing.listeners
-                                    |> List.filterMap
-                                        (\listener ->
-                                            if listener.name == o.target then
-                                                Just <|
-                                                    PortResponseMsg
-                                                        { requestId = listener.requestId
-                                                        , response = o.response
-                                                        }
+                    Just ( model, _ ) ->
+                        case model of
+                            Core.EndOfProcess _ ->
+                                SeqTest.fail
+                                    ("[" ++ session.uniqueName ++ "] " ++ description)
+                                <|
+                                    \_ ->
+                                        Expect.fail
+                                            "portResponse: The port request has been already resolved."
 
-                                            else
-                                                Nothing
-                                        )
-                                    |> applyMsgs (OnGoing onGoing)
-                                )
-                                context
-                                |> Core.OnGoingTest
-                                |> SeqTest.pass
-        , markup = ()
+                            Core.OnGoing onGoing ->
+                                Dict.insert session.uniqueName
+                                    (onGoing.listeners
+                                        |> List.filterMap
+                                            (\listener ->
+                                                if listener.name == o.target then
+                                                    Just <|
+                                                        PortResponseMsg
+                                                            { requestId = listener.requestId
+                                                            , response = o.response
+                                                            }
+
+                                                else
+                                                    Nothing
+                                            )
+                                        |> applyMsgs (OnGoing onGoing)
+                                    )
+                                    context
+                                    |> Core.OnGoingTest
+                                    |> SeqTest.pass
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] " ++ o.target)
+                    description
         }
 
 
@@ -783,45 +847,52 @@ customResponse :
     -> Scenario flags command m event
 customResponse (Session session) description o =
     Core.Scenario
-        { test = \_ context ->
-            case Dict.get session.uniqueName context of
-                Nothing ->
-                    SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                        \_ ->
-                            Expect.fail
-                                "customResponse: The application is not active on the session. Use `loadApp` beforehand."
-                Just (model, _) ->
-                    case model of
-                        Core.EndOfProcess _ ->
-                            SeqTest.fail
-                                ("[" ++ session.uniqueName ++ "] " ++ description)
-                              <|
-                                \_ ->
-                                    Expect.fail
-                                        "customResponse: The request has been already resolved."
+        { test =
+            \_ context ->
+                case Dict.get session.uniqueName context of
+                    Nothing ->
+                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                            \_ ->
+                                Expect.fail
+                                    "customResponse: The application is not active on the session. Use `loadApp` beforehand."
 
-                        Core.OnGoing onGoing ->
-                            Dict.insert session.uniqueName
-                                (onGoing.listeners
-                                    |> List.filterMap
-                                        (\listener ->
-                                            if listener.name == o.target then
-                                                Just <|
-                                                    ResponseMsg
-                                                        { requestId = listener.requestId
-                                                        , event = o.response
-                                                        }
+                    Just ( model, _ ) ->
+                        case model of
+                            Core.EndOfProcess _ ->
+                                SeqTest.fail
+                                    ("[" ++ session.uniqueName ++ "] " ++ description)
+                                <|
+                                    \_ ->
+                                        Expect.fail
+                                            "customResponse: The request has been already resolved."
 
-                                            else
-                                                Nothing
-                                        )
-                                    |> applyMsgs (OnGoing onGoing)
-                                )
-                                context
-                                |> Core.OnGoingTest
-                                |> SeqTest.pass
-        , markup = ()
+                            Core.OnGoing onGoing ->
+                                Dict.insert session.uniqueName
+                                    (onGoing.listeners
+                                        |> List.filterMap
+                                            (\listener ->
+                                                if listener.name == o.target then
+                                                    Just <|
+                                                        ResponseMsg
+                                                            { requestId = listener.requestId
+                                                            , event = o.response
+                                                            }
+
+                                                else
+                                                    Nothing
+                                            )
+                                        |> applyMsgs (OnGoing onGoing)
+                                    )
+                                    context
+                                    |> Core.OnGoingTest
+                                    |> SeqTest.pass
+        , markup =
+            Core.putListItemMarkup <|
+                listItemParagraph
+                    ("[" ++ session.uniqueName ++ "] " ++ o.target)
+                    description
         }
+
 
 
 -- Conditions
@@ -850,16 +921,23 @@ fromJust description ma f =
     case ma of
         Nothing ->
             Core.Scenario
-                { test = \_ _ ->
-                    SeqTest.fail description <|
-                        \_ ->
-                            ma
-                                |> Expect.notEqual Nothing
-                , markup = ()
+                { test =
+                    \_ _ ->
+                        SeqTest.fail description <|
+                            \_ ->
+                                ma
+                                    |> Expect.notEqual Nothing
+                , markup =
+                    Core.invalidMarkup <|
+                        Core.OtherInvalidMarkup <|
+                            "Error: fromJust\n"
+                                ++ description
                 }
+
         Just a ->
             f a
                 |> concat
+
 
 
 -- Test
@@ -876,6 +954,7 @@ toTest :
     -> Test
 toTest =
     Core.toTest
+
 
 applyMsg : Model c m e -> Msg e -> ( Model c m e, List c )
 applyMsg model msg =
@@ -898,45 +977,46 @@ applyMsgs initModel msgs =
 
 
 -- Document generation
+-- {-| -}
+-- toMarkdown =
+--     Debug.todo ""
+--
 
 
-toHtml = Debug.todo ""
+{-| Generate scenario document server.
+-}
+toHtml :
+    { title : String
+    , sections : List (Section flags c m e)
+    }
+    -> Html ()
+toHtml o =
+    case Core.toMarkup o of
+        Err err ->
+            unexpectedReasonHtml err
 
-toMarkdown = Debug.todo ""
+        Ok sec ->
+            Html.div
+                [ Mixin.style "margin" "2em"
+                ]
+                [ Markup.toHtml sec
+                ]
 
--- {-| Generate scenario document server.
--- -}
--- toHtml :
---     { title : String
---     , sections : List (Section flags c m e)
---     }
---     -> Html ()
--- toHtml { title, sections } =
---     case toMarkup sections of
---         Err err ->
---             unexpectedReasonHtml err
--- 
---         Ok sec ->
---             Html.div
---                 [ Mixin.style "margin" "2em"
---                 ]
---                 [ Markup.toHtml ( Mixin.none, title, sec )
---                 ]
--- 
--- 
--- unexpectedReasonHtml : UnexpectedScenario -> Html ()
--- unexpectedReasonHtml reason =
---     Html.div []
---         [ Html.text <|
---             case reason of
---                 IsNotJust description ->
---                     "ERROR: `fromJust`\n" ++ description
--- 
---                 ScenarioAfterNextCases ->
---                     "ERROR: `cases`\nSome scenarios are after `cases`. You must not put any scenarios after `cases`."
---         ]
--- 
--- 
+
+unexpectedReasonHtml : Core.InvalidMarkupReason -> Html ()
+unexpectedReasonHtml reason =
+    Html.div []
+        [ Html.text <|
+            case reason of
+                Core.SiblingScenarioAfterCases ->
+                    "ERROR: `cases`\nNo sibling scenarios can be after `cases`."
+
+                Core.OtherInvalidMarkup str ->
+                    str
+        ]
+
+
+
 -- toMarkup : List (Section flags c m e) -> Result UnexpectedScenario Markup.Section
 -- toMarkup sections =
 --     List.foldr
@@ -948,8 +1028,8 @@ toMarkdown = Debug.todo ""
 --         (Ok [])
 --         sections
 --         |> Result.map Markup.Sections
--- 
--- 
+--
+--
 -- markupSection : List ( Mixin (), Markup.BlockElement ) -> Section flags c m e -> Result UnexpectedScenario (List ( Mixin (), String, Markup.Section ))
 -- markupSection inherit (Section r) =
 --     let
@@ -970,19 +1050,19 @@ toMarkdown = Debug.todo ""
 --                 |> List.reverse
 --                 |> context.appendSections
 --                 |> Ok
--- 
+--
 --         Just err ->
 --             Err err
--- 
--- 
+--
+--
 -- type alias MarkupContext =
 --     { appendSections : List ( Mixin (), Markup.BlockElement ) -> List ( Mixin (), String, Markup.Section )
 --     , listItems : List ( Mixin (), Markup.BlockElement )
 --     , error : Maybe UnexpectedScenario
 --     , nextSessionId : Int
 --     }
--- 
--- 
+--
+--
 -- markupScenario_ : String -> Scenario flags c m e -> MarkupContext -> MarkupContext
 -- markupScenario_ title scenario context =
 --     let
@@ -1014,7 +1094,7 @@ toMarkdown = Debug.todo ""
 --             markupScenario_ title
 --                 r.next
 --                 (appendListItem user.name r.comment)
--- 
+--
 --         SystemComment r ->
 --             let
 --                 (Session session) =
@@ -1026,7 +1106,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] System")
 --                     r.comment
 --                 )
--- 
+--
 --         LoadApp r ->
 --             let
 --                 (Session session) =
@@ -1038,12 +1118,12 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] System")
 --                     r.description
 --                 )
--- 
+--
 --         UserEvent r ->
 --             let
 --                 (Session session) =
 --                     r.session
--- 
+--
 --                 (User user) =
 --                     session.user
 --             in
@@ -1053,7 +1133,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] " ++ user.name)
 --                     r.description
 --                 )
--- 
+--
 --         ListenerEvent r ->
 --             let
 --                 (Session session) =
@@ -1065,7 +1145,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] " ++ r.target)
 --                     r.description
 --                 )
--- 
+--
 --         ExpectCommands r ->
 --             let
 --                 (Session session) =
@@ -1077,7 +1157,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] System")
 --                     r.description
 --                 )
--- 
+--
 --         ExpectMemory r ->
 --             let
 --                 (Session session) =
@@ -1089,7 +1169,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] System")
 --                     r.description
 --                 )
--- 
+--
 --         ExpectAppView r ->
 --             let
 --                 (Session session) =
@@ -1101,7 +1181,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] System")
 --                     r.description
 --                 )
--- 
+--
 --         PortResponse r ->
 --             let
 --                 (Session session) =
@@ -1113,7 +1193,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] " ++ r.target)
 --                     r.description
 --                 )
--- 
+--
 --         CustomResponse r ->
 --             let
 --                 (Session session) =
@@ -1125,7 +1205,7 @@ toMarkdown = Debug.todo ""
 --                     ("[" ++ session.name ++ "] " ++ r.target)
 --                     r.description
 --                 )
--- 
+--
 --         NextCases r ->
 --             let
 --                 rnextCases : Result UnexpectedScenario (List ( Mixin (), String, Markup.Section ))
@@ -1158,7 +1238,7 @@ toMarkdown = Debug.todo ""
 --             case rnextCases of
 --                 Err err ->
 --                     { context | error = Just err }
--- 
+--
 --                 Ok nextCases ->
 --                     { context
 --                         | appendSections =
@@ -1170,14 +1250,14 @@ toMarkdown = Debug.todo ""
 --                                     ++ nextCases
 --                         , listItems = []
 --                     }
--- 
+--
 --         Unexpected r ->
 --             { context | error = Just r.reason }
--- 
+--
 --         Nil ->
 --             context
--- 
--- 
+--
+--
 -- {-| -}
 -- toMarkdown :
 --     { title : String

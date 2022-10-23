@@ -15,6 +15,7 @@ module Tepa exposing
     , currentState, layerEvent
     , portRequest
     , customRequest
+    , Layer
     , newLayer
     , layerView, keyedLayerView, layerDocument
     , element

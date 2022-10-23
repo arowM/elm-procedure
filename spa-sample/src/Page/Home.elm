@@ -3,9 +3,9 @@ module Page.Home exposing
     , Event
     , Memory
     , init
-    , procedures
+    , procedure
     , runCommand
-    , scenario
+    -- , scenario
     , view
     )
 
@@ -18,15 +18,15 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
-import Procedure exposing (Key, LayerId, Msg, Procedure)
-import Procedure.Scenario as Scenario
+import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa.Scenario as Scenario
 import Widget.Toast as Toast
 
 
 {-| -}
 type alias Memory =
     { session : Session
-    , toast : Toast.Memory
+    , toast : Maybe (Layer Toast.Memory)
     , editAccountForm : EditAccountFormMemory
     }
 
@@ -35,7 +35,7 @@ type alias Memory =
 init : Session -> Memory
 init session =
     { session = session
-    , toast = Toast.init
+    , toast = Nothing
     , editAccountForm = initEditAccountForm session
     }
 
@@ -53,25 +53,31 @@ type Event
 
 
 {-| -}
-view : ( LayerId, Memory ) -> Html (Msg Event)
-view ( layerId, memory ) =
-    Html.div
-        [ localClass "page"
-        ]
-        [ editAccountFormView (layerId, memory.editAccountForm)
-        , Html.div
-            [ localClass "dashboard_links"
-            ]
-            [ Html.a
-                [ localClass "dashboard_links_linkButton-users"
-                , Mixin.attribute "href" <| Route.toPath Route.Users
+view : Layer Memory -> Html (Msg Event)
+view =
+    Tepa.layerView <|
+        \memory ->
+            Html.div
+                [ localClass "page"
                 ]
-                [ Html.text "Users"
+                [ editAccountFormView memory.editAccountForm
+                , Html.div
+                    [ localClass "dashboard_links"
+                    ]
+                    [ Html.a
+                        [ localClass "dashboard_links_linkButton-users"
+                        , Mixin.attribute "href" <| Route.toPath Route.Users
+                        ]
+                        [ Html.text "Users"
+                        ]
+                    ]
+                , case memory.toast of
+                    Nothing ->
+                        Html.text ""
+                    Just toast ->
+                        Toast.view toast
+                            |> Html.map (Tepa.mapMsg ToastEvent)
                 ]
-            ]
-        , Toast.view memory.toast
-            |> Html.map (Procedure.mapMsg ToastEvent)
-        ]
 
 
 
@@ -97,12 +103,9 @@ initEditAccountForm session =
     }
 
 
-editAccountFormView : (LayerId, EditAccountFormMemory) -> Html (Msg Event)
-editAccountFormView (layerId, memory) =
+editAccountFormView : EditAccountFormMemory -> Html (Msg Event)
+editAccountFormView memory =
     let
-        publish =
-            Procedure.publish layerId
-
         errors =
             EditAccount.toFormErrors memory.form
     in
@@ -119,7 +122,8 @@ editAccountFormView (layerId, memory) =
                 [ Mixin.attribute "type" "text"
                 , Mixin.attribute "value" memory.form.id
                 , Mixin.boolAttribute "disabled" memory.isBusy
-                , Events.onChange (publish << ChangeEditAccountFormAccountId)
+                , Events.onChange ChangeEditAccountFormAccountId
+                    |> Tepa.eventMixin
                 ]
                 []
             ]
@@ -129,7 +133,8 @@ editAccountFormView (layerId, memory) =
             [ Html.node "button"
                 [ localClass "editAccountForm_buttonGroup_button-submit"
                 , Mixin.boolAttribute "disabled" memory.isBusy
-                , Events.onClick (publish ClickSubmitEditAccount)
+                , Events.onClick ClickSubmitEditAccount
+                    |> Tepa.eventMixin
                 ]
                 [ Html.text "Save"
                 ]
@@ -157,7 +162,7 @@ editAccountFormView (layerId, memory) =
 {-| -}
 type Command
     = ToastCommand Toast.Command
-    | RequestEditAccount (Result Http.Error EditAccount.Response -> Msg Event) EditAccount.EditAccount
+    | RequestEditAccount EditAccount.EditAccount (Result Http.Error EditAccount.Response -> Msg Event)
 
 
 {-| -}
@@ -166,41 +171,56 @@ runCommand cmd =
     case cmd of
         ToastCommand toastCommand ->
             Toast.runCommand toastCommand
-                |> Cmd.map (Procedure.mapMsg ToastEvent)
+                |> Cmd.map (Tepa.mapMsg ToastEvent)
 
-        RequestEditAccount toMsg editAccount ->
+        RequestEditAccount editAccount toMsg ->
             EditAccount.request editAccount toMsg
 
 
 {-| -}
-type alias Procedures =
-    List (Procedure Command Memory Event)
+type alias Promise a = Tepa.Promise Command Memory Event a
 
 
+type alias Pointer m = Tepa.Pointer Memory m
+
+
+type alias Bucket =
+    { key : Key
+    , toastPointer : Pointer Toast.Memory
+    }
 
 -- -- Initialization
 
 
 {-| -}
-procedures : Key -> Procedures
-procedures key =
-    [ Procedure.async <|
-        mainPageProcedures key
-    ]
+procedure : Key -> Promise Void
+procedure key =
+    -- Initialize Widget
+    Tepa.putMaybeLayer
+        { get = .toast
+        , set = \toast m -> { m | toast = toast }
+        , init = Toast.init
+        }
+        |> Tepa.andThen
+            (\toastPointer ->
+                let
+                    bucket =
+                        { key = key
+                        , toastPointer = toastPointer
+                        }
+                in
+                -- Main Procedures
+                Tepa.syncAll
+                    [ editAccountFormProcedure bucket
+                    ]
+            )
 
 
-mainPageProcedures : Key -> Procedures
-mainPageProcedures key =
-    [ Procedure.async <|
-        editAccountFormProcedures key
-    ]
-
-
-editAccountFormProcedures : Key -> Procedures
-editAccountFormProcedures key =
+editAccountFormProcedure : Bucket -> Promise Void
+editAccountFormProcedure bucket =
     let
-        modifyEditAccountFormFormMemory f =
-            Procedure.modify <|
+        modifyForm f =
+            Tepa.modify <|
                 \m ->
                     { m
                         | editAccountForm =
@@ -212,192 +232,193 @@ editAccountFormProcedures key =
                             }
                     }
     in
-    [ Procedure.awaitLayerEvent <|
-        \event _ ->
-            case event of
+    Tepa.withLayerEvent <|
+        \e ->
+            case e of
                 ChangeEditAccountFormAccountId str ->
-                    [ modifyEditAccountFormFormMemory <|
+                    [ modifyForm <|
                         \m -> { m | id = str }
-                    , Procedure.jump <|
-                        \_ -> editAccountFormProcedures key
+                    , Tepa.lazy <|
+                        \_ -> editAccountFormProcedure bucket
                     ]
 
                 ClickSubmitEditAccount ->
-                    [ Procedure.jump <|
-                        \_ ->
-                            submitAccountProcedures key
+                    [ Tepa.lazy <| \_ -> submitAccountProcedure bucket
                     ]
 
                 _ ->
                     []
-    ]
 
 
-submitAccountProcedures : Key -> Procedures
-submitAccountProcedures key =
+submitAccountProcedure : Bucket -> Promise Void
+submitAccountProcedure bucket =
     let
-        modifyEditAccountFormMemory f =
-            Procedure.modify <|
+        modifyEditAccountForm f =
+            Tepa.modify <|
                 \m ->
                     { m
                         | editAccountForm = f m.editAccountForm
                     }
     in
-    [ modifyEditAccountFormMemory <|
+    Tepa.sequence
+    [ modifyEditAccountForm <|
         \m -> { m | isBusy = True }
-    , Procedure.withMemory <|
-        \curr ->
-            case EditAccount.fromForm curr.editAccountForm.form of
-                Err _ ->
-                    [ modifyEditAccountFormMemory <|
-                        \m ->
-                            { m
-                                | isBusy = False
-                                , showError = True
-                            }
-                    , Procedure.jump <| \_ -> editAccountFormProcedures key
-                    ]
+    , Tepa.currentState
+        |> Tepa.andThen
+            (\curr ->
+                case EditAccount.fromForm curr.editAccountForm.form of
+                    Err _ ->
+                        Tepa.sequence
+                            [ modifyEditAccountForm <|
+                                \m ->
+                                    { m
+                                        | isBusy = False
+                                        , showError = True
+                                    }
+                            , Tepa.lazy <| \_ -> editAccountFormProcedure bucket
+                            ]
 
-                Ok editAccount ->
-                    [ Procedure.await requestEditAccount <|
-                        \response ->
-                            case response of
-                                Err err ->
-                                    [ Toast.pushHttpError err
-                                        |> runToastProcedure
-                                    , modifyEditAccountFormMemory <|
-                                        \m ->
-                                            { m | isBusy = False }
-                                    , Procedure.jump <|
-                                        \_ ->
-                                            editAccountFormProcedures key
-                                    ]
+                    Ok editAccount ->
+                        requestEditAccount editAccount
+                            |> Tepa.andThenSequence
+                                (\response ->
+                                    case response of
+                                        Err err ->
+                                            [ Toast.pushHttpError err
+                                                |> runToastPromise bucket.toastPointer
+                                            , modifyEditAccountForm <|
+                                                \m ->
+                                                    { m | isBusy = False }
+                                            , Tepa.lazy <|
+                                                \_ ->
+                                                    editAccountFormProcedure bucket
+                                            ]
 
-                                Ok resp ->
-                                    [ Procedure.modify <|
-                                        \m ->
-                                            { m
-                                                | session = resp.session
-                                                , editAccountForm =
-                                                    let
-                                                        editAccountForm = m.editAccountForm
-                                                    in
-                                                    { editAccountForm
-                                                        | isBusy = False
+                                        Ok resp ->
+                                            [ Tepa.modify <|
+                                                \m ->
+                                                    { m
+                                                        | session = resp.session
+                                                        , editAccountForm =
+                                                            let
+                                                                editAccountForm = m.editAccountForm
+                                                            in
+                                                            { editAccountForm
+                                                                | isBusy = False
+                                                            }
                                                     }
-                                            }
-                                    , Procedure.jump <|
-                                        \_ -> editAccountFormProcedures key
-                                    ]
-
-                                _ ->
-                                    []
-                    ]
+                                            , Tepa.lazy <|
+                                                \_ -> editAccountFormProcedure bucket
+                                            ]
+                                )
+            )
     ]
 
 
-requestEditAccount : EditAccount.EditAccount -> Promise Command Memory Event (Result Http.Error EditAccount.Response)
+requestEditAccount : EditAccount.EditAccount -> Promise (Result Http.Error EditAccount.Response)
 requestEditAccount editAccount =
-    Promise.cutsomRequest
+    Tepa.customRequest
         { name = "requestEditAccount"
-        , request = \m rid toMsg ->
-            RequestEditAccount (ReceiveEditAccountResp >> toMsg) editAccount
+        , request = RequestEditAccount editAccount
+        , wrap = ReceiveEditAccountResp
+        , unwrap = \e ->
+            case e of
+                ReceiveEditAccountResp a -> Just a
+                _ -> Nothing
         }
 
 
 -- Toast
 
 
-runToastProcedure :
-    Procedure Toast.Command Toast.Memory Toast.Event
-    -> Procedure Command Memory Event
-runToastProcedure =
-    Procedure.wrapEvent
-        { wrap = ToastEvent
-        , unwrap =
-            \e ->
-                case e of
-                    ToastEvent e1 ->
-                        Just e1
+runToastPromise :
+    Pointer Toast.Memory
+    -> Tepa.Promise Toast.Command Toast.Memory Toast.Event a
+    -> Promise a
+runToastPromise pointer prom =
+    Tepa.onLayer pointer prom
+        |> Tepa.liftEvent
+            { wrap = ToastEvent
+            , unwrap =
+                \e ->
+                    case e of
+                        ToastEvent e1 ->
+                            Just e1
 
-                    _ ->
-                        Nothing
-        }
-        >> Procedure.mapCmd ToastCommand
-        >> Procedure.liftMemory
-            { get = .toast
-            , modify = \f m -> { m | toast = f m.toast }
+                        _ ->
+                            Nothing
             }
+        |> Tepa.mapCmd ToastCommand
 
 
 -- Scenario
 
 
-type alias Scenario =
-    Scenario.Scenario Command Memory Event
-
-
-scenario :
-    Scenario.Session
-    ->
-        { user :
-            { comment : String -> Scenario
-            , changeEditAccountFormAccountId : String -> Scenario
-            , clickSubmitEditAccount : Scenario
-            }
-        , system :
-            { comment : String -> Scenario
-            , requestEditAccount : Value -> Scenario
-            }
-        , external :
-            { backend :
-                { comment : String -> Scenario
-                , respondSuccessToEditAccountIdRequest : EditAccount.Response -> Scenario
-                }
-            }
-        }
-scenario session =
-    { user =
-        { comment = Scenario.userComment session
-        , changeEditAccountFormAccountId =
-            \str ->
-                Scenario.userEvent session
-                    ("Type \"" ++ str ++ "\" for Account ID field")
-                    (ChangeEditAccountFormAccountId str)
-        , clickSubmitEditAccount =
-            Scenario.userEvent session
-                "Click submit button for edit account form."
-                ClickSubmitEditAccount
-        }
-    , system =
-        { comment = Scenario.systemComment session
-        , requestEditAccount =
-            \json ->
-                Scenario.systemCommand session
-                    "Request save new account to server"
-                    (ExpBuilder.custom <| \command ->
-                        case command of
-                            RequestEditAccount _ editAccount ->
-                                if EditAccount.toValue editAccount == json then
-                                    ExpBuilder.pass
-                                else
-                                    ExpBuilder.fail "thought the request body is equal to the expected JSON."
-                            _ ->
-                                ExpBuilder.fail "thought the command is `RequestEditAccount`."
-                    )
-        }
-    , external =
-        { backend =
-            { comment = Scenario.externalComment "backend" session
-            , respondSuccessToEditAccountIdRequest =
-                \resp ->
-                    Scenario.externalEvent "backend"
-                        session
-                        "Respond \"Success\" to edit account request"
-                        (ReceiveEditAccountResp (Ok resp))
-            }
-        }
-    }
+-- type alias Scenario =
+--     Scenario.Scenario Command Memory Event
+-- 
+-- 
+-- scenario :
+--     Scenario.Session
+--     ->
+--         { user :
+--             { comment : String -> Scenario
+--             , changeEditAccountFormAccountId : String -> Scenario
+--             , clickSubmitEditAccount : Scenario
+--             }
+--         , system :
+--             { comment : String -> Scenario
+--             , requestEditAccount : Value -> Scenario
+--             }
+--         , external :
+--             { backend :
+--                 { comment : String -> Scenario
+--                 , respondSuccessToEditAccountIdRequest : EditAccount.Response -> Scenario
+--                 }
+--             }
+--         }
+-- scenario session =
+--     { user =
+--         { comment = Scenario.userComment session
+--         , changeEditAccountFormAccountId =
+--             \str ->
+--                 Scenario.userEvent session
+--                     ("Type \"" ++ str ++ "\" for Account ID field")
+--                     (ChangeEditAccountFormAccountId str)
+--         , clickSubmitEditAccount =
+--             Scenario.userEvent session
+--                 "Click submit button for edit account form."
+--                 ClickSubmitEditAccount
+--         }
+--     , system =
+--         { comment = Scenario.systemComment session
+--         , requestEditAccount =
+--             \json ->
+--                 Scenario.systemCommand session
+--                     "Request save new account to server"
+--                     (ExpBuilder.custom <| \command ->
+--                         case command of
+--                             RequestEditAccount _ editAccount ->
+--                                 if EditAccount.toValue editAccount == json then
+--                                     ExpBuilder.pass
+--                                 else
+--                                     ExpBuilder.fail "thought the request body is equal to the expected JSON."
+--                             _ ->
+--                                 ExpBuilder.fail "thought the command is `RequestEditAccount`."
+--                     )
+--         }
+--     , external =
+--         { backend =
+--             { comment = Scenario.externalComment "backend" session
+--             , respondSuccessToEditAccountIdRequest =
+--                 \resp ->
+--                     Scenario.externalEvent "backend"
+--                         session
+--                         "Respond \"Success\" to edit account request"
+--                         (ReceiveEditAccountResp (Ok resp))
+--             }
+--         }
+--     }
 
 
 

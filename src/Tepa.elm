@@ -6,18 +6,22 @@ module Tepa exposing
     , andRace
     , andThen
     , sync
-    , none, sequence, syncAll, andThenSequence
-    , modify, push, listen
+    , Void, void
+    , sequence, andThenSequence, none, return
+    , syncAll
+    , modify, push, listen, lazy
     , when
     , unless
     , withMaybe
+    , sequenceOnLayer
     , succeed
     , currentState, layerEvent
     , portRequest
     , customRequest
-    , Layer
-    , newLayer
-    , layerView, keyedLayerView, layerDocument
+    , withLayerEvent
+    , Layer, isPointedBy
+    , putMaybeLayer, newListItemLayer, newLayer
+    , layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
     , element
     , document
     , application
@@ -60,10 +64,12 @@ module Tepa exposing
 
 # Procedures
 
-Promises that returns `()` are called as a _Procedure_.
+Promises that returns `Void` are called as a _Procedure_.
 
-@docs none, sequence, syncAll, andThenSequence
-@docs modify, push, listen
+@docs Void, void
+@docs sequence, andThenSequence, none, return
+@docs syncAll
+@docs modify, push, listen, lazy
 
 
 # Helper Procedures
@@ -71,6 +77,7 @@ Promises that returns `()` are called as a _Procedure_.
 @docs when
 @docs unless
 @docs withMaybe
+@docs sequenceOnLayer
 
 
 # Primitive Promises
@@ -81,11 +88,16 @@ Promises that returns `()` are called as a _Procedure_.
 @docs customRequest
 
 
+# Helper Promises
+
+@docs withLayerEvent
+
+
 # Layer
 
-@docs Layer
-@docs newLayer
-@docs layerView, keyedLayerView, layerDocument
+@docs Layer, isPointedBy
+@docs putMaybeLayer, newListItemLayer, newLayer
+@docs layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
 
 
 # Browser alternatives
@@ -119,7 +131,7 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 
 import Browser
 import Browser.Navigation as Nav
-import Html exposing (Html)
+import Html exposing (Attribute, Html)
 import Internal.Core as Core
     exposing
         ( Msg(..)
@@ -128,6 +140,7 @@ import Internal.Core as Core
 import Internal.RequestId exposing (RequestId)
 import Json.Decode exposing (Decoder)
 import Json.Encode exposing (Value)
+import Mixin exposing (Mixin)
 import Url exposing (Url)
 
 
@@ -190,6 +203,12 @@ type alias Layer m =
 
 
 {-| -}
+isPointedBy : Pointer m m1 -> Layer m1 -> Bool
+isPointedBy =
+    Core.isPointedBy
+
+
+{-| -}
 type alias Pointer m m1 =
     Core.Pointer m m1
 
@@ -211,7 +230,7 @@ May you want to set timeout on your request:
                     |> map Err
                 )
 
-    sleep : Promise Command Memory Event ()
+    sleep : Promise Command Memory Event Void
     sleep =
         Debug.todo ""
 
@@ -256,38 +275,55 @@ sync =
     Core.syncPromise
 
 
+
+-- Procedures
+
+
+{-| -}
+type alias Void =
+    Core.Void
+
+
+{-| -}
+void : Promise c m e a -> Promise c m e Void
+void =
+    Core.void
+
+
+{-| Concatenate given sequence of Procedures.
+-}
+sequence : List (Promise c m e Void) -> Promise c m e Void
+sequence =
+    Core.sequence
+
+
 {-| Evaluate sequence of Procedures that depend on the result of a Promise.
 
     andThenSequence f =
         andThen (f >> sequence)
 
 -}
-andThenSequence : (a -> List (Promise c m e ())) -> Promise c m e a -> Promise c m e ()
+andThenSequence : (a -> List (Promise c m e Void)) -> Promise c m e a -> Promise c m e Void
 andThenSequence f =
     andThen (f >> sequence)
 
 
-
--- Procedures
-
-
 {-| Procedure that does nothing.
 -}
-none : Promise c m e ()
+none : Promise c m e Void
 none =
     Core.none
 
 
-{-| Concatenate given sequence of Procedures.
--}
-sequence : List (Promise c m e ()) -> Promise c m e ()
-sequence =
-    Core.sequence
+{-| -}
+return : Promise c m e Void
+return =
+    Core.return
 
 
 {-| Run Procedures concurrently, and await all to be completed.
 -}
-syncAll : List (Promise c m e ()) -> Promise c m e ()
+syncAll : List (Promise c m e Void) -> Promise c m e Void
 syncAll =
     Core.concurrent
 
@@ -297,7 +333,7 @@ syncAll =
 Note that the update operation, passed as the second argument, is performed atomically; it means the state of the Memory is not updated by another process during it is read and written by the `modify`.
 
 -}
-modify : (m -> m) -> Promise c m e ()
+modify : (m -> m) -> Promise c m e Void
 modify =
     Core.modify
 
@@ -307,7 +343,7 @@ modify =
 Consider using `portRequest` or `customRequest` if possible.
 
 -}
-push : (m -> List c) -> Promise c m e ()
+push : (m -> List c) -> Promise c m e Void
 push =
     Core.push
 
@@ -316,7 +352,7 @@ push =
 
 Keep in mind that this Promise blocks subsequent Promises, so it is common practice to call asynchronously with the main Promise when you create a new layer.
 
-    myProcedures : List (Promise Command Memory Event ())
+    myProcedures : List (Promise Command Memory Event Void)
     myProcedures =
         [ newLayer myLayerPosition initValue
             |> andThen
@@ -332,7 +368,7 @@ Keep in mind that this Promise blocks subsequent Promises, so it is common pract
                         ]
                 )
 
-    onEveryTick : Event -> List (Promise c m e ())
+    onEveryTick : Event -> List (Promise c m e Void)
     onEveryTick event =
         case event of
             Tick time ->
@@ -344,11 +380,17 @@ Keep in mind that this Promise blocks subsequent Promises, so it is common pract
 listen :
     { name : String
     , subscription : m -> Sub e
-    , handler : e -> List (Promise c m e ())
+    , handler : e -> List (Promise c m e Void)
     }
-    -> Promise c m e ()
+    -> Promise c m e Void
 listen =
     Core.listen
+
+
+{-| -}
+lazy : (() -> Promise c m e Void) -> Promise c m e Void
+lazy =
+    Core.lazy
 
 
 
@@ -357,7 +399,7 @@ listen =
 
 {-| Evaluate the sequence of Procedures only if the first argument is `True`, otherwise same as `none`.
 -}
-when : Bool -> List (Promise c m e ()) -> Promise c m e ()
+when : Bool -> List (Promise c m e Void) -> Promise c m e Void
 when p ps =
     if p then
         sequence ps
@@ -368,14 +410,14 @@ when p ps =
 
 {-| Evaluate the sequence of Procedures only if the first argument is `False`, otherwise same as `none`.
 -}
-unless : Bool -> List (Promise c m e ()) -> Promise c m e ()
+unless : Bool -> List (Promise c m e Void) -> Promise c m e Void
 unless p =
     when (not p)
 
 
 {-| Evaluate the sequence of Procedures returned by the callback function only if the first argument is `Just`, otherwise same as `none`.
 -}
-withMaybe : Maybe a -> (a -> List (Promise c m e ())) -> Promise c m e ()
+withMaybe : Maybe a -> (a -> List (Promise c m e Void)) -> Promise c m e Void
 withMaybe ma f =
     case ma of
         Nothing ->
@@ -383,6 +425,29 @@ withMaybe ma f =
 
         Just a ->
             sequence <| f a
+
+
+{-| -}
+sequenceOnLayer : Pointer m m1 -> List (Promise c m1 e Void) -> Promise c m e Void
+sequenceOnLayer p proms =
+    sequence proms
+        |> onLayer p
+
+
+{-| Run callback function when the Layer received an event; if the callback function returns empty List, it awaits another event again.
+-}
+withLayerEvent : (e -> List (Promise c m e Void)) -> Promise c m e Void
+withLayerEvent f =
+    layerEvent
+        |> andThen
+            (\e ->
+                case f e of
+                    [] ->
+                        withLayerEvent f
+
+                    proms ->
+                        sequence proms
+            )
 
 
 
@@ -513,11 +578,67 @@ portRequest =
 {-| -}
 customRequest :
     { name : String
-    , request : m -> RequestId -> (e -> Msg e) -> c
+    , request : (a -> Msg e) -> c
+    , wrap : a -> e
+    , unwrap : e -> Maybe a
     }
-    -> Promise c m e e
+    -> Promise c m e a
 customRequest =
     Core.customRequest
+
+
+
+-- Layer
+
+
+{-| -}
+putMaybeLayer :
+    { get : m -> Maybe (Layer m1)
+    , set : Maybe (Layer m1) -> m -> m
+    , init : m1
+    }
+    -> Promise c m e (Pointer m m1)
+putMaybeLayer o =
+    newLayer
+        { get =
+            \getter m ->
+                o.get m
+                    |> Maybe.andThen getter
+        , modify =
+            \modifier m ->
+                o.get m
+                    |> Maybe.map modifier
+                    |> (\ml1 -> o.set ml1 m)
+        }
+        o.init
+        |> andThen
+            (\( layer, pointer ) ->
+                (modify <| o.set (Just layer))
+                    |> map (\_ -> pointer)
+            )
+
+
+{-| -}
+newListItemLayer :
+    { get : m -> List (Layer m1)
+    , set : List (Layer m1) -> m -> m
+    , init : m1
+    }
+    -> m1
+    -> Promise c m e ( Layer m1, Pointer m m1 )
+newListItemLayer o =
+    newLayer
+        { get =
+            \getter m ->
+                o.get m
+                    |> List.filterMap getter
+                    |> List.head
+        , modify =
+            \modifier m ->
+                o.get m
+                    |> List.map modifier
+                    |> (\l1s -> o.set l1s m)
+        }
 
 
 {-| -}
@@ -532,21 +653,34 @@ newLayer =
 
 
 {-| -}
-layerView : Layer m -> (m -> Html e) -> Html (Msg e)
+layerView : (m -> Html (Msg e)) -> Layer m -> Html (Msg e)
 layerView =
     Core.layerView
 
 
 {-| -}
-keyedLayerView : Layer m -> (m -> Html e) -> ( String, Html (Msg e) )
+keyedLayerView : (m -> Html (Msg e)) -> Layer m -> ( String, Html (Msg e) )
 keyedLayerView =
     Core.keyedLayerView
 
 
 {-| -}
-layerDocument : Layer m -> (m -> Document e) -> Document (Msg e)
+layerDocument : (m -> Document (Msg e)) -> Layer m -> Document (Msg e)
 layerDocument =
     Core.layerDocument
+
+
+{-| -}
+eventAttr : Attribute e -> Attribute (Msg e)
+eventAttr =
+    Core.eventAttr
+
+
+{-| [elm-mixin](https://package.elm-lang.org/packages/arowM/elm-mixin/latest/) version of `eventAttr`.
+-}
+eventMixin : Mixin e -> Mixin (Msg e)
+eventMixin =
+    Core.eventMixin
 
 
 
@@ -560,7 +694,7 @@ You can use `mapCmd` to inject actual Cmds into your Procedure build with custom
 -}
 element :
     { init : memory
-    , procedure : flags -> List (Promise (Cmd (Msg event)) memory event ())
+    , procedure : flags -> Promise (Cmd (Msg event)) memory event Void
     , view : Layer memory -> Html (Msg event)
     }
     -> Program flags memory event
@@ -582,7 +716,7 @@ You can use `mapCmd` to inject actual Cmds into your Procedure build with custom
 -}
 document :
     { init : memory
-    , procedure : flags -> List (Promise (Cmd (Msg event)) memory event ())
+    , procedure : flags -> Promise (Cmd (Msg event)) memory event Void
     , view : Layer memory -> Document (Msg event)
     }
     -> Program flags memory event
@@ -604,7 +738,7 @@ The `onUrlRequest` and `onUrlChange` Events are published to the application roo
 -}
 application :
     { init : memory
-    , procedure : flags -> Url -> Key -> List (Promise (Cmd (Msg event)) memory event ())
+    , procedure : flags -> Url -> Key -> Promise (Cmd (Msg event)) memory event Void
     , view : Layer memory -> Document (Msg event)
     , onUrlRequest : Browser.UrlRequest -> event
     , onUrlChange : Url -> event
@@ -672,7 +806,7 @@ subscriptions =
 -}
 init :
     memory
-    -> List (Promise (Cmd (Msg event)) memory event ())
+    -> Promise (Cmd (Msg event)) memory event Void
     -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 init memory procs =
     Core.init memory procs

@@ -40,8 +40,7 @@ import Http
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
-import Procedure as Procedure exposing (LayerId, Msg, Procedure)
-import Procedure.Promise as Promise exposing (Promise)
+import Tepa exposing (Layer, Msg, Promise, Void)
 import Process
 import Task
 
@@ -74,7 +73,7 @@ type Memory
 
 
 type alias Memory_ =
-    { items : List ( LayerId, ToastItemMemory )
+    { items : List ( Layer ToastItemMemory )
     }
 
 
@@ -108,21 +107,21 @@ init =
 {-| -}
 type Event
     = CloseToastItem
-    | WakeUp
+    | WakeUp ()
 
 
 {-| -}
 type Command
-    = Sleep Float (Msg Event)
+    = Sleep Float (() -> Msg Event)
 
 
 {-| -}
 runCommand : Command -> Cmd (Msg Event)
 runCommand cmd =
     case cmd of
-        Sleep msec msg ->
+        Sleep msec toMsg ->
             Process.sleep msec
-                |> Task.perform (\() -> msg)
+                |> Task.perform toMsg
 
 
 
@@ -131,19 +130,19 @@ runCommand cmd =
 
 {-| Show warning message.
 -}
-pushWarning : String -> Procedure Command Memory Event
+pushWarning : String -> Promise Command Memory Event Void
 pushWarning =
     pushItem WarningMessage
 
 
 {-| Show error message.
 -}
-pushError : String -> Procedure Command Memory Event
+pushError : String -> Promise Command Memory Event Void
 pushError =
     pushItem ErrorMessage
 
 
-pushItem : MessageType -> String -> Procedure Command Memory Event
+pushItem : MessageType -> String -> Promise Command Memory Event Void
 pushItem type_ str =
     let
         newItem =
@@ -152,46 +151,35 @@ pushItem type_ str =
             , content = str
             }
     in
-    Procedure.observe newItem <|
-        \( channel, newItemMemory ) ->
-            [ Procedure.modify <|
-                \(Memory m) ->
-                    Memory
-                        { m
-                            | items = m.items ++ [ ( channel, newItemMemory ) ]
-                        }
-            , Procedure.asyncOn
-                { get = \(Memory m) ->
-                    List.filter (\(c, _) -> c == channel) m.items
-                        |> List.head
-                , set = \m1 (Memory m) ->
-                    Memory
-                        { m
-                            | items =
-                                List.map
-                                    (\(c, a) ->
-                                        if (c == channel) then
-                                            (c, m1)
-                                        else
-                                            (c, a)
-                                    )
-                                    m.items
-                        }
+    Tepa.newLayer
+        { get = \getter (Memory m) ->
+            List.filterMap getter m.items
+                |> List.head
+        , modify = \modifier (Memory m) ->
+            Memory
+                { m
+                    | items = List.map modifier m.items
                 }
-                channel
-                <|
-                    \pointer ->
-                        [ toastItemProcedures
-                            |> Procedure.batch
-                            |> Procedure.liftMemory pointer
-                        , Procedure.modify <|
-                            \(Memory m) ->
-                                Memory
-                                    { m
-                                        | items = List.filter (\( c, _ ) -> c /= channel) m.items
-                                    }
-                        ]
-            ]
+        }
+        newItem
+        |> Tepa.andThenSequence
+            (\(newItemLayer, itemPointer) ->
+                [ Tepa.modify <|
+                    \(Memory m) ->
+                        Memory { m | items = m.items ++ [ newItemLayer ] }
+                , toastItemProcedure
+                    |> Tepa.onLayer itemPointer
+                , Tepa.modify <|
+                    \(Memory m) ->
+                        Memory
+                            { m
+                                | items =
+                                    List.filter
+                                        (not << Tepa.isPointedBy itemPointer)
+                                        m.items
+                            }
+                ]
+            )
 
 
 -- ToastItem
@@ -204,45 +192,40 @@ type alias ToastItemMemory =
     }
 
 
-toastItemProcedures : List (Procedure Command ToastItemMemory Event)
-toastItemProcedures =
-    [ Procedure.race
-        [ sleep toastTimeout
-        , Procedure.await <|
-            \event _ ->
-                case event of
+toastItemProcedure : Promise Command ToastItemMemory Event Void
+toastItemProcedure =
+    Tepa.sequence
+        [ Tepa.withLayerEvent
+            ( \e ->
+                case e of
                     CloseToastItem ->
-                        [ Procedure.none
+                        [ Tepa.none
                         ]
 
                     _ ->
                         []
+            )
+            |> Tepa.andRace (sleep toastTimeout)
+        , Tepa.modify
+            (\m -> { m | isHidden = True })
+        , sleep toastDisappearingDuration
         ]
-    , Procedure.modify <|
-        \m -> { m | isHidden = True }
-    , sleep toastDisappearingDuration
-    ]
 
 
 sleep :
     Float
-    -> Procedure Command m Event
+    -> Promise Command m Event Void
 sleep msec =
-    -- Procedure.protected creates sandbox,
-    -- in which procedures pub/sub Events to/from their private Channel.
-    Procedure.protected
-        [ Procedure.push <|
-            \_ toMsg -> Sleep msec (toMsg WakeUp)
-        , Procedure.await <|
-            \event _ ->
-                case event of
-                    WakeUp ->
-                        [ Procedure.none
-                        ]
-
-                    _ ->
-                        []
-        ]
+    Tepa.customRequest
+        { name = "sleep"
+        , request = Sleep msec
+        , wrap = WakeUp
+        , unwrap = \e ->
+            case e of
+                WakeUp () -> Just ()
+                _ -> Nothing
+        }
+        |> Tepa.void
 
 
 
@@ -253,7 +236,7 @@ sleep msec =
 -}
 pushHttpError :
     Http.Error
-    -> Procedure Command Memory Event
+    -> Promise Command Memory Event Void
 pushHttpError err =
     case err of
         Http.BadStatus 401 ->
@@ -277,40 +260,39 @@ pushHttpError err =
 
 
 {-| -}
-view : Memory -> Html (Msg Event)
-view (Memory param) =
-    Html.keyed "div"
-        [ localClass "toast"
-        , Mixin.style "--zindex" <| String.fromInt ZIndex.toast
-        ]
-        (List.map toastItemView param.items)
+view : Layer Memory -> Html (Msg Event)
+view =
+    Tepa.layerView <|
+        \(Memory memory) ->
+            Html.keyed "div"
+                [ localClass "toast"
+                , Mixin.style "--zindex" <| String.fromInt ZIndex.toast
+                ]
+                (List.map (Tepa.keyedLayerView toastItemView) memory.items)
 
 
-toastItemView :
-    ( Channel, ToastItemMemory )
-    -> ( String, Html (Msg Event) )
-toastItemView ( channel, param ) =
-    ( Channel.toString channel
-    , Html.div
+toastItemView : ToastItemMemory -> Html (Msg Event)
+toastItemView memory =
+    Html.div
         [ localClass "toast_item"
-        , localClass <| "toast_item-" ++ messageTypeCode param.messageType
+        , localClass <| "toast_item-" ++ messageTypeCode memory.messageType
         , Mixin.attribute "role" "dialog"
-        , Mixin.boolAttribute "aria-hidden" param.isHidden
+        , Mixin.boolAttribute "aria-hidden" memory.isHidden
         , Mixin.style "--disappearing-duration" (String.fromFloat toastDisappearingDuration ++ "ms")
         ]
         [ Html.div
             [ localClass "toast_item_body"
             ]
-            [ Html.text param.content
+            [ Html.text memory.content
             ]
         , Html.div
             [ localClass "toast_item_close"
-            , Events.onClick (Procedure.publish channel CloseToastItem)
+            , Events.onClick CloseToastItem
+                |> Tepa.eventMixin
             ]
             [ Html.text "×"
             ]
         ]
-    )
 
 
 
@@ -319,4 +301,4 @@ toastItemView ( channel, param ) =
 
 localClass : String -> Mixin msg
 localClass name =
-    Mixin.class ("widget_ toast--" ++ name)
+    Mixin.class ("widget_toast--" ++ name)

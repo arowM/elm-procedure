@@ -104,6 +104,7 @@ import Internal.Core as Core
         , Msg(..)
         , Pointer(..)
         , Promise
+        , Void
         )
 import Internal.Markup as Markup
 import Json.Encode exposing (Value)
@@ -947,7 +948,7 @@ fromJust description ma f =
 -}
 toTest :
     { init : memory
-    , procedure : flags -> Url -> Key -> List (Promise cmd memory event ())
+    , procedure : flags -> Url -> Key -> Promise cmd memory event Void
     , view : Layer memory -> Html (Msg event)
     , sections : List (Section flags cmd memory event)
     }

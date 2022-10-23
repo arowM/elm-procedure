@@ -12,10 +12,11 @@ module Internal.Core exposing
     , liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
     , portRequest, customRequest
     , layerEvent
-    , Layer(..), Pointer(..)
-    , layerView, keyedLayerView, layerDocument
+    , Layer(..), Pointer(..), isPointedBy
+    , layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
     , none, sequence, concurrent
-    , modify, push, currentState, reject, listen
+    , Void, void
+    , modify, push, currentState, return, lazy, listen
     , newLayer, onLayer
     , init, update
     , elementView, documentView, subscriptions
@@ -59,14 +60,15 @@ module Internal.Core exposing
 @docs liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
 @docs portRequest, customRequest
 @docs layerEvent
-@docs Layer, Pointer
-@docs layerView, keyedLayerView, layerDocument
+@docs Layer, Pointer, isPointedBy
+@docs layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
 @docs none, sequence, concurrent
 
 
 # Primitive Procedures
 
-@docs modify, push, currentState, reject, listen
+@docs Void, void
+@docs modify, push, currentState, return, lazy, listen
 
 
 # Layer
@@ -100,7 +102,8 @@ import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Dict exposing (Dict)
 import Expect
-import Html exposing (Html)
+import Html exposing (Attribute, Html)
+import Html.Attributes as Attributes
 import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.Markup as Markup
 import Internal.RequestId as RequestId exposing (RequestId)
@@ -194,6 +197,9 @@ type Msg event
         { requestId : RequestId
         , event : event
         }
+    | ViewStubMsg
+        { event : event
+        }
     | NoOp
 
 
@@ -230,6 +236,11 @@ mapMsg f msg1 =
             ListenerMsg
                 { requestId = r.requestId
                 , event = f r.event
+                }
+
+        ViewStubMsg r ->
+            ViewStubMsg
+                { event = f r.event
                 }
 
         NoOp ->
@@ -276,6 +287,16 @@ unwrapMsg f msg1 =
                     ListenerMsg
                         { requestId = r.requestId
                         , event = e
+                        }
+
+        ViewStubMsg r ->
+            case f r.event of
+                Nothing ->
+                    NoOp
+
+                Just e ->
+                    ViewStubMsg
+                        { event = e
                         }
 
         NoOp ->
@@ -639,29 +660,35 @@ liftPromiseEvent o (Promise prom1) =
 -- Primitive Promises
 
 
-none : Promise c m e ()
+none : Promise c m e Void
 none =
-    succeedPromise ()
+    succeedPromise OnGoingProcedure
 
 
-sequence : List (Promise c m e ()) -> Promise c m e ()
+sequence : List (Promise c m e Void) -> Promise c m e Void
 sequence =
     List.foldl
         (\a acc ->
             acc
                 |> andThenPromise
-                    (\() -> a)
+                    (\v ->
+                        case v of
+                            CompletedProcedure ->
+                                succeedPromise CompletedProcedure
+
+                            OnGoingProcedure ->
+                                a
+                    )
         )
         none
 
 
-concurrent : List (Promise c m e ()) -> Promise c m e ()
+concurrent : List (Promise c m e Void) -> Promise c m e Void
 concurrent =
     List.foldl
         (\a acc ->
-            acc
-                |> mapPromise
-                    (\() _ -> ())
+            succeedPromise (\_ _ -> OnGoingProcedure)
+                |> syncPromise acc
                 |> syncPromise a
         )
         none
@@ -698,7 +725,17 @@ genNewLayerId =
             }
 
 
-modify : (m -> m) -> Promise c m e ()
+type Void
+    = OnGoingProcedure
+    | CompletedProcedure
+
+
+void : Promise c m e a -> Promise c m e Void
+void =
+    andThenPromise (\_ -> none)
+
+
+modify : (m -> m) -> Promise c m e Void
 modify f =
     Promise <|
         \context ->
@@ -709,11 +746,11 @@ modify f =
             , cmds = []
             , addListeners = []
             , closedLayers = []
-            , handler = Resolved ()
+            , handler = Resolved OnGoingProcedure
             }
 
 
-push : (m -> List c) -> Promise c m e ()
+push : (m -> List c) -> Promise c m e Void
 push f =
     Promise <|
         \context ->
@@ -721,20 +758,31 @@ push f =
             , cmds = f context.state
             , addListeners = []
             , closedLayers = []
-            , handler = Resolved ()
+            , handler = Resolved OnGoingProcedure
             }
 
 
-reject : Promise c m e ()
-reject =
+return : Promise c m e Void
+return =
     Promise <|
         \context ->
             { newContext = context
             , cmds = []
             , addListeners = []
             , closedLayers = []
-            , handler = Rejected
+            , handler = Resolved CompletedProcedure
             }
+
+
+lazy : (() -> Promise c m e Void) -> Promise c m e Void
+lazy f =
+    Promise <|
+        \context ->
+            let
+                (Promise prom) =
+                    f ()
+            in
+            prom context
 
 
 type Layer m
@@ -788,34 +836,44 @@ onLayer (Pointer layer) procs =
     liftPromiseMemory layer procs
 
 
-layerView : Layer m -> (m -> Html e) -> Html (Msg e)
-layerView (Layer layerId m) f =
+layerView : (m -> Html (Msg e)) -> Layer m -> Html (Msg e)
+layerView f (Layer layerId m) =
     f m
         |> Html.map
-            (\e ->
-                LayerMsg
-                    { layerId = layerId
-                    , event = e
-                    }
+            (\msg ->
+                case msg of
+                    ViewStubMsg r ->
+                        LayerMsg
+                            { layerId = layerId
+                            , event = r.event
+                            }
+
+                    _ ->
+                        msg
             )
 
 
-keyedLayerView : Layer m -> (m -> Html e) -> ( String, Html (Msg e) )
-keyedLayerView (Layer layerId m) f =
+keyedLayerView : (m -> Html (Msg e)) -> Layer m -> ( String, Html (Msg e) )
+keyedLayerView f (Layer layerId m) =
     ( LayerId.toString layerId
     , f m
         |> Html.map
-            (\e ->
-                LayerMsg
-                    { layerId = layerId
-                    , event = e
-                    }
+            (\msg ->
+                case msg of
+                    ViewStubMsg r ->
+                        LayerMsg
+                            { layerId = layerId
+                            , event = r.event
+                            }
+
+                    _ ->
+                        msg
             )
     )
 
 
-layerDocument : Layer m -> (m -> Document e) -> Document (Msg e)
-layerDocument (Layer layerId m) f =
+layerDocument : (m -> Document (Msg e)) -> Layer m -> Document (Msg e)
+layerDocument f (Layer layerId m) =
     f m
         |> (\doc ->
                 { title = doc.title
@@ -823,15 +881,32 @@ layerDocument (Layer layerId m) f =
                     doc.body
                         |> List.map
                             (Html.map
-                                (\e ->
-                                    LayerMsg
-                                        { layerId = layerId
-                                        , event = e
-                                        }
+                                (\msg ->
+                                    case msg of
+                                        ViewStubMsg r ->
+                                            LayerMsg
+                                                { layerId = layerId
+                                                , event = r.event
+                                                }
+
+                                        _ ->
+                                            msg
                                 )
                             )
                 }
            )
+
+
+eventAttr : Attribute event -> Attribute (Msg event)
+eventAttr =
+    Attributes.map
+        (\e -> ViewStubMsg { event = e })
+
+
+eventMixin : Mixin e -> Mixin (Msg e)
+eventMixin =
+    Mixin.map
+        (\e -> ViewStubMsg { event = e })
 
 
 type ThisLayerId m
@@ -849,12 +924,21 @@ type alias Pointer_ m m1 =
     }
 
 
+isPointedBy : Pointer m m1 -> Layer m1 -> Bool
+isPointedBy (Pointer pointer) (Layer layerId _) =
+    let
+        (ThisLayerId pointerLayerId) =
+            pointer.layerId
+    in
+    pointerLayerId == layerId
+
+
 listen :
     { name : String
     , subscription : m -> Sub e
-    , handler : e -> List (Promise c m e ())
+    , handler : e -> List (Promise c m e Void)
     }
-    -> Promise c m e ()
+    -> Promise c m e Void
 listen { name, subscription, handler } =
     Promise <|
         \context ->
@@ -876,7 +960,7 @@ listen { name, subscription, handler } =
                         , event = e
                         }
 
-                awaitForever : Msg e -> m -> Promise c m e ()
+                awaitForever : Msg e -> m -> Promise c m e Void
                 awaitForever msg _ =
                     case msg of
                         ListenerMsg listenerMsg ->
@@ -981,9 +1065,11 @@ portRequest o =
 
 customRequest :
     { name : String
-    , request : m -> RequestId -> (e -> Msg e) -> c
+    , request : (a -> Msg e) -> c
+    , wrap : a -> e
+    , unwrap : e -> Maybe a
     }
-    -> Promise c m e e
+    -> Promise c m e a
 customRequest o =
     Promise <|
         \context ->
@@ -994,12 +1080,17 @@ customRequest o =
                 (ThisLayerId thisLayerId) =
                     context.thisLayerId
 
-                nextPromise : Msg e -> m -> Promise c m e e
+                nextPromise : Msg e -> m -> Promise c m e a
                 nextPromise msg _ =
                     case msg of
                         ResponseMsg respMsg ->
                             if respMsg.requestId == myRequestId then
-                                succeedPromise respMsg.event
+                                case o.unwrap respMsg.event of
+                                    Nothing ->
+                                        justAwaitPromise nextPromise
+
+                                    Just a ->
+                                        succeedPromise a
 
                             else
                                 justAwaitPromise nextPromise
@@ -1021,12 +1112,10 @@ customRequest o =
             , closedLayers = []
             , cmds =
                 [ o.request
-                    context.state
-                    myRequestId
-                    (\e ->
+                    (\a ->
                         ResponseMsg
                             { requestId = myRequestId
-                            , event = e
+                            , event = o.wrap a
                             }
                     )
                 ]
@@ -1069,10 +1158,10 @@ layerEvent =
 
 init :
     memory
-    -> List (Promise cmd memory event ())
+    -> Promise cmd memory event Void
     -> ( Model cmd memory event, List cmd )
-init m proms =
-    toModel (initContext m) [] (sequence proms)
+init m prom =
+    toModel (initContext m) [] prom
 
 
 initContext : m -> Context m
@@ -1084,7 +1173,7 @@ initContext memory =
     }
 
 
-toModel : Context m -> List (Listener e) -> Promise c m e () -> ( Model c m e, List c )
+toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List c )
 toModel context listeners (Promise prom) =
     let
         eff =
@@ -1099,7 +1188,7 @@ toModel context listeners (Promise prom) =
                     )
     in
     case eff.handler of
-        Resolved () ->
+        Resolved _ ->
             ( EndOfProcess
                 { lastState = eff.newContext.state
                 }
@@ -1150,6 +1239,9 @@ update msg model =
 
                 ListenerMsg _ ->
                     onGoing.next msg context listeners
+
+                ViewStubMsg _ ->
+                    ( model, [] )
 
                 ResponseMsg r ->
                     let
@@ -1313,7 +1405,7 @@ mappendScenario (Scenario s1) (Scenario s2) =
 
 toTest :
     { init : memory
-    , procedure : flags -> Url -> Key -> List (Promise cmd memory event ())
+    , procedure : flags -> Url -> Key -> Promise cmd memory event Void
     , view : Layer memory -> Html (Msg event)
     , sections : List (Section flags cmd memory event)
     }

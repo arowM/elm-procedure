@@ -3,14 +3,15 @@ module Page.Login exposing
     , Event
     , Memory
     , init
-    , procedures
+    , currentSession
+    , procedure
     , runCommand
-    , scenario
+    -- , scenario
     , view
     )
 
 import App.Session exposing (Session)
-import Browser.Navigation as Nav exposing (Key)
+import Browser.Navigation as Nav
 import Expect.Builder as ExpBuilder
 import Http
 import Json.Encode exposing (Value)
@@ -18,8 +19,8 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
-import Procedure.Advanced as Procedure exposing (Channel, Msg, Procedure)
-import Procedure.Scenario as Scenario
+import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa.Scenario as Scenario
 import Url exposing (Url)
 import Widget.Toast as Toast
 
@@ -27,7 +28,7 @@ import Widget.Toast as Toast
 {-| -}
 type alias Memory =
     { msession : Maybe Session
-    , toast : Toast.Memory
+    , toast : Maybe (Layer Toast.Memory)
     , loginForm : LoginFormMemory
     }
 
@@ -37,7 +38,7 @@ init : Memory
 init =
     { loginForm = initLoginForm
     , msession = Nothing
-    , toast = Toast.init
+    , toast = Nothing
     }
 
 
@@ -55,15 +56,21 @@ type Event
 
 
 {-| -}
-view : ( Channel, Memory ) -> Html (Msg Event)
-view ( channel, memory ) =
-    Html.div
-        [ localClass "page"
-        ]
-        [ loginFormView ( channel, memory.loginForm )
-        , Toast.view memory.toast
-            |> Html.map (Procedure.mapMsg ToastEvent)
-        ]
+view : Layer Memory -> Html (Msg Event)
+view =
+    Tepa.layerView <|
+        \memory ->
+            Html.div
+                [ localClass "page"
+                ]
+                [ loginFormView memory.loginForm
+                , case memory.toast of
+                    Nothing ->
+                        Html.text ""
+                    Just toast ->
+                        Toast.view toast
+                            |> Html.map (Tepa.mapMsg ToastEvent)
+                ]
 
 
 
@@ -89,12 +96,9 @@ initLoginForm =
     }
 
 
-loginFormView : ( Channel, LoginFormMemory ) -> Html (Msg Event)
-loginFormView ( channel, memory ) =
+loginFormView : LoginFormMemory -> Html (Msg Event)
+loginFormView memory =
     let
-        publish =
-            Procedure.publish channel
-
         errors =
             Login.toFormErrors memory.form
     in
@@ -111,7 +115,8 @@ loginFormView ( channel, memory ) =
                 [ Mixin.attribute "type" "text"
                 , Mixin.attribute "value" memory.form.id
                 , Mixin.boolAttribute "disabled" memory.isBusy
-                , Events.onChange (publish << ChangeLoginId)
+                , Events.onChange ChangeLoginId
+                    |> Tepa.eventMixin
                 ]
                 []
             ]
@@ -123,13 +128,15 @@ loginFormView ( channel, memory ) =
                 [ Mixin.attribute "type" "password"
                 , Mixin.attribute "value" memory.form.pass
                 , Mixin.boolAttribute "disabled" memory.isBusy
-                , Events.onChange (publish << ChangeLoginPass)
+                , Events.onChange ChangeLoginPass
+                    |> Tepa.eventMixin
                 ]
                 []
             ]
         , Html.node "button"
             [ localClass "loginForm_submitLogin"
-            , Events.onClick (publish ClickSubmitLogin)
+            , Events.onClick ClickSubmitLogin
+                |> Tepa.eventMixin
             , Mixin.boolAttribute "disabled" memory.isBusy
             ]
             [ Html.text "Login"
@@ -176,7 +183,7 @@ loginFormView ( channel, memory ) =
 {-| -}
 type Command
     = ToastCommand Toast.Command
-    | RequestLogin (Result Http.Error Login.Response -> Msg Event) Login.Login
+    | RequestLogin Login.Login (Result Http.Error Login.Response -> Msg Event)
     | PushUrl Key String
 
 
@@ -186,35 +193,66 @@ runCommand cmd =
     case cmd of
         ToastCommand toastCommand ->
             Toast.runCommand toastCommand
-                |> Cmd.map (Procedure.mapMsg ToastEvent)
+                |> Cmd.map (Tepa.mapMsg ToastEvent)
 
-        RequestLogin toMsg login ->
+        RequestLogin login toMsg ->
             Login.request login toMsg
 
         PushUrl key url ->
-            Nav.pushUrl key url
+            Tepa.runNavCmd
+                (\navKey -> Nav.pushUrl navKey url) key
 
 
-type alias Procedures =
-    List (Procedure Command Memory Event)
+type alias Promise a = Tepa.Promise Command Memory Event a
 
+type alias Pointer m = Tepa.Pointer Memory m
+
+type alias Bucket =
+    { key : Key
+    , requestUrl : Url
+    , toastPointer : Pointer Toast.Memory
+    }
+
+
+{-| -}
+currentSession : Promise (Maybe Session)
+currentSession =
+    Tepa.currentState
+        |> Tepa.map (\m -> m.msession)
 
 -- -- Initialization
 
 
 {-| -}
-procedures : Url -> Key -> Procedures
-procedures url key =
-    [ Procedure.async <|
-        loginFormProcedures url key
-    ]
+procedure : Url -> Key -> Promise Void
+procedure url key =
+    -- Initialize Widget
+    Tepa.putMaybeLayer
+        { get = .toast
+        , set = \toast m -> { m | toast = toast }
+        , init = Toast.init
+        }
+        |> Tepa.andThen
+            (\toastPointer ->
+                let
+                    bucket =
+                        { key = key
+                        , requestUrl = url
+                        , toastPointer = toastPointer
+                        }
+                in
+                -- Main Procedures
+                Tepa.syncAll
+                    [ loginFormProcedure bucket
+                    ]
+            )
 
 
-loginFormProcedures : Url -> Key -> Procedures
-loginFormProcedures url key =
+loginFormProcedure : Bucket -> Promise Void
+loginFormProcedure bucket =
     let
-        modifyLoginFormFormMemory f =
-            Procedure.modify <|
+        modifyForm f =
+            Tepa.modify <|
                 \m ->
                     { m
                         | loginForm =
@@ -227,199 +265,208 @@ loginFormProcedures url key =
                             }
                     }
     in
-    [ Procedure.await <|
-        \event _ ->
-            case event of
+    Tepa.withLayerEvent <|
+        \e ->
+            case e of
                 ChangeLoginId str ->
-                    [ modifyLoginFormFormMemory <|
+                    [ modifyForm <|
                         \m -> { m | id = str }
-                    , Procedure.jump <| \_ -> loginFormProcedures url key
+                    , Tepa.lazy <|
+                        \_ -> loginFormProcedure bucket
                     ]
 
                 ChangeLoginPass str ->
-                    [ modifyLoginFormFormMemory <|
+                    [ modifyForm <|
                         \m -> { m | pass = str }
-                    , Procedure.jump <| \_ -> loginFormProcedures url key
+                    , Tepa.lazy <| \_ -> loginFormProcedure bucket
                     ]
 
                 ClickSubmitLogin ->
-                    [ Procedure.jump <|
+                    [ Tepa.lazy <|
                         \_ ->
-                            submitLoginProcedures url key
+                            submitLoginProcedure bucket
                     ]
 
                 _ ->
                     []
-    ]
 
 
-submitLoginProcedures : Url -> Key -> Procedures
-submitLoginProcedures url key =
+submitLoginProcedure : Bucket -> Promise Void
+submitLoginProcedure bucket =
     let
-        modifyLoginFormMemory : (LoginFormMemory -> LoginFormMemory) -> Procedure Command Memory Event
-        modifyLoginFormMemory f =
-            Procedure.modify <|
-                \({ loginForm } as m) ->
-                    { m | loginForm = f loginForm }
+        modifyLoginForm f =
+            Tepa.modify <|
+                \m ->
+                    { m | loginForm = f m.loginForm }
     in
-    [ modifyLoginFormMemory <|
+    Tepa.sequence
+    [ modifyLoginForm <|
         \m -> { m | isBusy = True }
-    , Procedure.withMemory <|
-        \curr ->
-            case Login.fromForm curr.loginForm.form of
-                Err _ ->
-                    [ modifyLoginFormMemory <|
-                        \m ->
-                            { m
-                                | isBusy = False
-                                , showError = True
-                            }
-                    , Procedure.jump <| \_ -> loginFormProcedures url key
-                    ]
+    , Tepa.currentState
+        |> Tepa.andThen
+            (\curr ->
+                case Login.fromForm curr.loginForm.form of
+                    Err _ ->
+                        Tepa.sequence
+                        [ modifyLoginForm<|
+                            \m ->
+                                { m
+                                    | isBusy = False
+                                    , showError = True
+                                }
+                        , Tepa.lazy <| \_ -> loginFormProcedure bucket
+                        ]
 
-                Ok login ->
-                    [ Procedure.push <|
-                        \_ toMsg -> RequestLogin (ReceiveLoginResp >> toMsg) login
-                    , Procedure.await <|
-                        \event _ ->
-                            case event of
-                                ReceiveLoginResp (Err err) ->
-                                    [ Toast.pushHttpError err
-                                        |> runToastProcedure
-                                    , modifyLoginFormMemory <|
-                                        \m ->
-                                            { m | isBusy = False }
-                                    , Procedure.jump <|
-                                        \_ ->
-                                            loginFormProcedures url key
-                                    ]
-
-                                ReceiveLoginResp (Ok resp) ->
-                                    [ Procedure.modify <|
-                                        \m ->
-                                            { m
-                                                | msession = Just resp.session
-                                                , loginForm =
-                                                    let
-                                                        loginForm =
-                                                            m.loginForm
-                                                    in
-                                                    { loginForm
-                                                        | isBusy = False
+                    Ok login ->
+                        requestLogin login
+                            |> Tepa.andThenSequence
+                                (\response ->
+                                    case response of
+                                        Err err ->
+                                            [ Toast.pushHttpError err
+                                                |> runToastPromise bucket.toastPointer
+                                            , modifyLoginForm<|
+                                                \m ->
+                                                    { m | isBusy = False }
+                                            , Tepa.lazy <|
+                                                \_ ->
+                                                    loginFormProcedure bucket
+                                            ]
+                                        Ok resp ->
+                                            [ Tepa.modify <|
+                                                \m ->
+                                                    { m
+                                                        | msession = Just resp.session
+                                                        , loginForm =
+                                                            let
+                                                                loginForm =
+                                                                    m.loginForm
+                                                            in
+                                                            { loginForm
+                                                                | isBusy = False
+                                                            }
                                                     }
-                                            }
-                                    , Procedure.push <|
-                                        \_ _ -> PushUrl key <| Url.toString url
-                                    , Procedure.quit
-                                    ]
+                                            , pushUrl bucket.key bucket.requestUrl
+                                            ]
 
-                                _ ->
-                                    []
-                    ]
+                                )
+            )
     ]
 
+
+requestLogin : Login.Login -> Promise (Result Http.Error Login.Response)
+requestLogin login =
+    Tepa.customRequest
+        { name = "requestLogin"
+        , request = RequestLogin login
+        , wrap = ReceiveLoginResp
+        , unwrap = \e ->
+            case e of
+                ReceiveLoginResp a -> Just a
+                _ -> Nothing
+        }
+
+
+pushUrl : Key -> Url -> Promise Void
+pushUrl key url = Tepa.push <| \_ -> PushUrl key <| Url.toString url
 
 
 -- Toast
 
 
-runToastProcedure :
-    Procedure Toast.Command Toast.Memory Toast.Event
-    -> Procedure Command Memory Event
-runToastProcedure =
-    Procedure.wrapEvent
-        { wrap = ToastEvent
-        , unwrap =
-            \e ->
-                case e of
-                    ToastEvent e1 ->
-                        Just e1
+runToastPromise :
+    Pointer Toast.Memory
+    -> Tepa.Promise Toast.Command Toast.Memory Toast.Event a
+    -> Promise a
+runToastPromise pointer prom =
+    Tepa.onLayer pointer prom
+        |> Tepa.liftEvent
+            { wrap = ToastEvent
+            , unwrap =
+                \e ->
+                    case e of
+                        ToastEvent e1 ->
+                            Just e1
 
-                    _ ->
-                        Nothing
-        }
-        >> Procedure.mapCmd ToastCommand
-        >> Procedure.liftMemory
-            { get = .toast >> Just
-            , modify = \f m -> { m | toast = f m.toast }
+                        _ ->
+                            Nothing
             }
-
-
+        |> Tepa.mapCmd ToastCommand
 
 -- Scenario
 
 
-type alias Scenario =
-    Scenario.Scenario Command Memory Event
-
-
-scenario :
-    Scenario.Session
-    ->
-        { user :
-            { comment : String -> Scenario
-            , changeLoginId : String -> Scenario
-            , changePass : String -> Scenario
-            , clickSubmitLogin : Scenario
-            }
-        , system :
-            { comment : String -> Scenario
-            , requestLogin : Value -> Scenario
-            }
-        , external :
-            { backend :
-                { comment : String -> Scenario
-                , respondToLoginRequest : Result Http.Error Login.Response -> Scenario
-                }
-            }
-        }
-scenario session =
-    { user =
-        { comment = Scenario.userComment session
-        , changeLoginId =
-            \str ->
-                Scenario.userEvent session
-                    ("Type \"" ++ str ++ "\" for Account ID field")
-                    (ChangeLoginId str)
-        , changePass =
-            \str ->
-                Scenario.userEvent session
-                    ("Type \"" ++ str ++ "\" for Password field")
-                    (ChangeLoginPass str)
-        , clickSubmitLogin =
-            Scenario.userEvent session
-                "Click \"Login\" submit button"
-                ClickSubmitLogin
-        }
-    , system =
-        { comment = Scenario.systemComment session
-        , requestLogin =
-            \json ->
-                Scenario.systemCommand session
-                    "Request login to server"
-                    (ExpBuilder.custom <| \command ->
-                        case command of
-                            RequestLogin _ login ->
-                                if Login.toValue login == json then
-                                    ExpBuilder.pass
-                                else
-                                    ExpBuilder.fail "thought the request body is equal to the expected JSON."
-                            _ ->
-                                ExpBuilder.fail "thought the command is `RequestLogin`."
-                    )
-        }
-    , external =
-        { backend =
-            { comment = Scenario.externalComment "backend" session
-            , respondToLoginRequest =
-                \resp ->
-                    Scenario.externalEvent "backend"
-                        session
-                        "Respond to login request"
-                        (ReceiveLoginResp resp)
-            }
-        }
-    }
+-- type alias Scenario =
+--     Scenario.Scenario Command Memory Event
+-- 
+-- 
+-- scenario :
+--     Scenario.Session
+--     ->
+--         { user :
+--             { comment : String -> Scenario
+--             , changeLoginId : String -> Scenario
+--             , changePass : String -> Scenario
+--             , clickSubmitLogin : Scenario
+--             }
+--         , system :
+--             { comment : String -> Scenario
+--             , requestLogin : Value -> Scenario
+--             }
+--         , external :
+--             { backend :
+--                 { comment : String -> Scenario
+--                 , respondToLoginRequest : Result Http.Error Login.Response -> Scenario
+--                 }
+--             }
+--         }
+-- scenario session =
+--     { user =
+--         { comment = Scenario.userComment session
+--         , changeLoginId =
+--             \str ->
+--                 Scenario.userEvent session
+--                     ("Type \"" ++ str ++ "\" for Account ID field")
+--                     (ChangeLoginId str)
+--         , changePass =
+--             \str ->
+--                 Scenario.userEvent session
+--                     ("Type \"" ++ str ++ "\" for Password field")
+--                     (ChangeLoginPass str)
+--         , clickSubmitLogin =
+--             Scenario.userEvent session
+--                 "Click \"Login\" submit button"
+--                 ClickSubmitLogin
+--         }
+--     , system =
+--         { comment = Scenario.systemComment session
+--         , requestLogin =
+--             \json ->
+--                 Scenario.systemCommand session
+--                     "Request login to server"
+--                     (ExpBuilder.custom <| \command ->
+--                         case command of
+--                             RequestLogin _ login ->
+--                                 if Login.toValue login == json then
+--                                     ExpBuilder.pass
+--                                 else
+--                                     ExpBuilder.fail "thought the request body is equal to the expected JSON."
+--                             _ ->
+--                                 ExpBuilder.fail "thought the command is `RequestLogin`."
+--                     )
+--         }
+--     , external =
+--         { backend =
+--             { comment = Scenario.externalComment "backend" session
+--             , respondToLoginRequest =
+--                 \resp ->
+--                     Scenario.externalEvent "backend"
+--                         session
+--                         "Respond to login request"
+--                         (ReceiveLoginResp resp)
+--             }
+--         }
+--     }
 
 
 

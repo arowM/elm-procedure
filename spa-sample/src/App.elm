@@ -5,9 +5,8 @@ module App exposing
     , Page(..)
     , init
     , main
-    , procedures
-    , scenario
-    , page
+    , procedure
+    -- , scenario
     )
 
 -- import Page.Users as PageUsers
@@ -21,10 +20,8 @@ import Json.Encode exposing (Value)
 import Mixin.Html as Html exposing (Html)
 import Page.Login as PageLogin
 import Page.Home as PageHome
-import Procedure as AppProcedure
-import Procedure.Advanced as Procedure exposing (Msg, Procedure)
-import Procedure.Channel exposing (Channel)
-import Procedure.Scenario as Scenario
+import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa.Scenario as Scenario
 import Url exposing (Url)
 
 
@@ -33,14 +30,14 @@ import Url exposing (Url)
 
 
 {-| -}
-main : AppProcedure.Program Value Memory Event
+main : Tepa.Program Value Memory Event
 main =
-    AppProcedure.application
+    Tepa.application
         { init = init
-        , procedures =
+        , procedure =
             \flags url key ->
-                procedures flags url key
-                    |> Procedure.mapCmds runCommand
+                procedure flags url key
+                    |> Tepa.mapCmd runCommand
         , view = view
         , onUrlRequest = LinkClicked
         , onUrlChange = UrlChanged
@@ -69,43 +66,36 @@ init =
 type Page
     = PageLoading
     | PageNotFound
-    | PageLogin ( Channel, PageLogin.Memory )
-    | PageHome ( Channel, PageHome.Memory )
+    | PageLogin ( Layer PageLogin.Memory )
+    | PageHome ( Layer PageHome.Memory )
 
 
--- | PageUsers ( Channel, PageUsers.Memory )
 -- View
 
 
-view : (Channel, Memory) -> Document (Msg Event)
-view (_, memory) =
-    { title = "Sample App"
-    , body =
-        [ case memory.page of
-            PageLoading ->
-                pageLoadingView
+view : Layer Memory -> Document (Msg Event)
+view =
+    Tepa.layerDocument <|
+        \memory ->
+            { title = "Sample App"
+            , body =
+                [ case memory.page of
+                    PageLoading ->
+                        pageLoadingView
 
-            PageNotFound ->
-                pageNotFoundView
+                    PageNotFound ->
+                        pageNotFoundView
 
-            PageLogin pageLogin ->
-                PageLogin.view pageLogin
-                    |> Html.map (Procedure.mapMsg PageLoginEvent)
+                    PageLogin pageLogin ->
+                        PageLogin.view pageLogin
+                            |> Html.map (Tepa.mapMsg PageLoginEvent)
 
-            PageHome pageHome ->
-                PageHome.view pageHome
-                    |> Html.map (Procedure.mapMsg PageHomeEvent)
+                    PageHome pageHome ->
+                        PageHome.view pageHome
+                            |> Html.map (Tepa.mapMsg PageHomeEvent)
 
-        {-
-           PageUsers pageUsers ->
-               VPack.child
-                   app
-                   PageUsersEvent
-                   (\_ -> PageUsers.view)
-                   pageUsers
-        -}
-        ]
-    }
+                ]
+            }
 
 
 
@@ -148,7 +138,7 @@ type Command
       -- | PageUsersCommand PageUsers.Command
     | FetchSession (Result Http.Error Session -> Msg Event)
     | PushUrl Key String
-    | Load String
+    | LoadPage String
 
 
 {-| Run abstructed Commands as actual application Commands.
@@ -158,22 +148,29 @@ runCommand cmd =
     case cmd of
         PageLoginCommand c ->
             PageLogin.runCommand c
-                |> Cmd.map (Procedure.mapMsg PageLoginEvent)
+                |> Cmd.map (Tepa.mapMsg PageLoginEvent)
 
         PageHomeCommand c ->
             PageHome.runCommand c
-                |> Cmd.map (Procedure.mapMsg PageHomeEvent)
-        -- PageUsersCommand c ->
-        --     PageUsers.runCommand c
+                |> Cmd.map (Tepa.mapMsg PageHomeEvent)
 
         FetchSession toMsg ->
             Session.fetch toMsg
 
         PushUrl key url ->
-            Nav.pushUrl key url
+            Tepa.runNavCmd
+                (\k -> Nav.pushUrl k url)
+                key
 
-        Load url ->
+        LoadPage url ->
             Nav.load url
+
+
+{-| -}
+type alias Promise a = Tepa.Promise Command Memory Event a
+
+
+type alias Pointer m = Tepa.Pointer Memory m
 
 
 
@@ -181,11 +178,12 @@ runCommand cmd =
 
 
 {-| -}
-procedures : Value -> Url -> Key -> List (Procedure Command Memory Event)
-procedures _ url key =
-    [ Procedure.async <| linkControllProcedures key
-    , Procedure.async <| pageControllProcedures url key Nothing
-    ]
+procedure : Value -> Url -> Key -> Promise Void
+procedure _ url key =
+    Tepa.syncAll
+        [ linkControllProcedure key
+        , pageControllProcedure url key Nothing
+        ]
 
 
 
@@ -194,59 +192,59 @@ procedures _ url key =
 
 {-| Handle link-click events.
 -}
-linkControllProcedures :
-    Key
-    -> List (Procedure Command Memory Event)
-linkControllProcedures key =
-    [ Procedure.await <|
-        \event _ ->
-            case event of
+linkControllProcedure : Key -> Promise Void
+linkControllProcedure key =
+    Tepa.withLayerEvent <|
+        \e ->
+            case e of
                 LinkClicked urlRequest ->
                     case urlRequest of
                         Browser.Internal url ->
-                            [ Procedure.push <|
-                                \_ _ ->
-                                    Url.toString url
-                                        |> PushUrl key
+                            [ pushUrl key <| Url.toString url
+                            , Tepa.lazy <|
+                                \_ -> linkControllProcedure key
                             ]
 
                         Browser.External href ->
-                            [ Procedure.push <|
-                                \_ _ ->
-                                    Load href
+                            [ loadPage href
+                            , Tepa.lazy <|
+                                \_ -> linkControllProcedure key
                             ]
 
                 _ ->
-                    -- Ignore other events
+                    -- Await again when receive other events
                     []
 
-    -- Call self recursively
-    , Procedure.jump <| \_ -> linkControllProcedures key
-    ]
 
+pushUrl : Key -> String -> Promise Void
+pushUrl key url = Tepa.push <| \_ -> PushUrl key url
+
+loadPage : String -> Promise Void
+loadPage url = Tepa.push <| \_ -> LoadPage url
 
 
 -- -- Page Controller
 
 
-pageControllProcedures :
+pageControllProcedure :
     Url
     -> Key
     -> Maybe Session
-    -> List (Procedure Command Memory Event)
-pageControllProcedures url key msession =
+    -> Promise Void
+pageControllProcedure url key msession =
     case ( Route.fromUrl url, msession ) of
         ( Route.NotFound, _ ) ->
-            [ Procedure.modify <|
+            Tepa.sequence
+            [ Tepa.modify <|
                 \m ->
                     { m | page = PageNotFound }
-            , Procedure.await <|
-                \event _ ->
-                    case event of
+            , Tepa.withLayerEvent <|
+                \e ->
+                    case e of
                         UrlChanged newUrl ->
-                            [ Procedure.jump <|
+                            [ Tepa.lazy <|
                                 \_ ->
-                                    pageControllProcedures newUrl key msession
+                                    pageControllProcedure newUrl key msession
                             ]
 
                         _ ->
@@ -254,226 +252,201 @@ pageControllProcedures url key msession =
             ]
 
         ( _, Nothing ) ->
-            [ Procedure.push <|
-                \_ toMsg -> FetchSession (toMsg << ReceiveSession)
-            , Procedure.await <|
-                \event _ ->
-                    case event of
-                        ReceiveSession (Err _) ->
-                            [ Procedure.observe PageLogin.init <|
-                                \pageLoginCore ->
-                                    [ Procedure.modify <|
-                                        \m -> { m | page = PageLogin pageLoginCore }
-                                    , Procedure.async
-                                        ( PageLogin.procedures url key
-                                            |> List.map runPageLoginProcedure
+            requestSession
+                |> Tepa.andThen
+                    (\response ->
+                        case response of
+                            Err _ ->
+                                Tepa.putVariantLayer
+                                    { get = .page
+                                    , set = \v m -> { m | page = v }
+                                    , wrap = PageLogin
+                                    , unwrap = \m ->
+                                        case m of
+                                            PageLogin a -> Just a
+                                            _ -> Nothing
+                                    , init = PageLogin.init
+                                    }
+                                    |> Tepa.andThen
+                                        (\pageLoginPointer ->
+                                            Tepa.syncAll
+                                                [ PageLogin.procedure url key
+                                                    |> runPageLoginPromise pageLoginPointer
+                                                , Tepa.withLayerEvent <|
+                                                    \e2 ->
+                                                        case e2 of
+                                                            UrlChanged newUrl ->
+                                                                [ runPageLoginPromise pageLoginPointer PageLogin.currentSession
+                                                                    |> Tepa.andThen (pageControllProcedure newUrl key)
+                                                                ]
+
+                                                            _ ->
+                                                                []
+                                                ]
                                         )
-                                    , Procedure.await <|
-                                        \event2 appMemory ->
-                                            case event2 of
-                                                UrlChanged newUrl ->
-                                                    [ Procedure.jump <|
-                                                        \_ ->
-                                                            pageControllProcedures newUrl key (extractSession appMemory)
-                                                    ]
 
-                                                _ ->
-                                                    []
-                                    ]
+                            Ok session ->
+                                Tepa.lazy <|
+                                    \_ ->
+                                        pageControllProcedure url key (Just session)
+
+                    )
+
+        ( Route.Home, Just session ) ->
+            Tepa.putVariantLayer
+                { get = .page
+                , set = \a m -> { m | page = a }
+                , wrap = PageHome
+                , unwrap = \m ->
+                    case m of
+                        PageHome a -> Just a
+                        _ -> Nothing
+                , init = PageHome.init session
+                }
+                |> Tepa.andThen
+                    (\pageHomePointer ->
+                        Tepa.syncAll
+                            [ PageHome.procedure key
+                                |> runPageHomePromise pageHomePointer
+                            , Tepa.withLayerEvent <|
+                                \e ->
+                                    case e of
+                                        UrlChanged newUrl ->
+                                            [ runPageHomePromise pageHomePointer PageHome.currentSession
+                                                |> Tepa.andThen
+                                                    (pageControllProcedure newUrl key << Just)
+                                            ]
+
+                                        _ ->
+                                            []
                             ]
-
-                        ReceiveSession (Ok session) ->
-                            [ Procedure.jump <|
-                                \_ ->
-                                    pageControllProcedures url key (Just session)
-                            ]
-
-                        _ ->
-                            []
-            ]
+                    )
 
         _ ->
             Debug.todo ""
 
-
-
-{-
-   ( Route.Home, Just session ) ->
-       [ Procedure.observe (PageHome.init session) <|
-           \pageHomeCore ->
-               let
-                   pageHome =
-                       pageHomeModifier
-                           (Tuple.first pageHomeCore)
-                           app
-               in
-               [ Procedure.modify app <|
-                   \m -> { m | page = PageHome pageHomeCore }
-               , Procedure.async
-                   (PageHome.procedures key pageHome
-                       |> Procedure.mapCmds PageHomeCommand
-                   )
-               , Procedure.await app <|
-                   \event _ ->
-                       case event of
-                           UrlChanged newUrl ->
-                               [ Procedure.jump app <|
-                                   \appMemory ->
-                                       pageControllProcedures newUrl key (extractSession appMemory) app
-                               ]
-
-                           _ ->
-                               []
-               ]
-       ]
-
-   ( Route.Users, Just session ) ->
-       [ Procedure.observe (PageUsers.init session) <|
-           \pageUsersCore ->
-               let
-                   pageUsers =
-                       pageUsersModifier
-                           (Tuple.first pageUsersCore)
-                           app
-               in
-               [ Procedure.modify app <|
-                   \m -> { m | page = PageUsers pageUsersCore }
-               , Procedure.async
-                   (PageUsers.procedures key pageUsers
-                       |> Procedure.mapCmds PageUsersCommand
-                   )
-               , Procedure.await app <|
-                   \event _ ->
-                       case event of
-                           UrlChanged newUrl ->
-                               [ Procedure.jump app <|
-                                   \appMemory ->
-                                       pageControllProcedures newUrl key (extractSession appMemory) app
-                               ]
-
-                           _ ->
-                               []
-               ]
-       ]
--}
-
-
-runPageLoginProcedure :
-    Procedure PageLogin.Command PageLogin.Memory PageLogin.Event
-    -> Procedure Command Memory Event
-runPageLoginProcedure =
-    Procedure.wrapEvent
-        { wrap = PageLoginEvent
+requestSession : Promise (Result Http.Error Session)
+requestSession =
+    Tepa.customRequest
+        { name = "requestSession"
+        , request = FetchSession
+        , wrap = ReceiveSession
         , unwrap = \e ->
             case e of
-                PageLoginEvent e1 -> Just e1
+                ReceiveSession a -> Just a
                 _ -> Nothing
         }
-        >> Procedure.mapCmd PageLoginCommand
-            >> Procedure.liftMemory
-                { get = \m ->
-                    case m.page of
-                        PageLogin (_, m1) -> Just m1
-                        _ -> Nothing
-                , modify = \f m ->
-                    case m.page of
-                        PageLogin (c, m1) ->
-                            { m | page = PageLogin (c, f m1) }
+
+
+runPageLoginPromise :
+    Pointer PageLogin.Memory
+    -> Tepa.Promise PageLogin.Command PageLogin.Memory PageLogin.Event a
+    -> Promise a
+runPageLoginPromise pointer prom =
+    Tepa.onLayer pointer prom
+        |> Tepa.liftEvent
+            { wrap = PageLoginEvent
+            , unwrap =
+                \e ->
+                    case e of
+                        PageLoginEvent e1 ->
+                            Just e1
                         _ ->
-                            m
-                }
+                            Nothing
+            }
+        |> Tepa.mapCmd PageLoginCommand
 
 
-extractSession : Memory -> Maybe Session
-extractSession memory =
-    case memory.page of
-        PageLoading ->
-            Nothing
-
-        PageNotFound ->
-            Nothing
-
-        PageLogin ( _, { msession } ) ->
-            msession
-
-        PageHome ( _, { session } ) ->
-            Just session
-
--- PageUsers ( _, { session } ) ->
---     Just session
+runPageHomePromise :
+    Pointer PageHome.Memory
+    -> Tepa.Promise PageHome.Command PageHome.Memory PageHome.Event a
+    -> Promise a
+runPageHomePromise pointer prom =
+    Tepa.onLayer pointer prom
+        |> Tepa.liftEvent
+            { wrap = PageHomeEvent
+            , unwrap =
+                \e ->
+                    case e of
+                        PageHomeEvent e1 ->
+                            Just e1
+                        _ ->
+                            Nothing
+            }
+        |> Tepa.mapCmd PageHomeCommand
 
 
 -- Scenario
 
-type alias Scenario =
-    Scenario.Scenario Command Memory Event
-
-scenario : Scenario.Session ->
-    { user :
-        { comment : String -> Scenario
-        , setUrl : Url -> Scenario
-        }
-    , system :
-        { comment : String -> Scenario
-        }
-    , external :
-        {}
-    }
-scenario session =
-    { user =
-        { comment = Scenario.userComment session
-        , setUrl = \url ->
-            Scenario.userEvent session
-                ("Set URL: " ++ Url.toString url)
-                (UrlChanged url)
-        }
-    , system =
-        { comment = Scenario.systemComment session
-        }
-    , external =
-        {}
-    }
-
-
-page :
-    { login : Scenario.Page Command Memory Event PageLogin.Command PageLogin.Memory PageLogin.Event
-    , home : Scenario.Page Command Memory Event PageHome.Command PageHome.Memory PageHome.Event
-    }
-page =
-    { login =
-        { unwrapCommand =
-                \c ->
-                    case c of
-                        PageLoginCommand c1 ->
-                            Just c1
-                        _ ->
-                            Nothing
-        , get =
-                \m ->
-                    case m.page of
-                        PageLogin (_, a) ->
-                            Just a
-
-                        _ ->
-                            Nothing
-        , wrapEvent = PageLoginEvent
-        }
-    , home =
-        { unwrapCommand =
-                \c ->
-                    case c of
-                        PageHomeCommand c1 ->
-                            Just c1
-                        _ ->
-                            Nothing
-        , get =
-                \m ->
-                    case m.page of
-                        PageHome (_, a) ->
-                            Just a
-
-                        _ ->
-                            Nothing
-        , wrapEvent = PageHomeEvent
-        }
-    }
+-- type alias Scenario =
+--     Scenario.Scenario Command Memory Event
+-- 
+-- scenario : Scenario.Session ->
+--     { user :
+--         { comment : String -> Scenario
+--         , setUrl : Url -> Scenario
+--         }
+--     , system :
+--         { comment : String -> Scenario
+--         }
+--     , external :
+--         {}
+--     }
+-- scenario session =
+--     { user =
+--         { comment = Scenario.userComment session
+--         , setUrl = \url ->
+--             Scenario.userEvent session
+--                 ("Set URL: " ++ Url.toString url)
+--                 (UrlChanged url)
+--         }
+--     , system =
+--         { comment = Scenario.systemComment session
+--         }
+--     , external =
+--         {}
+--     }
+-- 
+-- 
+-- page :
+--     { login : Scenario.Page Command Memory Event PageLogin.Command PageLogin.Memory PageLogin.Event
+--     , home : Scenario.Page Command Memory Event PageHome.Command PageHome.Memory PageHome.Event
+--     }
+-- page =
+--     { login =
+--         { unwrapCommand =
+--                 \c ->
+--                     case c of
+--                         PageLoginCommand c1 ->
+--                             Just c1
+--                         _ ->
+--                             Nothing
+--         , get =
+--                 \m ->
+--                     case m.page of
+--                         PageLogin (_, a) ->
+--                             Just a
+-- 
+--                         _ ->
+--                             Nothing
+--         , wrapEvent = PageLoginEvent
+--         }
+--     , home =
+--         { unwrapCommand =
+--                 \c ->
+--                     case c of
+--                         PageHomeCommand c1 ->
+--                             Just c1
+--                         _ ->
+--                             Nothing
+--         , get =
+--                 \m ->
+--                     case m.page of
+--                         PageHome (_, a) ->
+--                             Just a
+-- 
+--                         _ ->
+--                             Nothing
+--         , wrapEvent = PageHomeEvent
+--         }
+--     }

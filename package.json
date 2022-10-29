@@ -3,7 +3,7 @@
   "scripts": {
     "format": "elm-format src sample/src",
     "start": "elm-doc-preview --port=8110",
-    "start:sample": "cd sample && elm reactor --port=8011",
+    "start:sample": "cd spa-sample && elm reactor --port=8011",
     "build:sample": "rimraf docs/ && cd sample && elm make src/Main.elm --output=../docs/index.html && elm make src/ListItems.elm --output=../docs/list-items.html",
     "review:lib": "elm-review --fix",
     "review:sample": "cd sample && elm-review --fix",

@@ -20,7 +20,7 @@ module Tepa exposing
     , customRequest
     , withLayerEvent
     , Layer, isPointedBy
-    , putMaybeLayer, newListItemLayer, newLayer
+    , putMaybeLayer, putVariantLayer, newListItemLayer, newLayer
     , layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
     , element
     , document
@@ -96,7 +96,7 @@ Promises that returns `Void` are called as a _Procedure_.
 # Layer
 
 @docs Layer, isPointedBy
-@docs putMaybeLayer, newListItemLayer, newLayer
+@docs putMaybeLayer, putVariantLayer, newListItemLayer, newLayer
 @docs layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
 
 
@@ -343,9 +343,9 @@ modify =
 Consider using `portRequest` or `customRequest` if possible.
 
 -}
-push : (m -> List c) -> Promise c m e Void
-push =
-    Core.push
+push : (m -> c) -> Promise c m e Void
+push f =
+    Core.push <| \m -> [ f m ]
 
 
 {-| Construct a Promise that start Subscription and listen to its Events till the Layer expires.
@@ -617,6 +617,36 @@ putMaybeLayer o =
                     |> map (\_ -> pointer)
             )
 
+
+{-| -}
+putVariantLayer :
+    { get : m -> v
+    , set : v -> m -> m
+    , wrap : Layer m1 -> v
+    , unwrap : v -> Maybe (Layer m1)
+    , init : m1
+    }
+    -> Promise c m e (Pointer m m1)
+putVariantLayer o =
+    newLayer
+        { get =
+            \getter m ->
+                o.get m
+                    |> o.unwrap
+                    |> Maybe.andThen getter
+        , modify =
+            \modifier m ->
+                case o.get m |> o.unwrap of
+                    Nothing -> m
+                    Just l1 ->
+                        o.set (o.wrap <| modifier l1) m
+        }
+        o.init
+        |> andThen
+            (\( layer, pointer ) ->
+                (modify <| o.set (o.wrap layer))
+                    |> map (\_ -> pointer)
+            )
 
 {-| -}
 newListItemLayer :

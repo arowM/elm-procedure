@@ -3,6 +3,7 @@ module Page.Home exposing
     , Event
     , Memory
     , init
+    , currentSession
     , procedure
     , runCommand
     -- , scenario
@@ -158,7 +159,6 @@ editAccountFormView memory =
 
 -- Procedures
 
-
 {-| -}
 type Command
     = ToastCommand Toast.Command
@@ -188,6 +188,14 @@ type alias Bucket =
     { key : Key
     , toastPointer : Pointer Toast.Memory
     }
+
+
+{-| -}
+currentSession : Promise Session
+currentSession =
+    Tepa.currentState
+        |> Tepa.map (\m -> m.session)
+
 
 -- -- Initialization
 
@@ -354,12 +362,12 @@ runToastPromise pointer prom =
 -- Scenario
 
 
--- type alias Scenario =
---     Scenario.Scenario Command Memory Event
--- 
--- 
--- scenario :
---     Scenario.Session
+type alias Scenario =
+    Scenario.Scenario Command Memory Event
+
+
+scenario :
+    Scenario.Session
 --     ->
 --         { user :
 --             { comment : String -> Scenario

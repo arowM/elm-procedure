@@ -13,7 +13,6 @@ module Tepa.Scenario exposing
     , defineSession
     , userComment
     , systemComment
-    , expectCommands
     , expectMemory
     , expectAppView
     , loadApp
@@ -68,7 +67,6 @@ module Tepa.Scenario exposing
 
 ## Expectations
 
-@docs expectCommands
 @docs expectMemory
 @docs expectAppView
 
@@ -322,66 +320,6 @@ systemComment (Session session) comment =
 
 
 -- -- Expectations
-
-
-{-| Describe your expectations for the commands your application issues at the point.
-
-Suppose your application requests user information to the server on loading:
-
-    import Expect.Builder as ExpBuilder
-
-    myScenario =
-        [ Debug.todo "Load the app"
-        , expectCommands sakuraChanMainSession
-            "Requests user information to the server."
-            { expectation =
-                ExpBuilder.oneOfListItem
-                    (ExpBuilder.custom <|
-                        \cmd ->
-                            case cmd of
-                                RequestUserInfoToServer _ ->
-                                    ExpBuilder.pass
-
-                                _ ->
-                                    ExpBuilder.fail
-                                        "No the expected command"
-                    )
-            }
-        , Debug.todo "..."
-        ]
-
-You use [elm-expectation-builder]() to describe your expectation flexibly.
-
--}
-expectCommands :
-    Session
-    -> String
-    ->
-        { expectation : ExpBuilder (List command)
-        }
-    -> Scenario flags command m e
-expectCommands (Session session) description { expectation } =
-    Core.Scenario
-        { test =
-            \_ context ->
-                case Dict.get session.uniqueName context of
-                    Nothing ->
-                        SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
-                            \_ ->
-                                Expect.fail
-                                    "expectCommands: The application is not active on the session. Use `loadApp` beforehand."
-
-                    Just ( _, cmds ) ->
-                        SeqTest.pass cmds
-                            |> SeqTest.assert description
-                                (ExpBuilder.applyTo expectation)
-                            |> SeqTest.map (\_ -> Core.OnGoingTest context)
-        , markup =
-            Core.putListItemMarkup <|
-                listItemParagraph
-                    ("[" ++ session.uniqueName ++ "] System")
-                    description
-        }
 
 
 {-| Describe your expectations for the application memory state at the point.
@@ -763,8 +701,7 @@ portResponse :
     Session
     -> String
     ->
-        { target : String
-        , response : Value
+        { response : List command -> Value
         }
     -> Scenario flags command m e
 portResponse (Session session) description o =
@@ -778,40 +715,24 @@ portResponse (Session session) description o =
                                 Expect.fail
                                     "portResponse: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, _ ) ->
+                    Just ( model, cmds ) ->
                         case model of
-                            Core.EndOfProcess _ ->
-                                SeqTest.fail
-                                    ("[" ++ session.uniqueName ++ "] " ++ description)
-                                <|
-                                    \_ ->
-                                        Expect.fail
-                                            "portResponse: The port request has been already resolved."
-
                             Core.OnGoing onGoing ->
                                 Dict.insert session.uniqueName
-                                    (onGoing.listeners
-                                        |> List.filterMap
-                                            (\listener ->
-                                                if listener.name == o.target then
-                                                    Just <|
-                                                        PortResponseMsg
-                                                            { requestId = listener.requestId
-                                                            , response = o.response
-                                                            }
-
-                                                else
-                                                    Nothing
-                                            )
-                                        |> applyMsgs (OnGoing onGoing)
+                                    ( o.response cmds
+                                        |> (\v -> PortResponseMsg { response = v })
+                                        |> applyMsg (OnGoing onGoing)
                                     )
                                     context
                                     |> Core.OnGoingTest
                                     |> SeqTest.pass
+
+                            EndOfProcess _ ->
+                                SeqTest.pass (Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
-                    ("[" ++ session.uniqueName ++ "] " ++ o.target)
+                    ("[" ++ session.uniqueName ++ "]")
                     description
         }
 
@@ -841,9 +762,7 @@ Suppose your application requests user infomation to the backend server via cust
 customResponse :
     Session
     -> String
-    ->
-        { target : String
-        , response : event
+    ->  { response : List command -> Msg event
         }
     -> Scenario flags command m event
 customResponse (Session session) description o =
@@ -857,43 +776,25 @@ customResponse (Session session) description o =
                                 Expect.fail
                                     "customResponse: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, _ ) ->
+                    Just ( model, cmds ) ->
                         case model of
-                            Core.EndOfProcess _ ->
-                                SeqTest.fail
-                                    ("[" ++ session.uniqueName ++ "] " ++ description)
-                                <|
-                                    \_ ->
-                                        Expect.fail
-                                            "customResponse: The request has been already resolved."
-
                             Core.OnGoing onGoing ->
                                 Dict.insert session.uniqueName
-                                    (onGoing.listeners
-                                        |> List.filterMap
-                                            (\listener ->
-                                                if listener.name == o.target then
-                                                    Just <|
-                                                        ResponseMsg
-                                                            { requestId = listener.requestId
-                                                            , event = o.response
-                                                            }
-
-                                                else
-                                                    Nothing
-                                            )
-                                        |> applyMsgs (OnGoing onGoing)
+                                    ( o.response cmds
+                                        |> applyMsg (OnGoing onGoing)
                                     )
                                     context
                                     |> Core.OnGoingTest
                                     |> SeqTest.pass
+
+                            EndOfProcess _ ->
+                                SeqTest.pass (Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
-                    ("[" ++ session.uniqueName ++ "] " ++ o.target)
+                    ("[" ++ session.uniqueName ++ "]")
                     description
         }
-
 
 
 -- Conditions

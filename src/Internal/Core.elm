@@ -190,8 +190,7 @@ type Msg event
         , event : event
         }
     | PortResponseMsg
-        { requestId : RequestId
-        , response : Value
+        { response : Value
         }
     | ListenerMsg
         { requestId : RequestId
@@ -228,8 +227,7 @@ mapMsg f msg1 =
 
         PortResponseMsg r ->
             PortResponseMsg
-                { requestId = r.requestId
-                , response = r.response
+                { response = r.response
                 }
 
         ListenerMsg r ->
@@ -274,8 +272,7 @@ unwrapMsg f msg1 =
 
         PortResponseMsg r ->
             PortResponseMsg
-                { requestId = r.requestId
-                , response = r.response
+                { response = r.response
                 }
 
         ListenerMsg r ->
@@ -335,6 +332,7 @@ type alias PromiseEffect c m e a =
     , cmds : List c
     , addListeners : List (Listener e)
     , closedLayers : List LayerId
+    , closedRequests : List RequestId
     , handler : PromiseHandler c m e a
     }
 
@@ -355,8 +353,9 @@ mapPromise f (Promise prom) =
             in
             { newContext = effA.newContext
             , cmds = effA.cmds
-            , addListeners = []
-            , closedLayers = []
+            , addListeners = effA.addListeners
+            , closedLayers = effA.closedLayers
+            , closedRequests = effA.closedRequests
             , handler =
                 case effA.handler of
                     Resolved a ->
@@ -380,7 +379,18 @@ succeedPromise a =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Resolved a
+            }
+
+closeRequest : RequestId -> Promise c m e a -> Promise c m e a
+closeRequest rid (Promise prom) =
+    Promise <|
+        \context ->
+            let
+                eff = prom context
+            in
+            { eff | closedRequests = rid :: eff.closedRequests
             }
 
 
@@ -392,6 +402,7 @@ failPromise =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Rejected
             }
 
@@ -404,6 +415,7 @@ justAwaitPromise f =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = AwaitMsg f
             }
 
@@ -423,6 +435,7 @@ syncPromise (Promise promA) (Promise promF) =
             , cmds = effF.cmds ++ effA.cmds
             , addListeners = effF.addListeners ++ effA.addListeners
             , closedLayers = effF.closedLayers ++ effA.closedLayers
+            , closedRequests = effF.closedRequests ++ effA.closedRequests
             , handler =
                 case ( effF.handler, effA.handler ) of
                     ( Resolved f, Resolved a ) ->
@@ -466,6 +479,7 @@ andRacePromise (Promise prom2) (Promise prom1) =
             , cmds = eff1.cmds ++ eff2.cmds
             , addListeners = eff1.addListeners ++ eff2.addListeners
             , closedLayers = eff1.closedLayers ++ eff2.closedLayers
+            , closedRequests = eff1.closedRequests ++ eff2.closedRequests
             , handler =
                 case ( eff1.handler, eff2.handler ) of
                     ( Resolved a1, _ ) ->
@@ -510,6 +524,7 @@ andThenPromise f (Promise promA) =
                     , cmds = effA.cmds ++ effB.cmds
                     , addListeners = effA.addListeners ++ effB.addListeners
                     , closedLayers = effA.closedLayers ++ effB.closedLayers
+                    , closedRequests = effA.closedRequests ++ effB.closedRequests
                     , handler = effB.handler
                     }
 
@@ -518,6 +533,7 @@ andThenPromise f (Promise promA) =
                     , cmds = effA.cmds
                     , addListeners = effA.addListeners
                     , closedLayers = effA.closedLayers
+                    , closedRequests = effA.closedRequests
                     , handler = Rejected
                     }
 
@@ -526,6 +542,7 @@ andThenPromise f (Promise promA) =
                     , cmds = effA.cmds
                     , addListeners = effA.addListeners
                     , closedLayers = effA.closedLayers
+                    , closedRequests = effA.closedRequests
                     , handler =
                         AwaitMsg <|
                             \msg m ->
@@ -550,6 +567,7 @@ liftPromiseMemory o (Promise prom1) =
                     { newContext = context
                     , addListeners = []
                     , closedLayers = [ closedLayersId ]
+                    , closedRequests = []
                     , cmds = []
                     , handler = Rejected
                     }
@@ -573,6 +591,7 @@ liftPromiseMemory o (Promise prom1) =
                     , cmds = eff1.cmds
                     , addListeners = eff1.addListeners
                     , closedLayers = eff1.closedLayers
+                    , closedRequests = eff1.closedRequests
                     , handler =
                         case eff1.handler of
                             Resolved a ->
@@ -605,6 +624,7 @@ mapPromiseCmd f (Promise prom) =
             , cmds = List.map f eff.cmds
             , addListeners = eff.addListeners
             , closedLayers = eff.closedLayers
+            , closedRequests = eff.closedRequests
             , handler =
                 case eff.handler of
                     Resolved a ->
@@ -637,6 +657,7 @@ liftPromiseEvent o (Promise prom1) =
             , cmds = eff1.cmds
             , addListeners = List.map (wrapListener o.wrap) eff1.addListeners
             , closedLayers = eff1.closedLayers
+            , closedRequests = eff1.closedRequests
             , handler =
                 case eff1.handler of
                     Resolved a ->
@@ -702,6 +723,7 @@ currentState =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Resolved context.state
             }
 
@@ -721,6 +743,7 @@ genNewLayerId =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Resolved newLayerId
             }
 
@@ -746,6 +769,7 @@ modify f =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Resolved OnGoingProcedure
             }
 
@@ -758,6 +782,7 @@ push f =
             , cmds = f context.state
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Resolved OnGoingProcedure
             }
 
@@ -770,6 +795,7 @@ return =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = Resolved CompletedProcedure
             }
 
@@ -987,6 +1013,7 @@ listen { name, subscription, handler } =
                   }
                 ]
             , closedLayers = []
+            , closedRequests = []
             , handler = AwaitMsg awaitForever
             }
 
@@ -1016,6 +1043,7 @@ portRequest o =
                                 Ok ( requestId, resp ) ->
                                     if requestId == myRequestId then
                                         succeedPromise resp
+                                            |> closeRequest myRequestId
 
                                     else
                                         justAwaitPromise nextPromise
@@ -1044,8 +1072,7 @@ portRequest o =
                                     Ok ( requestId, _ ) ->
                                         if requestId == myRequestId then
                                             PortResponseMsg
-                                                { requestId = myRequestId
-                                                , response = respValue
+                                                { response = respValue
                                                 }
 
                                         else
@@ -1054,6 +1081,7 @@ portRequest o =
                   }
                 ]
             , closedLayers = []
+            , closedRequests = []
             , cmds =
                 [ o.request
                     context.state
@@ -1091,6 +1119,7 @@ customRequest o =
 
                                     Just a ->
                                         succeedPromise a
+                                            |> closeRequest myRequestId
 
                             else
                                 justAwaitPromise nextPromise
@@ -1110,6 +1139,7 @@ customRequest o =
                   }
                 ]
             , closedLayers = []
+            , closedRequests = []
             , cmds =
                 [ o.request
                     (\a ->
@@ -1148,6 +1178,7 @@ layerEvent =
             , cmds = []
             , addListeners = []
             , closedLayers = []
+            , closedRequests = []
             , handler = AwaitMsg handler
             }
 
@@ -1184,7 +1215,8 @@ toModel context listeners (Promise prom) =
                 ++ listeners
                 |> List.filter
                     (\listener ->
-                        not (List.member listener.layerId eff.closedLayers)
+                        not (List.member listener.layerId eff.closedLayers) &&
+                        not (List.member listener.requestId eff.closedRequests)
                     )
     in
     case eff.handler of
@@ -1230,40 +1262,7 @@ update msg model =
                 { context, listeners } =
                     onGoing
             in
-            case msg of
-                NoOp ->
-                    ( model, [] )
-
-                LayerMsg _ ->
-                    onGoing.next msg context listeners
-
-                ListenerMsg _ ->
-                    onGoing.next msg context listeners
-
-                ViewStubMsg _ ->
-                    ( model, [] )
-
-                ResponseMsg r ->
-                    let
-                        newListeners =
-                            List.filter
-                                (\sub ->
-                                    sub.requestId /= r.requestId
-                                )
-                                listeners
-                    in
-                    onGoing.next msg context newListeners
-
-                PortResponseMsg r ->
-                    let
-                        newListeners =
-                            List.filter
-                                (\sub ->
-                                    sub.requestId /= r.requestId
-                                )
-                                listeners
-                    in
-                    onGoing.next msg context newListeners
+            onGoing.next msg context listeners
 
 
 elementView : (Layer memory -> Html (Msg event)) -> Model cmd memory event -> Html (Msg event)

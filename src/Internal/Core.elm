@@ -1,5 +1,5 @@
 module Internal.Core exposing
-    ( Model(..), memoryState
+    ( Model(..), memoryState, layerState
     , Msg(..), rootLayerMsg
     , mapMsg
     , Key(..)
@@ -39,7 +39,7 @@ module Internal.Core exposing
 
 # Core
 
-@docs Model, memoryState
+@docs Model, memoryState, layerState
 @docs Msg, rootLayerMsg
 @docs mapMsg
 
@@ -132,6 +132,20 @@ memoryState model =
 
         EndOfProcess { lastState } ->
             lastState
+
+
+layerState : Model cmd memory event -> Maybe (Layer memory)
+layerState model =
+    case model of
+        OnGoing onGoing ->
+            let
+                (ThisLayerId lid) =
+                    onGoing.context.thisLayerId
+            in
+            Just (Layer lid onGoing.context.state)
+
+        EndOfProcess _ ->
+            Nothing
 
 
 type alias OnGoing_ c m e =

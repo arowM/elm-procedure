@@ -21,6 +21,10 @@ module Tepa.Scenario exposing
     , listenerEvent
     , portResponse
     , customResponse
+    , TargetLayer
+    , targetOnSelf
+    , targetOnChild
+    , andOnChild
     , fromJust
     -- , toMarkdown
     )
@@ -83,6 +87,14 @@ module Tepa.Scenario exposing
 
 @docs portResponse
 @docs customResponse
+
+
+# TargetLayer
+
+@docs TargetLayer
+@docs targetOnSelf
+@docs targetOnChild
+@docs andOnChild
 
 
 # Conditions
@@ -346,10 +358,11 @@ expectMemory :
     Session
     -> String
     ->
-        { expectation : ExpBuilder memory
+        { target : TargetLayer m m1
+        , expectation : ExpBuilder m1
         }
-    -> Scenario flags c memory e
-expectMemory (Session session) description { expectation } =
+    -> Scenario flags c m e
+expectMemory (Session session) description o =
     Core.Scenario
         { test =
             \_ context ->
@@ -361,10 +374,18 @@ expectMemory (Session session) description { expectation } =
                                     "expectMemory: The application is not active on the session. Use `loadApp` beforehand."
 
                     Just ( model, _ ) ->
-                        SeqTest.pass (Core.memoryState model)
-                            |> SeqTest.assert description
-                                (ExpBuilder.applyTo expectation)
-                            |> SeqTest.map (\_ -> Core.OnGoingTest context)
+                        case extractTarget o.target model of
+                            Nothing ->
+                                SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
+                                    \_ ->
+                                        Expect.fail
+                                            "expectMemory: The Layer is not accessible."
+
+                            Just (Core.Layer _ m1) ->
+                                SeqTest.pass m1
+                                    |> SeqTest.assert description
+                                        (ExpBuilder.applyTo o.expectation)
+                                    |> SeqTest.map (\_ -> Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -556,10 +577,10 @@ userEvent :
     Session
     -> String
     ->
-        { target : memory -> Maybe (Layer m1)
+        { target : TargetLayer m m1
         , event : event
         }
-    -> Scenario flags c memory event
+    -> Scenario flags c m event
 userEvent (Session session) description o =
     let
         (User user) =
@@ -576,7 +597,7 @@ userEvent (Session session) description o =
                                     "userEvent: The application is not active on the session. Use `loadApp` beforehand."
 
                     Just ( model, _ ) ->
-                        case o.target (Core.memoryState model) of
+                        case extractTarget o.target model of
                             Nothing ->
                                 SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
                                     \_ ->
@@ -599,6 +620,50 @@ userEvent (Session session) description o =
                 listItemParagraph
                     ("[" ++ session.uniqueName ++ "] " ++ user.name)
                     description
+        }
+
+
+{-| -}
+type TargetLayer m m1
+    = TargetLayer (TargetLayer_ m m1)
+
+
+type alias TargetLayer_ m m1 =
+    { get : Layer m -> Maybe (Layer m1)
+    }
+
+
+extractTarget : TargetLayer m m1 -> Model c m event -> Maybe (Layer m1)
+extractTarget (TargetLayer target) model =
+    Core.layerState model
+        |> Maybe.andThen target.get
+
+
+{-| -}
+targetOnSelf : TargetLayer m m
+targetOnSelf =
+    TargetLayer
+        { get = Just
+        }
+
+
+{-| -}
+targetOnChild : (m -> Maybe (Layer m1)) -> TargetLayer m m1
+targetOnChild f =
+    TargetLayer
+        { get = \(Layer _ m) -> f m
+        }
+
+
+{-| -}
+andOnChild : (m1 -> Maybe (Layer m2)) -> TargetLayer m m1 -> TargetLayer m m2
+andOnChild f (TargetLayer target) =
+    TargetLayer
+        { get =
+            \lm ->
+                target.get lm
+                    |> Maybe.andThen
+                        (\(Layer _ m1) -> f m1)
         }
 
 

@@ -637,7 +637,9 @@ putVariantLayer o =
         , modify =
             \modifier m ->
                 case o.get m |> o.unwrap of
-                    Nothing -> m
+                    Nothing ->
+                        m
+
                     Just l1 ->
                         o.set (o.wrap <| modifier l1) m
         }
@@ -647,6 +649,7 @@ putVariantLayer o =
                 (modify <| o.set (o.wrap layer))
                     |> map (\_ -> pointer)
             )
+
 
 {-| -}
 newListItemLayer :

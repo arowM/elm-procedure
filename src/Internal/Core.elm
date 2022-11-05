@@ -383,14 +383,17 @@ succeedPromise a =
             , handler = Resolved a
             }
 
+
 closeRequest : RequestId -> Promise c m e a -> Promise c m e a
 closeRequest rid (Promise prom) =
     Promise <|
         \context ->
             let
-                eff = prom context
+                eff =
+                    prom context
             in
-            { eff | closedRequests = rid :: eff.closedRequests
+            { eff
+                | closedRequests = rid :: eff.closedRequests
             }
 
 
@@ -1215,8 +1218,8 @@ toModel context listeners (Promise prom) =
                 ++ listeners
                 |> List.filter
                     (\listener ->
-                        not (List.member listener.layerId eff.closedLayers) &&
-                        not (List.member listener.requestId eff.closedRequests)
+                        not (List.member listener.layerId eff.closedLayers)
+                            && not (List.member listener.requestId eff.closedRequests)
                     )
     in
     case eff.handler of

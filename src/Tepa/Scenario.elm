@@ -719,7 +719,7 @@ portResponse (Session session) description o =
                         case model of
                             Core.OnGoing onGoing ->
                                 Dict.insert session.uniqueName
-                                    ( o.response cmds
+                                    (o.response cmds
                                         |> (\v -> PortResponseMsg { response = v })
                                         |> applyMsg (OnGoing onGoing)
                                     )
@@ -762,7 +762,8 @@ Suppose your application requests user infomation to the backend server via cust
 customResponse :
     Session
     -> String
-    ->  { response : List command -> Msg event
+    ->
+        { response : List command -> Msg event
         }
     -> Scenario flags command m event
 customResponse (Session session) description o =
@@ -780,7 +781,7 @@ customResponse (Session session) description o =
                         case model of
                             Core.OnGoing onGoing ->
                                 Dict.insert session.uniqueName
-                                    ( o.response cmds
+                                    (o.response cmds
                                         |> applyMsg (OnGoing onGoing)
                                     )
                                     context
@@ -795,6 +796,7 @@ customResponse (Session session) description o =
                     ("[" ++ session.uniqueName ++ "]")
                     description
         }
+
 
 
 -- Conditions

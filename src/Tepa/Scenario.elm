@@ -23,8 +23,8 @@ module Tepa.Scenario exposing
     , customResponse
     , TargetLayer
     , targetOnSelf
-    , targetOnChild
     , andOnChild
+    , andOnChildListItem
     , fromJust
     -- , toMarkdown
     )
@@ -93,8 +93,8 @@ module Tepa.Scenario exposing
 
 @docs TargetLayer
 @docs targetOnSelf
-@docs targetOnChild
 @docs andOnChild
+@docs andOnChildListItem
 
 
 # Conditions
@@ -106,6 +106,7 @@ module Tepa.Scenario exposing
 import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
+import Internal.LayerId exposing (LayerId)
 import Internal.Core as Core
     exposing
         ( Key(..)
@@ -648,14 +649,6 @@ targetOnSelf =
 
 
 {-| -}
-targetOnChild : (m -> Maybe (Layer m1)) -> TargetLayer m m1
-targetOnChild f =
-    TargetLayer
-        { get = \(Layer _ m) -> f m
-        }
-
-
-{-| -}
 andOnChild : (m1 -> Maybe (Layer m2)) -> TargetLayer m m1 -> TargetLayer m m2
 andOnChild f (TargetLayer target) =
     TargetLayer
@@ -664,6 +657,28 @@ andOnChild f (TargetLayer target) =
                 target.get lm
                     |> Maybe.andThen
                         (\(Layer _ m1) -> f m1)
+        }
+
+
+{-| -}
+andOnChildListItem : (m1 -> List (Layer m2)) -> (List (LayerId, m2) -> Maybe LayerId) -> TargetLayer m m1 -> TargetLayer m m2
+andOnChildListItem f selector (TargetLayer target) =
+    TargetLayer
+        { get =
+            \lm ->
+                target.get lm
+                    |> Maybe.map ((\(Layer _ m1) -> f m1))
+                    |> Maybe.withDefault []
+                    |> List.map (\(Layer lid m2) -> (lid, m2))
+                    |>  (\ls ->
+                            selector ls
+                                |> Maybe.andThen
+                                    (\lid ->
+                                        List.filter (\(lid_, _) -> lid == lid_) ls
+                                            |> List.head
+                                    )
+                        )
+                    |> Maybe.map (\(lid, m2) -> Layer lid m2)
         }
 
 
@@ -766,7 +781,7 @@ portResponse :
     Session
     -> String
     ->
-        { response : List command -> Value
+        { response : command -> Maybe Value
         }
     -> Scenario flags command m e
 portResponse (Session session) description o =
@@ -784,9 +799,9 @@ portResponse (Session session) description o =
                         case model of
                             Core.OnGoing onGoing ->
                                 Dict.insert session.uniqueName
-                                    (o.response cmds
-                                        |> (\v -> PortResponseMsg { response = v })
-                                        |> applyMsg (OnGoing onGoing)
+                                    (List.filterMap o.response cmds
+                                        |> List.map (\v -> PortResponseMsg { response = v })
+                                        |> applyMsgs (OnGoing onGoing)
                                     )
                                     context
                                     |> Core.OnGoingTest
@@ -828,7 +843,7 @@ customResponse :
     Session
     -> String
     ->
-        { response : List command -> Msg event
+        { response : command -> Maybe (Msg event)
         }
     -> Scenario flags command m event
 customResponse (Session session) description o =
@@ -846,8 +861,8 @@ customResponse (Session session) description o =
                         case model of
                             Core.OnGoing onGoing ->
                                 Dict.insert session.uniqueName
-                                    (o.response cmds
-                                        |> applyMsg (OnGoing onGoing)
+                                    (List.filterMap o.response cmds
+                                        |> applyMsgs (OnGoing onGoing)
                                     )
                                     context
                                     |> Core.OnGoingTest

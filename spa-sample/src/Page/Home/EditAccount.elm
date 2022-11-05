@@ -2,6 +2,7 @@ module Page.Home.EditAccount exposing
     ( request
     , EditAccount
     , toValue
+    , decodeResponse
     , Response
     , Form
     , initForm
@@ -19,6 +20,8 @@ module Page.Home.EditAccount exposing
 @docs request
 @docs EditAccount
 @docs Response
+@docs toValue
+@docs decodeResponse
 
 
 # Form decoding
@@ -39,7 +42,7 @@ import Form.Decoder as FD
 import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
-import Json.Encode as JE
+import Json.Encode as JE exposing (Value)
 import Url.Builder as Url
 
 
@@ -65,6 +68,23 @@ toValue (EditAccount editAccount) =
                     [ ( "id", JE.string editAccount.id )
                     ]
 
+{-| -}
+decodeResponse : Value -> Result JD.Error Response
+decodeResponse =
+    JD.decodeValue responseDecoder
+
+
+responseDecoder : JD.Decoder Response
+responseDecoder =
+    JD.succeed Response
+        |> JDP.required "profile" sessionDecoder
+
+sessionDecoder : JD.Decoder Session
+sessionDecoder =
+    JD.succeed Session
+        |> JDP.required "id" JD.string
+
+
 {-| Response type for `request`.
 -}
 type alias Response =
@@ -76,17 +96,6 @@ type alias Response =
 -}
 request : EditAccount -> (Result Http.Error Response -> msg) -> Cmd msg
 request editAccount toMsg =
-    let
-        decoder : JD.Decoder Response
-        decoder =
-            JD.succeed Response
-                |> JDP.required "profile" sessionDecoder
-
-        sessionDecoder : JD.Decoder Session
-        sessionDecoder =
-            JD.succeed Session
-                |> JDP.required "id" JD.string
-    in
     Http.post
         { url =
             Url.absolute
@@ -97,7 +106,7 @@ request editAccount toMsg =
         , body =
             Http.jsonBody <| toValue editAccount
         , expect =
-            Http.expectJson toMsg decoder
+            Http.expectJson toMsg responseDecoder
         }
 
 

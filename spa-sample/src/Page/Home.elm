@@ -6,13 +6,16 @@ module Page.Home exposing
     , currentSession
     , procedure
     , runCommand
-    -- , scenario
+    , scenario
+    , ScenarioSet
     , view
     )
 
 import App.Route as Route
 import App.Session exposing (Session)
-import Expect.Builder as ExpBuilder
+import Expect
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 import Http
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -20,7 +23,7 @@ import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
 import Tepa exposing (Key, Layer, Msg, Void)
-import Tepa.Scenario as Scenario
+import Tepa.Scenario as Scenario exposing (Scenario)
 import Widget.Toast as Toast
 
 
@@ -362,71 +365,75 @@ runToastPromise pointer prom =
 -- Scenario
 
 
-type alias Scenario =
-    Scenario.Scenario Command Memory Event
+{-| -}
+type alias ScenarioSet flags c m e =
+    { changeEditAccountFormAccountId : Scenario.Session -> String -> Scenario flags c m e
+    , clickSubmitEditAccount : Scenario.Session -> Scenario flags c m e
+    , receiveEditAccountResp : Scenario.Session -> Result Http.Error Value -> Scenario flags c m e
+    , expectEditAccountFormShowNoErrors : Scenario.Session -> Scenario flags c m e
+    }
 
 
+{-| -}
 scenario :
-    Scenario.Session
---     ->
---         { user :
---             { comment : String -> Scenario
---             , changeEditAccountFormAccountId : String -> Scenario
---             , clickSubmitEditAccount : Scenario
---             }
---         , system :
---             { comment : String -> Scenario
---             , requestEditAccount : Value -> Scenario
---             }
---         , external :
---             { backend :
---                 { comment : String -> Scenario
---                 , respondSuccessToEditAccountIdRequest : EditAccount.Response -> Scenario
---                 }
---             }
---         }
--- scenario session =
---     { user =
---         { comment = Scenario.userComment session
---         , changeEditAccountFormAccountId =
---             \str ->
---                 Scenario.userEvent session
---                     ("Type \"" ++ str ++ "\" for Account ID field")
---                     (ChangeEditAccountFormAccountId str)
---         , clickSubmitEditAccount =
---             Scenario.userEvent session
---                 "Click submit button for edit account form."
---                 ClickSubmitEditAccount
---         }
---     , system =
---         { comment = Scenario.systemComment session
---         , requestEditAccount =
---             \json ->
---                 Scenario.systemCommand session
---                     "Request save new account to server"
---                     (ExpBuilder.custom <| \command ->
---                         case command of
---                             RequestEditAccount _ editAccount ->
---                                 if EditAccount.toValue editAccount == json then
---                                     ExpBuilder.pass
---                                 else
---                                     ExpBuilder.fail "thought the request body is equal to the expected JSON."
---                             _ ->
---                                 ExpBuilder.fail "thought the command is `RequestEditAccount`."
---                     )
---         }
---     , external =
---         { backend =
---             { comment = Scenario.externalComment "backend" session
---             , respondSuccessToEditAccountIdRequest =
---                 \resp ->
---                     Scenario.externalEvent "backend"
---                         session
---                         "Respond \"Success\" to edit account request"
---                         (ReceiveEditAccountResp (Ok resp))
---             }
---         }
---     }
+    { targetOnSelf : Scenario.TargetLayer m Memory
+    , wrapEvent : Event -> e
+    , unwrapCommand : c -> Maybe Command
+    }
+    -> ScenarioSet flags c m e
+scenario props =
+    { changeEditAccountFormAccountId =
+        \session str ->
+            Scenario.userEvent session
+                ("Type \"" ++ str ++ "\" for Account ID field")
+                { target = props.targetOnSelf
+                , event =
+                    ChangeEditAccountFormAccountId str
+                        |> props.wrapEvent
+                }
+    , clickSubmitEditAccount =
+        \session ->
+            Scenario.userEvent session
+                "Click submit button for edit account form."
+                { target = props.targetOnSelf
+                , event = ClickSubmitEditAccount
+                    |> props.wrapEvent
+                }
+    , receiveEditAccountResp =
+        \session res ->
+            Scenario.customResponse session
+                "Backend responds to the edit account request."
+                { response =
+                    \cmd ->
+                        case props.unwrapCommand cmd of
+                            Just (RequestEditAccount _ toMsg) ->
+                                res
+                                    |> Result.andThen
+                                        (EditAccount.decodeResponse
+                                            >> Result.mapError
+                                                (\_ -> Http.BadBody "Unexpected response")
+                                        )
+                                    |> toMsg
+                                    |> Tepa.mapMsg props.wrapEvent
+                                    |> Just
+                            _ ->
+                                Nothing
+                }
+    , expectEditAccountFormShowNoErrors =
+        \session ->
+            Scenario.expectAppView session
+                "Expect that edit account form shows no errors"
+                { expectation = \html ->
+                    Query.fromHtml html
+                        |> Query.find
+                            [ Selector.class "editAccountForm"
+                            ]
+                        |> Query.findAll
+                            [ Selector.class "editAccountForm_errorField_error"
+                            ]
+                        |> Query.count (Expect.equal 0)
+                }
+    }
 
 
 

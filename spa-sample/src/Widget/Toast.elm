@@ -35,6 +35,7 @@ module Widget.Toast exposing
 
 @docs pushHttpError
 
+
 # Scenario
 
 @docs scenario
@@ -43,18 +44,18 @@ module Widget.Toast exposing
 -}
 
 import App.ZIndex as ZIndex
+import Expect
 import Http
 import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
-import Expect
-import Test.Html.Query as HtmlQuery
-import Test.Html.Selector as Selector
-import Tepa exposing (Layer, Msg, Promise, Void)
 import Process
+import Task
+import Tepa exposing (Layer, Msg, Promise, Void)
 import Tepa.Scenario as Scenario exposing (Scenario)
 import Tepa.Scenario.LayerQuery as LayerQuery exposing (LayerQuery)
-import Task
+import Test.Html.Query as HtmlQuery
+import Test.Html.Selector as Selector
 
 
 
@@ -85,7 +86,7 @@ type Memory
 
 
 type alias Memory_ =
-    { items : List ( Layer ToastItemMemory )
+    { items : List (Layer ToastItemMemory)
     }
 
 
@@ -135,6 +136,7 @@ runCommand cmd =
         SetTimeoutOnItem toMsg ->
             Process.sleep toastTimeout
                 |> Task.perform toMsg
+
         FadeOutItem toMsg ->
             Process.sleep toastFadeOutDuration
                 |> Task.perform toMsg
@@ -168,18 +170,20 @@ pushItem type_ str =
             }
     in
     Tepa.newLayer
-        { get = \getter (Memory m) ->
-            List.filterMap getter m.items
-                |> List.head
-        , modify = \modifier (Memory m) ->
-            Memory
-                { m
-                    | items = List.map modifier m.items
-                }
+        { get =
+            \getter (Memory m) ->
+                List.filterMap getter m.items
+                    |> List.head
+        , modify =
+            \modifier (Memory m) ->
+                Memory
+                    { m
+                        | items = List.map modifier m.items
+                    }
         }
         newItem
         |> Tepa.andThenSequence
-            (\(newItemLayer, itemPointer) ->
+            (\( newItemLayer, itemPointer ) ->
                 [ Tepa.modify <|
                     \(Memory m) ->
                         Memory { m | items = m.items ++ [ newItemLayer ] }
@@ -198,6 +202,7 @@ pushItem type_ str =
             )
 
 
+
 -- ToastItem
 
 
@@ -212,7 +217,7 @@ toastItemProcedure : Promise Command ToastItemMemory Event Void
 toastItemProcedure =
     Tepa.sequence
         [ Tepa.withLayerEvent
-            ( \e ->
+            (\e ->
                 case e of
                     CloseToastItem ->
                         [ Tepa.none
@@ -222,7 +227,7 @@ toastItemProcedure =
                         []
             )
             |> Tepa.andRace
-                ( Tepa.customRequest
+                (Tepa.customRequest
                     { name = "Set time out"
                     , request = SetTimeoutOnItem
                     , wrap = VoidResponse
@@ -309,6 +314,7 @@ toastItemView memory =
         ]
 
 
+
 -- Scenario
 
 
@@ -324,11 +330,13 @@ type alias ScenarioSet flags c m e =
     , awaitAllToDisappear : Scenario.Session -> Scenario flags c m e
     }
 
-type alias ScenarioProps c m e=
+
+type alias ScenarioProps c m e =
     { querySelf : LayerQuery m Memory
     , wrapEvent : Event -> e
     , unwrapCommand : c -> Maybe Command
     }
+
 
 {-| -}
 scenario : ScenarioProps c m e -> ScenarioSet flags c m e
@@ -352,31 +360,34 @@ scenario props =
             "toast_item"
             "No toast popup messages now."
     , closeWarningsByMessage =
-        closeByMessage props WarningMessage
+        closeByMessage props
+            WarningMessage
             "Click close button on toast popup with warning message: "
     , closeErrorsByMessage =
-        closeByMessage props ErrorMessage
+        closeByMessage props
+            ErrorMessage
             "Click close button on toast popup with error message: "
     , awaitAllToDisappear = awaitAllToDisappear props
     }
+
 
 expectMessage : MessageType -> String -> Scenario.Session -> String -> Scenario flags c m e
 expectMessage messageType descPrefix session str =
     Scenario.expectAppView session
         (descPrefix ++ str)
-        { expectation = \html ->
-            HtmlQuery.fromHtml html
-                |> HtmlQuery.findAll
-                    [ localClassSelector <| "toast_item-" ++ messageTypeCode messageType
-                    ]
-                |> HtmlQuery.keep
-                    ( Selector.all
-
-                        [ localClassSelector "toast_item_body"
-                        , Selector.text str
+        { expectation =
+            \html ->
+                HtmlQuery.fromHtml html
+                    |> HtmlQuery.findAll
+                        [ localClassSelector <| "toast_item-" ++ messageTypeCode messageType
                         ]
-                    )
-                |> HtmlQuery.count (Expect.greaterThan 0)
+                    |> HtmlQuery.keep
+                        (Selector.all
+                            [ localClassSelector "toast_item_body"
+                            , Selector.text str
+                            ]
+                        )
+                    |> HtmlQuery.count (Expect.greaterThan 0)
         }
 
 
@@ -384,27 +395,31 @@ expectNoMessages : String -> String -> Scenario.Session -> Scenario flags c m e
 expectNoMessages itemClassname desc session =
     Scenario.expectAppView session
         desc
-        { expectation = \html ->
-            HtmlQuery.fromHtml html
-                |> HtmlQuery.findAll
-                    [ localClassSelector itemClassname
-                    ]
-                |> HtmlQuery.count (Expect.equal 0)
+        { expectation =
+            \html ->
+                HtmlQuery.fromHtml html
+                    |> HtmlQuery.findAll
+                        [ localClassSelector itemClassname
+                        ]
+                    |> HtmlQuery.count (Expect.equal 0)
         }
+
 
 closeByMessage : ScenarioProps c m e -> MessageType -> String -> Scenario.Session -> String -> Scenario flags c m e
 closeByMessage props messageType descPrefix session str =
     let
         target =
-                props.querySelf
-                    |> LayerQuery.children
-                        (\(Memory m) -> m.items)
-                    |> LayerQuery.filter
-                        (\m ->
-                            m.messageType == messageType &&
-                            m.content == str
-                        )
-                    |> LayerQuery.index 0
+            props.querySelf
+                |> LayerQuery.children
+                    (\(Memory m) -> m.items)
+                |> LayerQuery.filter
+                    (\m ->
+                        m.messageType
+                            == messageType
+                            && m.content
+                            == str
+                    )
+                |> LayerQuery.index 0
     in
     Scenario.concat
         [ Scenario.userEvent session
@@ -422,6 +437,7 @@ closeByMessage props messageType descPrefix session str =
                             toMsg ()
                                 |> Tepa.mapMsg props.wrapEvent
                                 |> Just
+
                         _ ->
                             Nothing
             }
@@ -430,40 +446,43 @@ closeByMessage props messageType descPrefix session str =
 
 awaitAllToDisappear : ScenarioProps c m e -> Scenario.Session -> Scenario flags c m e
 awaitAllToDisappear props session =
-        let
-                targets =
-                        props.querySelf
-                            |> LayerQuery.children
-                                (\(Memory m) -> m.items)
-        in
-        Scenario.concat
-            [ Scenario.customResponse session
-                "After a period of time, each popup are automatically removed."
-                { target = targets
-                , response =
-                    \cmd ->
-                        case props.unwrapCommand cmd of
-                            Just (SetTimeoutOnItem toMsg) ->
-                                toMsg ()
-                                    |> Tepa.mapMsg props.wrapEvent
-                                    |> Just
-                            _ ->
-                                Nothing
-                }
-            , Scenario.customResponse session
-                "Popups gradually fade away when removed."
-                { target = targets
-                , response =
-                    \cmd ->
-                        case props.unwrapCommand cmd of
-                            Just (FadeOutItem toMsg) ->
-                                toMsg ()
-                                    |> Tepa.mapMsg props.wrapEvent
-                                    |> Just
-                            _ ->
-                                Nothing
-                }
-            ]
+    let
+        targets =
+            props.querySelf
+                |> LayerQuery.children
+                    (\(Memory m) -> m.items)
+    in
+    Scenario.concat
+        [ Scenario.customResponse session
+            "After a period of time, each popup are automatically removed."
+            { target = targets
+            , response =
+                \cmd ->
+                    case props.unwrapCommand cmd of
+                        Just (SetTimeoutOnItem toMsg) ->
+                            toMsg ()
+                                |> Tepa.mapMsg props.wrapEvent
+                                |> Just
+
+                        _ ->
+                            Nothing
+            }
+        , Scenario.customResponse session
+            "Popups gradually fade away when removed."
+            { target = targets
+            , response =
+                \cmd ->
+                    case props.unwrapCommand cmd of
+                        Just (FadeOutItem toMsg) ->
+                            toMsg ()
+                                |> Tepa.mapMsg props.wrapEvent
+                                |> Just
+
+                        _ ->
+                            Nothing
+            }
+        ]
+
 
 
 -- Helper functions
@@ -473,9 +492,12 @@ localClass : String -> Mixin msg
 localClass name =
     Mixin.class (classPrefix ++ name)
 
+
 localClassSelector : String -> Selector.Selector
 localClassSelector name =
     Selector.class (classPrefix ++ name)
 
+
 classPrefix : String
-classPrefix = "widget_toast--"
+classPrefix =
+    "widget_toast--"

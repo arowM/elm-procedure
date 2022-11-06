@@ -76,6 +76,7 @@ decoder =
     JD.succeed Response
         |> JDP.required "profile" sessionDecoder
 
+
 sessionDecoder : JD.Decoder Session
 sessionDecoder =
     JD.succeed Session

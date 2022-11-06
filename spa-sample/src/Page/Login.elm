@@ -2,11 +2,12 @@ module Page.Login exposing
     ( Command
     , Event
     , Memory
-    , init
     , currentSession
+    , init
     , procedure
-    , runCommand
-    -- , scenario
+    ,  runCommand
+       -- , scenario
+
     , view
     )
 
@@ -67,6 +68,7 @@ view =
                 , case memory.toast of
                     Nothing ->
                         Html.text ""
+
                     Just toast ->
                         Toast.view toast
                             |> Html.map (Tepa.mapMsg ToastEvent)
@@ -200,12 +202,17 @@ runCommand cmd =
 
         PushUrl key url ->
             Tepa.runNavCmd
-                (\navKey -> Nav.pushUrl navKey url) key
+                (\navKey -> Nav.pushUrl navKey url)
+                key
 
 
-type alias Promise a = Tepa.Promise Command Memory Event a
+type alias Promise a =
+    Tepa.Promise Command Memory Event a
 
-type alias Pointer m = Tepa.Pointer Memory m
+
+type alias Pointer m =
+    Tepa.Pointer Memory m
+
 
 type alias Bucket =
     { key : Key
@@ -219,6 +226,8 @@ currentSession : Promise (Maybe Session)
 currentSession =
     Tepa.currentState
         |> Tepa.map (\m -> m.msession)
+
+
 
 -- -- Initialization
 
@@ -300,58 +309,58 @@ submitLoginProcedure bucket =
                     { m | loginForm = f m.loginForm }
     in
     Tepa.sequence
-    [ modifyLoginForm <|
-        \m -> { m | isBusy = True }
-    , Tepa.currentState
-        |> Tepa.andThen
-            (\curr ->
-                case Login.fromForm curr.loginForm.form of
-                    Err _ ->
-                        Tepa.sequence
-                        [ modifyLoginForm<|
-                            \m ->
-                                { m
-                                    | isBusy = False
-                                    , showError = True
-                                }
-                        , Tepa.lazy <| \_ -> loginFormProcedure bucket
-                        ]
+        [ modifyLoginForm <|
+            \m -> { m | isBusy = True }
+        , Tepa.currentState
+            |> Tepa.andThen
+                (\curr ->
+                    case Login.fromForm curr.loginForm.form of
+                        Err _ ->
+                            Tepa.sequence
+                                [ modifyLoginForm <|
+                                    \m ->
+                                        { m
+                                            | isBusy = False
+                                            , showError = True
+                                        }
+                                , Tepa.lazy <| \_ -> loginFormProcedure bucket
+                                ]
 
-                    Ok login ->
-                        requestLogin login
-                            |> Tepa.andThenSequence
-                                (\response ->
-                                    case response of
-                                        Err err ->
-                                            [ Toast.pushHttpError err
-                                                |> runToastPromise bucket.toastPointer
-                                            , modifyLoginForm<|
-                                                \m ->
-                                                    { m | isBusy = False }
-                                            , Tepa.lazy <|
-                                                \_ ->
-                                                    loginFormProcedure bucket
-                                            ]
-                                        Ok resp ->
-                                            [ Tepa.modify <|
-                                                \m ->
-                                                    { m
-                                                        | msession = Just resp.session
-                                                        , loginForm =
-                                                            let
-                                                                loginForm =
-                                                                    m.loginForm
-                                                            in
-                                                            { loginForm
-                                                                | isBusy = False
-                                                            }
-                                                    }
-                                            , pushUrl bucket.key bucket.requestUrl
-                                            ]
+                        Ok login ->
+                            requestLogin login
+                                |> Tepa.andThenSequence
+                                    (\response ->
+                                        case response of
+                                            Err err ->
+                                                [ Toast.pushHttpError err
+                                                    |> runToastPromise bucket.toastPointer
+                                                , modifyLoginForm <|
+                                                    \m ->
+                                                        { m | isBusy = False }
+                                                , Tepa.lazy <|
+                                                    \_ ->
+                                                        loginFormProcedure bucket
+                                                ]
 
-                                )
-            )
-    ]
+                                            Ok resp ->
+                                                [ Tepa.modify <|
+                                                    \m ->
+                                                        { m
+                                                            | msession = Just resp.session
+                                                            , loginForm =
+                                                                let
+                                                                    loginForm =
+                                                                        m.loginForm
+                                                                in
+                                                                { loginForm
+                                                                    | isBusy = False
+                                                                }
+                                                        }
+                                                , pushUrl bucket.key bucket.requestUrl
+                                                ]
+                                    )
+                )
+        ]
 
 
 requestLogin : Login.Login -> Promise (Result Http.Error Login.Response)
@@ -360,15 +369,21 @@ requestLogin login =
         { name = "requestLogin"
         , request = RequestLogin login
         , wrap = ReceiveLoginResp
-        , unwrap = \e ->
-            case e of
-                ReceiveLoginResp a -> Just a
-                _ -> Nothing
+        , unwrap =
+            \e ->
+                case e of
+                    ReceiveLoginResp a ->
+                        Just a
+
+                    _ ->
+                        Nothing
         }
 
 
 pushUrl : Key -> Url -> Promise Void
-pushUrl key url = Tepa.push <| \_ -> PushUrl key <| Url.toString url
+pushUrl key url =
+    Tepa.push <| \_ -> PushUrl key <| Url.toString url
+
 
 
 -- Toast
@@ -393,13 +408,13 @@ runToastPromise pointer prom =
             }
         |> Tepa.mapCmd ToastCommand
 
+
+
 -- Scenario
-
-
 -- type alias Scenario =
 --     Scenario.Scenario Command Memory Event
--- 
--- 
+--
+--
 -- scenario :
 --     Scenario.Session
 --     ->
@@ -467,9 +482,6 @@ runToastPromise pointer prom =
 --             }
 --         }
 --     }
-
-
-
 -- Helper functions
 
 

@@ -18,8 +18,8 @@ import Browser.Navigation as Nav exposing (Key)
 import Http
 import Json.Encode exposing (Value)
 import Mixin.Html as Html exposing (Html)
-import Page.Login as PageLogin
 import Page.Home as PageHome
+import Page.Login as PageLogin
 import Tepa exposing (Key, Layer, Msg, Void)
 import Tepa.Scenario.LayerQuery as LayerQuery
 import Url exposing (Url)
@@ -66,8 +66,9 @@ init =
 type Page
     = PageLoading
     | PageNotFound
-    | PageLogin ( Layer PageLogin.Memory )
-    | PageHome ( Layer PageHome.Memory )
+    | PageLogin (Layer PageLogin.Memory)
+    | PageHome (Layer PageHome.Memory)
+
 
 
 -- View
@@ -93,7 +94,6 @@ view =
                     PageHome pageHome ->
                         PageHome.view pageHome
                             |> Html.map (Tepa.mapMsg PageHomeEvent)
-
                 ]
             }
 
@@ -167,10 +167,12 @@ runCommand cmd =
 
 
 {-| -}
-type alias Promise a = Tepa.Promise Command Memory Event a
+type alias Promise a =
+    Tepa.Promise Command Memory Event a
 
 
-type alias Pointer m = Tepa.Pointer Memory m
+type alias Pointer m =
+    Tepa.Pointer Memory m
 
 
 
@@ -217,10 +219,14 @@ linkControllProcedure key =
 
 
 pushUrl : Key -> String -> Promise Void
-pushUrl key url = Tepa.push <| \_ -> PushUrl key url
+pushUrl key url =
+    Tepa.push <| \_ -> PushUrl key url
+
 
 loadPage : String -> Promise Void
-loadPage url = Tepa.push <| \_ -> LoadPage url
+loadPage url =
+    Tepa.push <| \_ -> LoadPage url
+
 
 
 -- -- Page Controller
@@ -235,21 +241,21 @@ pageControllProcedure url key msession =
     case ( Route.fromUrl url, msession ) of
         ( Route.NotFound, _ ) ->
             Tepa.sequence
-            [ Tepa.modify <|
-                \m ->
-                    { m | page = PageNotFound }
-            , Tepa.withLayerEvent <|
-                \e ->
-                    case e of
-                        UrlChanged newUrl ->
-                            [ Tepa.lazy <|
-                                \_ ->
-                                    pageControllProcedure newUrl key msession
-                            ]
+                [ Tepa.modify <|
+                    \m ->
+                        { m | page = PageNotFound }
+                , Tepa.withLayerEvent <|
+                    \e ->
+                        case e of
+                            UrlChanged newUrl ->
+                                [ Tepa.lazy <|
+                                    \_ ->
+                                        pageControllProcedure newUrl key msession
+                                ]
 
-                        _ ->
-                            []
-            ]
+                            _ ->
+                                []
+                ]
 
         ( _, Nothing ) ->
             requestSession
@@ -261,10 +267,14 @@ pageControllProcedure url key msession =
                                     { get = .page
                                     , set = \v m -> { m | page = v }
                                     , wrap = PageLogin
-                                    , unwrap = \m ->
-                                        case m of
-                                            PageLogin a -> Just a
-                                            _ -> Nothing
+                                    , unwrap =
+                                        \m ->
+                                            case m of
+                                                PageLogin a ->
+                                                    Just a
+
+                                                _ ->
+                                                    Nothing
                                     , init = PageLogin.init
                                     }
                                     |> Tepa.andThen
@@ -289,7 +299,6 @@ pageControllProcedure url key msession =
                                 Tepa.lazy <|
                                     \_ ->
                                         pageControllProcedure url key (Just session)
-
                     )
 
         ( Route.Home, Just session ) ->
@@ -297,10 +306,14 @@ pageControllProcedure url key msession =
                 { get = .page
                 , set = \a m -> { m | page = a }
                 , wrap = PageHome
-                , unwrap = \m ->
-                    case m of
-                        PageHome a -> Just a
-                        _ -> Nothing
+                , unwrap =
+                    \m ->
+                        case m of
+                            PageHome a ->
+                                Just a
+
+                            _ ->
+                                Nothing
                 , init = PageHome.init session
                 }
                 |> Tepa.andThen
@@ -325,16 +338,21 @@ pageControllProcedure url key msession =
         _ ->
             Debug.todo ""
 
+
 requestSession : Promise (Result Http.Error Session)
 requestSession =
     Tepa.customRequest
         { name = "requestSession"
         , request = FetchSession
         , wrap = ReceiveSession
-        , unwrap = \e ->
-            case e of
-                ReceiveSession a -> Just a
-                _ -> Nothing
+        , unwrap =
+            \e ->
+                case e of
+                    ReceiveSession a ->
+                        Just a
+
+                    _ ->
+                        Nothing
         }
 
 
@@ -351,6 +369,7 @@ runPageLoginPromise pointer prom =
                     case e of
                         PageLoginEvent e1 ->
                             Just e1
+
                         _ ->
                             Nothing
             }
@@ -370,13 +389,16 @@ runPageHomePromise pointer prom =
                     case e of
                         PageHomeEvent e1 ->
                             Just e1
+
                         _ ->
                             Nothing
             }
         |> Tepa.mapCmd PageHomeCommand
 
 
+
 -- Scenario
+
 
 {-| -}
 type alias ScenarioSet flags =
@@ -387,19 +409,27 @@ type alias ScenarioSet flags =
 {-| -}
 scenario : ScenarioSet flags
 scenario =
-    { home = PageHome.scenario
-        { querySelf = LayerQuery.self
-            |> LayerQuery.child
-                (\m ->
-                    case m.page of
-                        PageHome l -> Just l
-                        _ -> Nothing
-                )
-        , wrapEvent = PageHomeEvent
-        , unwrapCommand =
-            \c ->
-                case c of
-                    PageHomeCommand c1 -> Just c1
-                    _ -> Nothing
-        }
+    { home =
+        PageHome.scenario
+            { querySelf =
+                LayerQuery.self
+                    |> LayerQuery.child
+                        (\m ->
+                            case m.page of
+                                PageHome l ->
+                                    Just l
+
+                                _ ->
+                                    Nothing
+                        )
+            , wrapEvent = PageHomeEvent
+            , unwrapCommand =
+                \c ->
+                    case c of
+                        PageHomeCommand c1 ->
+                            Just c1
+
+                        _ ->
+                            Nothing
+            }
     }

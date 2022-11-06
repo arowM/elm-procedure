@@ -1,11 +1,11 @@
 module Scenario exposing (..)
 
-import App as App exposing (Memory, Event, Command)
+import App as App exposing (Command, Event, Memory)
 import Html exposing (Html)
 import Http
 import Json.Encode as JE
-import Page.Login as PageLogin
 import Page.Home as PageHome
+import Page.Login as PageLogin
 import Procedure.Scenario as Scenario exposing (Scenario)
 import Test exposing (Test)
 import Url
@@ -34,19 +34,20 @@ test =
 {-| -}
 sections : List (Scenario.Section Command Memory Event)
 sections =
-        [ Scenario.section "Introduction"
-            [ Scenario.withNewSession
-                { userName = "Sakura-chan"
-                }
-                introduction
-            ]
+    [ Scenario.section "Introduction"
+        [ Scenario.withNewSession
+            { userName = "Sakura-chan"
+            }
+            introduction
         ]
+    ]
 
 
 introduction : Session -> List (Scenario Command Memory Event)
 introduction user1 =
     let
-        user1Comment = Scenario.userComment user1
+        user1Comment =
+            Scenario.userComment user1
     in
     [ user1Comment "Hi. I'm Sakura-chan, the cutest goat girl in the world."
     , user1Comment "Today I'll try a goat management service."
@@ -55,9 +56,11 @@ introduction user1 =
         { user = user1
         , route = routeHome
         }
-        <| \appLayer1 ->
+      <|
+        \appLayer1 ->
             let
-                app1 = App.scenario appLayer1
+                app1 =
+                    App.scenario appLayer1
             in
             [ app1.comment "Redirect to login page immediately."
             , user1Comment
@@ -70,7 +73,8 @@ introduction user1 =
   "pass": "guestpass"
 }"""
                 (Err (Http.BadStatus 401))
-                <| \_ -> []
+              <|
+                \_ -> []
             , app1.pageLogin.system.toastPopup "\"Invalid user name or password.\"."
             , user1Comment "Oops! It's hard to type with my two-fingered hooves..."
             , app1.pageLogin.user.changePass "guestPass"
@@ -84,7 +88,8 @@ introduction user1 =
     "id": "guest"
   }
 }""")
-                <| \_ -> []
+              <|
+                \_ -> []
             ]
     , app1.system.comment "Redirect to home page."
     , Scenario.cases
@@ -100,11 +105,9 @@ introduction user1 =
 
 pageHomeCase1 : Scenario.Session -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
 pageHomeCase1 _ =
-    [
-    ]
+    []
 
 
 pageHomeCase2 : Scenario.Session -> List (Scenario PageHome.Command PageHome.Memory PageHome.Event)
 pageHomeCase2 _ =
-    [
-    ]
+    []

@@ -1,9 +1,9 @@
 module Page.Home.EditAccount exposing
     ( request
     , EditAccount
+    , Response
     , toValue
     , decodeResponse
-    , Response
     , Form
     , initForm
     , FormError(..)
@@ -64,9 +64,10 @@ type alias EditAccount_ =
 {-| -}
 toValue : EditAccount -> JE.Value
 toValue (EditAccount editAccount) =
-                JE.object
-                    [ ( "id", JE.string editAccount.id )
-                    ]
+    JE.object
+        [ ( "id", JE.string editAccount.id )
+        ]
+
 
 {-| -}
 decodeResponse : Value -> Result JD.Error Response
@@ -78,6 +79,7 @@ responseDecoder : JD.Decoder Response
 responseDecoder =
     JD.succeed Response
         |> JDP.required "profile" sessionDecoder
+
 
 sessionDecoder : JD.Decoder Session
 sessionDecoder =

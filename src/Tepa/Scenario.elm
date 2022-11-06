@@ -104,14 +104,14 @@ import Internal.Core as Core
         , Promise
         , Void
         )
-import Internal.Markup as Markup
 import Internal.LayerId exposing (LayerId)
+import Internal.Markup as Markup
 import Json.Encode exposing (Value)
 import Mixin
 import Mixin.Html as Html exposing (Html)
+import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Test exposing (Test)
 import Test.Sequence as SeqTest
-import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Url exposing (Url)
 
 
@@ -597,7 +597,7 @@ userEvent (Session session) description o =
 
                             layer1s ->
                                 Dict.insert session.uniqueName
-                                    ( List.map
+                                    (List.map
                                         (\(Layer lid _) ->
                                             Core.LayerMsg
                                                 { layerId = lid
@@ -713,6 +713,7 @@ Suppose your application requests to access localStorage via port request named 
         ]
 
 If no Layers found for the query, it does nothing and just passes the test.
+
 -}
 portResponse :
     Session
@@ -741,19 +742,19 @@ portResponse (Session session) description o =
 
                             layer1s ->
                                 Dict.insert session.uniqueName
-                                    ( List.concatMap
+                                    (List.concatMap
                                         (\(Layer thisLid _) ->
                                             List.filterMap
-                                                (\(lid, c) ->
-                                                    if (lid == thisLid) then
+                                                (\( lid, c ) ->
+                                                    if lid == thisLid then
                                                         o.response c
                                                             |> Maybe.map
                                                                 (\v ->
                                                                     PortResponseMsg
-                                                                        {
-                                                                            response = v
+                                                                        { response = v
                                                                         }
                                                                 )
+
                                                     else
                                                         Nothing
                                                 )
@@ -765,7 +766,6 @@ portResponse (Session session) description o =
                                     context
                                     |> Core.OnGoingTest
                                     |> SeqTest.pass
-
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -796,6 +796,7 @@ Suppose your application requests user infomation to the backend server via cust
         ]
 
 If no Layers found for the query, it does nothing and just passes the test.
+
 -}
 customResponse :
     Session
@@ -824,12 +825,13 @@ customResponse (Session session) description o =
 
                             layer1s ->
                                 Dict.insert session.uniqueName
-                                    ( List.concatMap
+                                    (List.concatMap
                                         (\(Layer thisLid _) ->
                                             List.filterMap
-                                                (\(lid, c) ->
-                                                    if (lid == thisLid) then
+                                                (\( lid, c ) ->
+                                                    if lid == thisLid then
                                                         o.response c
+
                                                     else
                                                         Nothing
                                                 )
@@ -911,7 +913,7 @@ toTest =
     Core.toTest
 
 
-applyMsgs : Model c m e -> List (Msg e) -> ( Model c m e, List ( LayerId, c) )
+applyMsgs : Model c m e -> List (Msg e) -> ( Model c m e, List ( LayerId, c ) )
 applyMsgs initModel msgs =
     List.foldl
         (\msg ( accModel, accCmds ) ->

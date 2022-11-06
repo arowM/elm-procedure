@@ -32,7 +32,8 @@ module Internal.Core exposing
     , Section
     , section
     , cases
-    , LayerQuery(..), runQuery
+    , LayerQuery(..)
+    , runQuery
     )
 
 {-|
@@ -98,6 +99,7 @@ module Internal.Core exposing
 @docs section
 @docs cases
 
+
 # LayerQuery
 
 @docs LayerQuery
@@ -161,7 +163,7 @@ type alias OnGoing_ c m e =
     , listeners : List (Listener e)
 
     -- New state to evaluate next time.
-    , next : Msg e -> Context m -> List (Listener e) -> ( Model c m e, List (LayerId, c) )
+    , next : Msg e -> Context m -> List (Listener e) -> ( Model c m e, List ( LayerId, c ) )
     }
 
 
@@ -352,7 +354,7 @@ type Promise c m e a
 
 type alias PromiseEffect c m e a =
     { newContext : Context m
-    , cmds : List (LayerId, c)
+    , cmds : List ( LayerId, c )
     , addListeners : List (Listener e)
     , closedLayers : List LayerId
     , closedRequests : List RequestId
@@ -647,7 +649,7 @@ mapPromiseCmd f (Promise prom) =
                     prom context
             in
             { newContext = eff.newContext
-            , cmds = List.map (\(lid, c) -> (lid, f c)) eff.cmds
+            , cmds = List.map (\( lid, c ) -> ( lid, f c )) eff.cmds
             , addListeners = eff.addListeners
             , closedLayers = eff.closedLayers
             , closedRequests = eff.closedRequests
@@ -805,12 +807,13 @@ push f =
     Promise <|
         \context ->
             let
-                (ThisLayerId thisLayerId) = context.thisLayerId
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
             in
             { newContext = context
             , cmds =
                 f context.state
-                    |> List.map (\c -> (thisLayerId, c))
+                    |> List.map (\c -> ( thisLayerId, c ))
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -1118,8 +1121,8 @@ portRequest o =
             , cmds =
                 [ ( thisLayerId
                   , o.request
-                    context.state
-                    { requestId = RequestId.toValue myRequestId }
+                        context.state
+                        { requestId = RequestId.toValue myRequestId }
                   )
                 ]
             , handler = AwaitMsg nextPromise
@@ -1179,12 +1182,12 @@ customRequest o =
             , cmds =
                 [ ( thisLayerId
                   , o.request
-                    (\a ->
-                        ResponseMsg
-                            { requestId = myRequestId
-                            , event = o.wrap a
-                            }
-                    )
+                        (\a ->
+                            ResponseMsg
+                                { requestId = myRequestId
+                                , event = o.wrap a
+                                }
+                        )
                   )
                 ]
             , handler = AwaitMsg nextPromise
@@ -1228,7 +1231,7 @@ layerEvent =
 init :
     memory
     -> Promise cmd memory event Void
-    -> ( Model cmd memory event, List (LayerId, cmd) )
+    -> ( Model cmd memory event, List ( LayerId, cmd ) )
 init m prom =
     toModel (initContext m) [] prom
 
@@ -1242,7 +1245,7 @@ initContext memory =
     }
 
 
-toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List (LayerId, c) )
+toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List ( LayerId, c ) )
 toModel context listeners (Promise prom) =
     let
         eff =
@@ -1287,7 +1290,7 @@ toModel context listeners (Promise prom) =
             )
 
 
-update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List (LayerId, cmd) )
+update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List ( LayerId, cmd ) )
 update msg model =
     case model of
         EndOfProcess r ->
@@ -1343,12 +1346,12 @@ type TestModel c m e
 
 type alias TestConfig flags c m e =
     { view : m -> Html ()
-    , init : flags -> Url -> ( Model c m e, List (LayerId, c) )
+    , init : flags -> Url -> ( Model c m e, List ( LayerId, c ) )
     }
 
 
 type alias TestContext c m e =
-    Dict SessionId ( Model c m e, List (LayerId, c) )
+    Dict SessionId ( Model c m e, List ( LayerId, c ) )
 
 
 type alias SessionId =
@@ -1581,13 +1584,14 @@ cases sections =
 
 
 {-| -}
-type LayerQuery m m1 =
-    LayerQuery (LayerQuery_ m m1)
+type LayerQuery m m1
+    = LayerQuery (LayerQuery_ m m1)
 
 
 type alias LayerQuery_ m m1 =
     { get : Layer m -> List (Layer m1)
     }
+
 
 runQuery : LayerQuery m m1 -> Model c m e -> List (Layer m1)
 runQuery (LayerQuery query) model =

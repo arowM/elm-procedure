@@ -811,7 +811,7 @@ type alias Document a =
 update : Msg event -> Model (Cmd (Msg event)) memory event -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 update msg model =
     Core.update msg model
-        |> Tuple.mapSecond Cmd.batch
+        |> Tuple.mapSecond (List.map Tuple.second >> Cmd.batch)
 
 
 {-| Construct the TEA element view function.
@@ -843,7 +843,7 @@ init :
     -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 init memory procs =
     Core.init memory procs
-        |> Tuple.mapSecond Cmd.batch
+        |> Tuple.mapSecond (List.map Tuple.second >> Cmd.batch)
 
 
 {-| `Browser.Navigation.Key` alternative.

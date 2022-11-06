@@ -21,10 +21,6 @@ module Tepa.Scenario exposing
     , listenerEvent
     , portResponse
     , customResponse
-    , TargetLayer
-    , targetOnSelf
-    , andOnChild
-    , andOnChildListItem
     , fromJust
     -- , toMarkdown
     )
@@ -89,14 +85,6 @@ module Tepa.Scenario exposing
 @docs customResponse
 
 
-# TargetLayer
-
-@docs TargetLayer
-@docs targetOnSelf
-@docs andOnChild
-@docs andOnChildListItem
-
-
 # Conditions
 
 @docs fromJust
@@ -106,7 +94,6 @@ module Tepa.Scenario exposing
 import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
-import Internal.LayerId exposing (LayerId)
 import Internal.Core as Core
     exposing
         ( Key(..)
@@ -118,11 +105,13 @@ import Internal.Core as Core
         , Void
         )
 import Internal.Markup as Markup
+import Internal.LayerId exposing (LayerId)
 import Json.Encode exposing (Value)
 import Mixin
 import Mixin.Html as Html exposing (Html)
 import Test exposing (Test)
 import Test.Sequence as SeqTest
+import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Url exposing (Url)
 
 
@@ -359,8 +348,8 @@ expectMemory :
     Session
     -> String
     ->
-        { target : TargetLayer m m1
-        , expectation : ExpBuilder m1
+        { target : LayerQuery m m1
+        , expectation : ExpBuilder (List m1)
         }
     -> Scenario flags c m e
 expectMemory (Session session) description o =
@@ -375,15 +364,16 @@ expectMemory (Session session) description o =
                                     "expectMemory: The application is not active on the session. Use `loadApp` beforehand."
 
                     Just ( model, _ ) ->
-                        case extractTarget o.target model of
-                            Nothing ->
+                        case Core.runQuery o.target model of
+                            [] ->
                                 SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
                                     \_ ->
                                         Expect.fail
-                                            "expectMemory: The Layer is not accessible."
+                                            "expectMemory: No Layers for the query."
 
-                            Just (Core.Layer _ m1) ->
-                                SeqTest.pass m1
+                            layer1s ->
+                                List.map (\(Layer _ m1) -> m1) layer1s
+                                    |> SeqTest.pass
                                     |> SeqTest.assert description
                                         (ExpBuilder.applyTo o.expectation)
                                     |> SeqTest.map (\_ -> Core.OnGoingTest context)
@@ -578,7 +568,7 @@ userEvent :
     Session
     -> String
     ->
-        { target : TargetLayer m m1
+        { target : LayerQuery m m1
         , event : event
         }
     -> Scenario flags c m event
@@ -598,20 +588,24 @@ userEvent (Session session) description o =
                                     "userEvent: The application is not active on the session. Use `loadApp` beforehand."
 
                     Just ( model, _ ) ->
-                        case extractTarget o.target model of
-                            Nothing ->
+                        case Core.runQuery o.target model of
+                            [] ->
                                 SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
                                     \_ ->
                                         Expect.fail
-                                            "userEvent: The Layer is not accessible."
+                                            "userEvent: No Layers for the query."
 
-                            Just (Core.Layer lid _) ->
+                            layer1s ->
                                 Dict.insert session.uniqueName
-                                    (Core.LayerMsg
-                                        { layerId = lid
-                                        , event = o.event
-                                        }
-                                        |> applyMsg model
+                                    ( List.map
+                                        (\(Layer lid _) ->
+                                            Core.LayerMsg
+                                                { layerId = lid
+                                                , event = o.event
+                                                }
+                                        )
+                                        layer1s
+                                        |> applyMsgs model
                                     )
                                     context
                                     |> Core.OnGoingTest
@@ -621,64 +615,6 @@ userEvent (Session session) description o =
                 listItemParagraph
                     ("[" ++ session.uniqueName ++ "] " ++ user.name)
                     description
-        }
-
-
-{-| -}
-type TargetLayer m m1
-    = TargetLayer (TargetLayer_ m m1)
-
-
-type alias TargetLayer_ m m1 =
-    { get : Layer m -> Maybe (Layer m1)
-    }
-
-
-extractTarget : TargetLayer m m1 -> Model c m event -> Maybe (Layer m1)
-extractTarget (TargetLayer target) model =
-    Core.layerState model
-        |> Maybe.andThen target.get
-
-
-{-| -}
-targetOnSelf : TargetLayer m m
-targetOnSelf =
-    TargetLayer
-        { get = Just
-        }
-
-
-{-| -}
-andOnChild : (m1 -> Maybe (Layer m2)) -> TargetLayer m m1 -> TargetLayer m m2
-andOnChild f (TargetLayer target) =
-    TargetLayer
-        { get =
-            \lm ->
-                target.get lm
-                    |> Maybe.andThen
-                        (\(Layer _ m1) -> f m1)
-        }
-
-
-{-| -}
-andOnChildListItem : (m1 -> List (Layer m2)) -> (List (LayerId, m2) -> Maybe LayerId) -> TargetLayer m m1 -> TargetLayer m m2
-andOnChildListItem f selector (TargetLayer target) =
-    TargetLayer
-        { get =
-            \lm ->
-                target.get lm
-                    |> Maybe.map ((\(Layer _ m1) -> f m1))
-                    |> Maybe.withDefault []
-                    |> List.map (\(Layer lid m2) -> (lid, m2))
-                    |>  (\ls ->
-                            selector ls
-                                |> Maybe.andThen
-                                    (\lid ->
-                                        List.filter (\(lid_, _) -> lid == lid_) ls
-                                            |> List.head
-                                    )
-                        )
-                    |> Maybe.map (\(lid, m2) -> Layer lid m2)
         }
 
 
@@ -729,7 +665,7 @@ listenerEvent (Session session) description o =
                                     (onGoing.listeners
                                         |> List.filterMap
                                             (\listener ->
-                                                if listener.name == o.target then
+                                                if listener.uniqueName == Just o.target then
                                                     Just <|
                                                         ListenerMsg
                                                             { requestId = listener.requestId
@@ -776,12 +712,14 @@ Suppose your application requests to access localStorage via port request named 
         , Debug.todo "..."
         ]
 
+If no Layers found for the query, it does nothing and just passes the test.
 -}
 portResponse :
     Session
     -> String
     ->
-        { response : command -> Maybe Value
+        { target : LayerQuery m m1
+        , response : command -> Maybe Value
         }
     -> Scenario flags command m e
 portResponse (Session session) description o =
@@ -796,19 +734,38 @@ portResponse (Session session) description o =
                                     "portResponse: The application is not active on the session. Use `loadApp` beforehand."
 
                     Just ( model, cmds ) ->
-                        case model of
-                            Core.OnGoing onGoing ->
+                        case Core.runQuery o.target model of
+                            [] ->
+                                Core.OnGoingTest context
+                                    |> SeqTest.pass
+
+                            layer1s ->
                                 Dict.insert session.uniqueName
-                                    (List.filterMap o.response cmds
-                                        |> List.map (\v -> PortResponseMsg { response = v })
-                                        |> applyMsgs (OnGoing onGoing)
+                                    ( List.concatMap
+                                        (\(Layer thisLid _) ->
+                                            List.filterMap
+                                                (\(lid, c) ->
+                                                    if (lid == thisLid) then
+                                                        o.response c
+                                                            |> Maybe.map
+                                                                (\v ->
+                                                                    PortResponseMsg
+                                                                        {
+                                                                            response = v
+                                                                        }
+                                                                )
+                                                    else
+                                                        Nothing
+                                                )
+                                                cmds
+                                        )
+                                        layer1s
+                                        |> applyMsgs model
                                     )
                                     context
                                     |> Core.OnGoingTest
                                     |> SeqTest.pass
 
-                            EndOfProcess _ ->
-                                SeqTest.pass (Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -838,12 +795,14 @@ Suppose your application requests user infomation to the backend server via cust
         , Debug.todo "..."
         ]
 
+If no Layers found for the query, it does nothing and just passes the test.
 -}
 customResponse :
     Session
     -> String
     ->
-        { response : command -> Maybe (Msg event)
+        { target : LayerQuery m m1
+        , response : command -> Maybe (Msg event)
         }
     -> Scenario flags command m event
 customResponse (Session session) description o =
@@ -858,18 +817,30 @@ customResponse (Session session) description o =
                                     "customResponse: The application is not active on the session. Use `loadApp` beforehand."
 
                     Just ( model, cmds ) ->
-                        case model of
-                            Core.OnGoing onGoing ->
+                        case Core.runQuery o.target model of
+                            [] ->
+                                Core.OnGoingTest context
+                                    |> SeqTest.pass
+
+                            layer1s ->
                                 Dict.insert session.uniqueName
-                                    (List.filterMap o.response cmds
-                                        |> applyMsgs (OnGoing onGoing)
+                                    ( List.concatMap
+                                        (\(Layer thisLid _) ->
+                                            List.filterMap
+                                                (\(lid, c) ->
+                                                    if (lid == thisLid) then
+                                                        o.response c
+                                                    else
+                                                        Nothing
+                                                )
+                                                cmds
+                                        )
+                                        layer1s
+                                        |> applyMsgs model
                                     )
                                     context
                                     |> Core.OnGoingTest
                                     |> SeqTest.pass
-
-                            EndOfProcess _ ->
-                                SeqTest.pass (Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -940,12 +911,7 @@ toTest =
     Core.toTest
 
 
-applyMsg : Model c m e -> Msg e -> ( Model c m e, List c )
-applyMsg model msg =
-    Core.update msg model
-
-
-applyMsgs : Model c m e -> List (Msg e) -> ( Model c m e, List c )
+applyMsgs : Model c m e -> List (Msg e) -> ( Model c m e, List ( LayerId, c) )
 applyMsgs initModel msgs =
     List.foldl
         (\msg ( accModel, accCmds ) ->

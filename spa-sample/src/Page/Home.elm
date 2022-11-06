@@ -23,6 +23,7 @@ import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
 import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Tepa.Scenario as Scenario exposing (Scenario)
 import Widget.Toast as Toast
 
@@ -365,7 +366,8 @@ runToastPromise pointer prom =
 -- Scenario
 
 
-{-| -}
+{-|
+-}
 type alias ScenarioSet flags c m e =
     { changeEditAccountFormAccountId : Scenario.Session -> String -> Scenario flags c m e
     , clickSubmitEditAccount : Scenario.Session -> Scenario flags c m e
@@ -373,37 +375,49 @@ type alias ScenarioSet flags c m e =
     , expectEditAccountFormShowNoErrors : Scenario.Session -> Scenario flags c m e
     }
 
-
-{-| -}
-scenario :
-    { targetOnSelf : Scenario.TargetLayer m Memory
+type alias ScenarioProps c m e=
+    { querySelf : LayerQuery m Memory
     , wrapEvent : Event -> e
     , unwrapCommand : c -> Maybe Command
     }
-    -> ScenarioSet flags c m e
+
+
+{-| -}
+scenario : ScenarioProps c m e -> ScenarioSet flags c m e
 scenario props =
-    { changeEditAccountFormAccountId =
-        \session str ->
+    { changeEditAccountFormAccountId = changeEditAccountFormAccountId props
+    , clickSubmitEditAccount = clickSubmitEditAccount props
+    , receiveEditAccountResp = receiveEditAccountResp props
+    , expectEditAccountFormShowNoErrors = expectEditAccountFormShowNoErrors props
+    }
+
+
+changeEditAccountFormAccountId : ScenarioProps c m e -> Scenario.Session -> String -> Scenario flags c m e
+changeEditAccountFormAccountId props session str =
             Scenario.userEvent session
                 ("Type \"" ++ str ++ "\" for Account ID field")
-                { target = props.targetOnSelf
+                { target = props.querySelf
                 , event =
                     ChangeEditAccountFormAccountId str
                         |> props.wrapEvent
                 }
-    , clickSubmitEditAccount =
-        \session ->
+
+clickSubmitEditAccount : ScenarioProps c m e -> Scenario.Session -> Scenario flags c m e
+clickSubmitEditAccount props session =
             Scenario.userEvent session
                 "Click submit button for edit account form."
-                { target = props.targetOnSelf
-                , event = ClickSubmitEditAccount
-                    |> props.wrapEvent
+                { target = props.querySelf
+                , event =
+                    ClickSubmitEditAccount
+                        |> props.wrapEvent
                 }
-    , receiveEditAccountResp =
-        \session res ->
+
+receiveEditAccountResp : ScenarioProps c m e -> Scenario.Session -> Result Http.Error Value -> Scenario flags c m e
+receiveEditAccountResp props session res =
             Scenario.customResponse session
                 "Backend responds to the edit account request."
-                { response =
+                { target = props.querySelf
+                , response =
                     \cmd ->
                         case props.unwrapCommand cmd of
                             Just (RequestEditAccount _ toMsg) ->
@@ -419,8 +433,9 @@ scenario props =
                             _ ->
                                 Nothing
                 }
-    , expectEditAccountFormShowNoErrors =
-        \session ->
+
+expectEditAccountFormShowNoErrors : ScenarioProps c m e -> Scenario.Session -> Scenario flags c m e
+expectEditAccountFormShowNoErrors _ session =
             Scenario.expectAppView session
                 "Expect that edit account form shows no errors"
                 { expectation = \html ->
@@ -433,10 +448,6 @@ scenario props =
                             ]
                         |> Query.count (Expect.equal 0)
                 }
-    }
-
-
-
 
 -- Helper functions
 

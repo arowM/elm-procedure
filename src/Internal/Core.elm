@@ -3,6 +3,7 @@ module Internal.Core exposing
     , Msg(..), rootLayerMsg
     , mapMsg
     , Key(..)
+    , runNavCmd
     , Promise
     , succeedPromise
     , mapPromise
@@ -31,7 +32,7 @@ module Internal.Core exposing
     , Section
     , section
     , cases
-    , Pointer_, runNavCmd
+    , LayerQuery(..), runQuery
     )
 
 {-|
@@ -47,6 +48,7 @@ module Internal.Core exposing
 # Key
 
 @docs Key
+@docs runNavCmd
 
 
 # Promise
@@ -95,6 +97,11 @@ module Internal.Core exposing
 @docs Section
 @docs section
 @docs cases
+
+# LayerQuery
+
+@docs LayerQuery
+@docs runQuery
 
 -}
 
@@ -154,7 +161,7 @@ type alias OnGoing_ c m e =
     , listeners : List (Listener e)
 
     -- New state to evaluate next time.
-    , next : Msg e -> Context m -> List (Listener e) -> ( Model c m e, List c )
+    , next : Msg e -> Context m -> List (Listener e) -> ( Model c m e, List (LayerId, c) )
     }
 
 
@@ -177,6 +184,7 @@ type alias Listener event =
     { layerId : LayerId
     , requestId : RequestId
     , name : String
+    , uniqueName : Maybe String
     , sub : Sub (Msg event)
     }
 
@@ -186,6 +194,7 @@ wrapListener wrap listener1 =
     { layerId = listener1.layerId
     , requestId = listener1.requestId
     , name = listener1.name
+    , uniqueName = listener1.uniqueName
     , sub = Sub.map (mapMsg wrap) listener1.sub
     }
 
@@ -343,7 +352,7 @@ type Promise c m e a
 
 type alias PromiseEffect c m e a =
     { newContext : Context m
-    , cmds : List c
+    , cmds : List (LayerId, c)
     , addListeners : List (Listener e)
     , closedLayers : List LayerId
     , closedRequests : List RequestId
@@ -638,7 +647,7 @@ mapPromiseCmd f (Promise prom) =
                     prom context
             in
             { newContext = eff.newContext
-            , cmds = List.map f eff.cmds
+            , cmds = List.map (\(lid, c) -> (lid, f c)) eff.cmds
             , addListeners = eff.addListeners
             , closedLayers = eff.closedLayers
             , closedRequests = eff.closedRequests
@@ -795,8 +804,13 @@ push : (m -> List c) -> Promise c m e Void
 push f =
     Promise <|
         \context ->
+            let
+                (ThisLayerId thisLayerId) = context.thisLayerId
+            in
             { newContext = context
-            , cmds = f context.state
+            , cmds =
+                f context.state
+                    |> List.map (\c -> (thisLayerId, c))
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -1026,6 +1040,7 @@ listen { name, subscription, handler } =
                 [ { layerId = thisLayerId
                   , requestId = myRequestId
                   , name = name
+                  , uniqueName = Just name
                   , sub = subscription context.state |> Sub.map toListenerMsg
                   }
                 ]
@@ -1079,6 +1094,7 @@ portRequest o =
                 [ { layerId = thisLayerId
                   , requestId = myRequestId
                   , name = o.name
+                  , uniqueName = Nothing
                   , sub =
                         o.receiver
                             (\respValue ->
@@ -1100,9 +1116,11 @@ portRequest o =
             , closedLayers = []
             , closedRequests = []
             , cmds =
-                [ o.request
+                [ ( thisLayerId
+                  , o.request
                     context.state
                     { requestId = RequestId.toValue myRequestId }
+                  )
                 ]
             , handler = AwaitMsg nextPromise
             }
@@ -1152,19 +1170,22 @@ customRequest o =
                 [ { layerId = thisLayerId
                   , requestId = myRequestId
                   , name = o.name
+                  , uniqueName = Nothing
                   , sub = Sub.none
                   }
                 ]
             , closedLayers = []
             , closedRequests = []
             , cmds =
-                [ o.request
+                [ ( thisLayerId
+                  , o.request
                     (\a ->
                         ResponseMsg
                             { requestId = myRequestId
                             , event = o.wrap a
                             }
                     )
+                  )
                 ]
             , handler = AwaitMsg nextPromise
             }
@@ -1207,7 +1228,7 @@ layerEvent =
 init :
     memory
     -> Promise cmd memory event Void
-    -> ( Model cmd memory event, List cmd )
+    -> ( Model cmd memory event, List (LayerId, cmd) )
 init m prom =
     toModel (initContext m) [] prom
 
@@ -1221,7 +1242,7 @@ initContext memory =
     }
 
 
-toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List c )
+toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List (LayerId, c) )
 toModel context listeners (Promise prom) =
     let
         eff =
@@ -1266,7 +1287,7 @@ toModel context listeners (Promise prom) =
             )
 
 
-update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List cmd )
+update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List (LayerId, cmd) )
 update msg model =
     case model of
         EndOfProcess r ->
@@ -1322,12 +1343,12 @@ type TestModel c m e
 
 type alias TestConfig flags c m e =
     { view : m -> Html ()
-    , init : flags -> Url -> ( Model c m e, List c )
+    , init : flags -> Url -> ( Model c m e, List (LayerId, c) )
     }
 
 
 type alias TestContext c m e =
-    Dict SessionId ( Model c m e, List c )
+    Dict SessionId ( Model c m e, List (LayerId, c) )
 
 
 type alias SessionId =
@@ -1557,3 +1578,20 @@ cases sections =
                             context []
                                 :: markups
         }
+
+
+{-| -}
+type LayerQuery m m1 =
+    LayerQuery (LayerQuery_ m m1)
+
+
+type alias LayerQuery_ m m1 =
+    { get : Layer m -> List (Layer m1)
+    }
+
+runQuery : LayerQuery m m1 -> Model c m e -> List (Layer m1)
+runQuery (LayerQuery query) model =
+    layerState model
+        |> Maybe.map List.singleton
+        |> Maybe.withDefault []
+        |> List.concatMap query.get

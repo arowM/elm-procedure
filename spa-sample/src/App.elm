@@ -6,7 +6,7 @@ module App exposing
     , init
     , main
     , procedure
-    -- , scenario
+    , scenario
     )
 
 -- import Page.Users as PageUsers
@@ -21,7 +21,7 @@ import Mixin.Html as Html exposing (Html)
 import Page.Login as PageLogin
 import Page.Home as PageHome
 import Tepa exposing (Key, Layer, Msg, Void)
-import Tepa.Scenario as Scenario
+import Tepa.Scenario.LayerQuery as LayerQuery
 import Url exposing (Url)
 
 
@@ -378,75 +378,28 @@ runPageHomePromise pointer prom =
 
 -- Scenario
 
--- type alias Scenario =
---     Scenario.Scenario Command Memory Event
--- 
--- scenario : Scenario.Session ->
---     { user :
---         { comment : String -> Scenario
---         , setUrl : Url -> Scenario
---         }
---     , system :
---         { comment : String -> Scenario
---         }
---     , external :
---         {}
---     }
--- scenario session =
---     { user =
---         { comment = Scenario.userComment session
---         , setUrl = \url ->
---             Scenario.userEvent session
---                 ("Set URL: " ++ Url.toString url)
---                 (UrlChanged url)
---         }
---     , system =
---         { comment = Scenario.systemComment session
---         }
---     , external =
---         {}
---     }
--- 
--- 
--- page :
---     { login : Scenario.Page Command Memory Event PageLogin.Command PageLogin.Memory PageLogin.Event
---     , home : Scenario.Page Command Memory Event PageHome.Command PageHome.Memory PageHome.Event
---     }
--- page =
---     { login =
---         { unwrapCommand =
---                 \c ->
---                     case c of
---                         PageLoginCommand c1 ->
---                             Just c1
---                         _ ->
---                             Nothing
---         , get =
---                 \m ->
---                     case m.page of
---                         PageLogin (_, a) ->
---                             Just a
--- 
---                         _ ->
---                             Nothing
---         , wrapEvent = PageLoginEvent
---         }
---     , home =
---         { unwrapCommand =
---                 \c ->
---                     case c of
---                         PageHomeCommand c1 ->
---                             Just c1
---                         _ ->
---                             Nothing
---         , get =
---                 \m ->
---                     case m.page of
---                         PageHome (_, a) ->
---                             Just a
--- 
---                         _ ->
---                             Nothing
---         , wrapEvent = PageHomeEvent
---         }
---     }
+{-| -}
+type alias ScenarioSet flags =
+    { home : PageHome.ScenarioSet flags Command Memory Event
+    }
+
+
+{-| -}
+scenario : ScenarioSet flags
+scenario =
+    { home = PageHome.scenario
+        { querySelf = LayerQuery.self
+            |> LayerQuery.child
+                (\m ->
+                    case m.page of
+                        PageHome l -> Just l
+                        _ -> Nothing
+                )
+        , wrapEvent = PageHomeEvent
+        , unwrapCommand =
+            \c ->
+                case c of
+                    PageHomeCommand c1 -> Just c1
+                    _ -> Nothing
+        }
+    }

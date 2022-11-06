@@ -638,12 +638,15 @@ Suppose your application has a WebSocket message Listener named "WebSocket messa
         , Debug.todo "..."
         ]
 
+If no Layers found for the query, it does nothing and just passes the test.
+
 -}
 listenerEvent :
     Session
     -> String
     ->
-        { target : String
+        { target : LayerQuery m m1
+        , listenerName : String
         , event : event
         }
     -> Scenario flags c m event
@@ -661,32 +664,42 @@ listenerEvent (Session session) description o =
                     Just ( model, _ ) ->
                         case model of
                             Core.OnGoing onGoing ->
-                                Dict.insert session.uniqueName
-                                    (onGoing.listeners
-                                        |> List.filterMap
-                                            (\listener ->
-                                                if listener.uniqueName == Just o.target then
-                                                    Just <|
-                                                        ListenerMsg
-                                                            { requestId = listener.requestId
-                                                            , event = o.event
-                                                            }
+                                case Core.runQuery o.target model of
+                                    [] ->
+                                        Core.OnGoingTest context
+                                            |> SeqTest.pass
 
-                                                else
-                                                    Nothing
+                                    layer1s ->
+                                        Dict.insert session.uniqueName
+                                            (List.concatMap
+                                                (\(Layer thisLid _) ->
+                                                    onGoing.listeners
+                                                        |> List.filterMap
+                                                            (\listener ->
+                                                                if listener.layerId == thisLid && listener.uniqueName == Just o.listenerName then
+                                                                    Just <|
+                                                                        ListenerMsg
+                                                                            { requestId = listener.requestId
+                                                                            , event = o.event
+                                                                            }
+
+                                                                else
+                                                                    Nothing
+                                                            )
+                                                )
+                                                layer1s
+                                                |> applyMsgs model
                                             )
-                                        |> applyMsgs (OnGoing onGoing)
-                                    )
-                                    context
-                                    |> Core.OnGoingTest
-                                    |> SeqTest.pass
+                                            context
+                                            |> Core.OnGoingTest
+                                            |> SeqTest.pass
 
                             EndOfProcess _ ->
                                 SeqTest.pass (Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
-                    ("[" ++ session.uniqueName ++ "] " ++ o.target)
+                    ("[" ++ session.uniqueName ++ "] " ++ o.listenerName)
                     description
         }
 

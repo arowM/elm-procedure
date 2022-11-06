@@ -11,7 +11,7 @@ module Internal.Core exposing
     , andThenPromise
     , syncPromise
     , liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
-    , portRequest, customRequest
+    , portRequest, customRequest, anyRequest
     , layerEvent
     , Layer(..), Pointer(..), isPointedBy
     , layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
@@ -61,7 +61,7 @@ module Internal.Core exposing
 @docs andThenPromise
 @docs syncPromise
 @docs liftPromiseMemory, liftPromiseEvent, mapPromiseCmd
-@docs portRequest, customRequest
+@docs portRequest, customRequest, anyRequest
 @docs layerEvent
 @docs Layer, Pointer, isPointedBy
 @docs layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
@@ -116,6 +116,7 @@ import Html.Attributes as Attributes
 import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.Markup as Markup
 import Internal.RequestId as RequestId exposing (RequestId)
+import Internal.ResponseType as ResponseType exposing (ResponseBody, ResponseType)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -210,9 +211,13 @@ type Msg event
         { layerId : LayerId
         , event : event
         }
-    | ResponseMsg
+    | AnyResponseMsg
         { requestId : RequestId
         , event : event
+        }
+    | CustomResponseMsg
+        { requestId : RequestId
+        , response : ResponseBody
         }
     | PortResponseMsg
         { response : Value
@@ -244,10 +249,16 @@ mapMsg f msg1 =
                 , event = f r.event
                 }
 
-        ResponseMsg r ->
-            ResponseMsg
+        AnyResponseMsg r ->
+            AnyResponseMsg
                 { requestId = r.requestId
                 , event = f r.event
+                }
+
+        CustomResponseMsg r ->
+            CustomResponseMsg
+                { requestId = r.requestId
+                , response = r.response
                 }
 
         PortResponseMsg r ->
@@ -284,16 +295,22 @@ unwrapMsg f msg1 =
                         , event = e1
                         }
 
-        ResponseMsg r ->
+        AnyResponseMsg r ->
             case f r.event of
                 Nothing ->
                     NoOp
 
                 Just e1 ->
-                    ResponseMsg
+                    AnyResponseMsg
                         { requestId = r.requestId
                         , event = e1
                         }
+
+        CustomResponseMsg r ->
+            CustomResponseMsg
+                { requestId = r.requestId
+                , response = r.response
+                }
 
         PortResponseMsg r ->
             PortResponseMsg
@@ -1132,8 +1149,7 @@ portRequest o =
 customRequest :
     { name : String
     , request : (a -> Msg e) -> c
-    , wrap : a -> e
-    , unwrap : e -> Maybe a
+    , responseType : ResponseType a
     }
     -> Promise c m e a
 customRequest o =
@@ -1149,7 +1165,73 @@ customRequest o =
                 nextPromise : Msg e -> m -> Promise c m e a
                 nextPromise msg _ =
                     case msg of
-                        ResponseMsg respMsg ->
+                        CustomResponseMsg respMsg ->
+                            if respMsg.requestId == myRequestId then
+                                case ResponseType.decode o.responseType respMsg.response of
+                                    Nothing ->
+                                        justAwaitPromise nextPromise
+
+                                    Just a ->
+                                        succeedPromise a
+                                            |> closeRequest myRequestId
+
+                            else
+                                justAwaitPromise nextPromise
+
+                        _ ->
+                            justAwaitPromise nextPromise
+            in
+            { newContext =
+                { context
+                    | nextRequestId = RequestId.inc context.nextRequestId
+                }
+            , addListeners =
+                [ { layerId = thisLayerId
+                  , requestId = myRequestId
+                  , name = o.name
+                  , uniqueName = Nothing
+                  , sub = Sub.none
+                  }
+                ]
+            , closedLayers = []
+            , closedRequests = []
+            , cmds =
+                [ ( thisLayerId
+                  , o.request
+                        (\a ->
+                            CustomResponseMsg
+                                { requestId = myRequestId
+                                , response = ResponseType.encode o.responseType a
+                                }
+                        )
+                  )
+                ]
+            , handler = AwaitMsg nextPromise
+            }
+
+
+{-| -}
+anyRequest :
+    { name : String
+    , request : (a -> Msg e) -> c
+    , wrap : a -> e
+    , unwrap : e -> Maybe a
+    }
+    -> Promise c m e a
+anyRequest o =
+    Promise <|
+        \context ->
+            let
+                myRequestId =
+                    context.nextRequestId
+
+                (ThisLayerId thisLayerId) =
+                    context.thisLayerId
+
+                nextPromise : Msg e -> m -> Promise c m e a
+                nextPromise msg _ =
+                    case msg of
+                        AnyResponseMsg respMsg ->
                             if respMsg.requestId == myRequestId then
                                 case o.unwrap respMsg.event of
                                     Nothing ->
@@ -1183,7 +1265,7 @@ customRequest o =
                 [ ( thisLayerId
                   , o.request
                         (\a ->
-                            ResponseMsg
+                            AnyResponseMsg
                                 { requestId = myRequestId
                                 , event = o.wrap a
                                 }

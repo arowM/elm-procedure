@@ -50,7 +50,6 @@ type Event
     = ToastEvent Toast.Event
     | ChangeEditAccountFormAccountId String
     | ClickSubmitEditAccount
-    | ReceiveEditAccountResp (Result Http.Error EditAccount.Response)
 
 
 
@@ -168,7 +167,7 @@ editAccountFormView memory =
 {-| -}
 type Command
     = ToastCommand Toast.Command
-    | RequestEditAccount EditAccount.EditAccount (Result Http.Error EditAccount.Response -> Msg Event)
+    | RequestEditAccount EditAccount.EditAccount (Result Http.Error Value -> Msg Event)
 
 
 {-| -}
@@ -336,18 +335,10 @@ submitAccountProcedure bucket =
 
 requestEditAccount : EditAccount.EditAccount -> Promise (Result Http.Error EditAccount.Response)
 requestEditAccount editAccount =
-    Tepa.customRequest
+    Tepa.httpRequest
         { name = "requestEditAccount"
         , request = RequestEditAccount editAccount
-        , wrap = ReceiveEditAccountResp
-        , unwrap =
-            \e ->
-                case e of
-                    ReceiveEditAccountResp a ->
-                        Just a
-
-                    _ ->
-                        Nothing
+        , decoder = EditAccount.responseDecoder
         }
 
 
@@ -436,13 +427,7 @@ receiveEditAccountResp props session res =
             \cmd ->
                 case props.unwrapCommand cmd of
                     Just (RequestEditAccount _ toMsg) ->
-                        res
-                            |> Result.andThen
-                                (EditAccount.decodeResponse
-                                    >> Result.mapError
-                                        (\_ -> Http.BadBody "Unexpected response")
-                                )
-                            |> toMsg
+                        toMsg res
                             |> Tepa.mapMsg props.wrapEvent
                             |> Just
 
@@ -470,7 +455,6 @@ expectEditAccountFormShowNoErrors _ session =
 
 
 -- Helper functions
-
 
 
 localClass : String -> Mixin msg

@@ -12,17 +12,20 @@ module App exposing
 -- import Page.Users as PageUsers
 
 import App.Route as Route
-import App.Session as Session exposing (Session)
+import App.Session exposing (Session)
 import Browser exposing (Document)
 import Browser.Navigation as Nav exposing (Key)
 import Http
-import Json.Encode exposing (Value)
+import Json.Decode as JD exposing (Decoder)
+import Json.Decode.Pipeline as JDP
+import Json.Encode as JE exposing (Value)
 import Mixin.Html as Html exposing (Html)
 import Page.Home as PageHome
 import Page.Login as PageLogin
 import Tepa exposing (Key, Layer, Msg, Void)
 import Tepa.Scenario.LayerQuery as LayerQuery
 import Url exposing (Url)
+import Url.Builder as Url
 
 
 
@@ -126,8 +129,10 @@ type Event
     | UrlChanged Url
     | PageLoginEvent PageLogin.Event
     | PageHomeEvent PageHome.Event
-      -- | PageUsersEvent PageUsers.Event
-    | ReceiveSession (Result Http.Error Session)
+
+
+
+-- | PageUsersEvent PageUsers.Event
 
 
 {-| Abstructed Commands, which enables dependency injection.
@@ -136,7 +141,7 @@ type Command
     = PageLoginCommand PageLogin.Command
     | PageHomeCommand PageHome.Command
       -- | PageUsersCommand PageUsers.Command
-    | FetchSession (Result Http.Error Session -> Msg Event)
+    | FetchSession (Result Http.Error Value -> Msg Event)
     | PushUrl Key String
     | LoadPage String
 
@@ -155,7 +160,7 @@ runCommand cmd =
                 |> Cmd.map (Tepa.mapMsg PageHomeEvent)
 
         FetchSession toMsg ->
-            Session.fetch toMsg
+            fetchSession toMsg
 
         PushUrl key url ->
             Tepa.runNavCmd
@@ -164,6 +169,43 @@ runCommand cmd =
 
         LoadPage url ->
             Nav.load url
+
+
+{-| Fetch user information from the server.
+-}
+fetchSession : (Result Http.Error Value -> msg) -> Cmd msg
+fetchSession toMsg =
+    Http.post
+        { url =
+            Url.absolute
+                [ "api"
+                , "profile"
+                ]
+                []
+        , body =
+            Http.jsonBody <|
+                JE.object
+                    []
+        , expect =
+            Http.expectJson toMsg JD.value
+        }
+
+
+type alias FetchSessionResponse =
+    { session : Session
+    }
+
+
+fetchSessionResponseDecoder : Decoder FetchSessionResponse
+fetchSessionResponseDecoder =
+    let
+        sessionDecoder : JD.Decoder Session
+        sessionDecoder =
+            JD.succeed Session
+                |> JDP.required "id" JD.string
+    in
+    JD.succeed FetchSessionResponse
+        |> JDP.required "profile" sessionDecoder
 
 
 {-| -}
@@ -295,7 +337,7 @@ pageControllProcedure url key msession =
                                                 ]
                                         )
 
-                            Ok session ->
+                            Ok { session } ->
                                 Tepa.lazy <|
                                     \_ ->
                                         pageControllProcedure url key (Just session)
@@ -339,20 +381,12 @@ pageControllProcedure url key msession =
             Debug.todo ""
 
 
-requestSession : Promise (Result Http.Error Session)
+requestSession : Promise (Result Http.Error FetchSessionResponse)
 requestSession =
-    Tepa.customRequest
+    Tepa.httpRequest
         { name = "requestSession"
         , request = FetchSession
-        , wrap = ReceiveSession
-        , unwrap =
-            \e ->
-                case e of
-                    ReceiveSession a ->
-                        Just a
-
-                    _ ->
-                        Nothing
+        , decoder = fetchSessionResponseDecoder
         }
 
 

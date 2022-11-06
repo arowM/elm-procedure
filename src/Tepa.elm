@@ -17,7 +17,9 @@ module Tepa exposing
     , succeed
     , currentState, layerEvent
     , portRequest
+    , httpRequest
     , customRequest
+    , anyRequest
     , withLayerEvent
     , Layer, isPointedBy
     , putMaybeLayer, putVariantLayer, newListItemLayer, newLayer
@@ -85,7 +87,9 @@ Promises that returns `Void` are called as a _Procedure_.
 @docs succeed
 @docs currentState, layerEvent
 @docs portRequest
+@docs httpRequest
 @docs customRequest
+@docs anyRequest
 
 
 # Helper Promises
@@ -132,15 +136,18 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 import Browser
 import Browser.Navigation as Nav
 import Html exposing (Attribute, Html)
+import Http
 import Internal.Core as Core
     exposing
         ( Msg(..)
         , Promise(..)
         )
 import Internal.RequestId exposing (RequestId)
-import Json.Decode exposing (Decoder)
+import Internal.ResponseType as ResponseType
+import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
+import Tepa.ResponseType exposing (ResponseType)
 import Url exposing (Url)
 
 
@@ -576,15 +583,54 @@ portRequest =
 
 
 {-| -}
+httpRequest :
+    { name : String
+    , request : (Result Http.Error Value -> Msg e) -> c
+    , decoder : Decoder a
+    }
+    -> Promise c m e (Result Http.Error a)
+httpRequest o =
+    customRequest
+        { name = o.name
+        , responseType =
+            ResponseType.result
+                ResponseType.httpError
+                ResponseType.value
+        , request = o.request
+        }
+        |> map
+            (Result.andThen <|
+                \v ->
+                    case JD.decodeValue o.decoder v of
+                        Ok a ->
+                            Ok a
+
+                        Err err ->
+                            Err <| Http.BadBody <| JD.errorToString err
+            )
+
+
+{-| -}
 customRequest :
+    { name : String
+    , request : (a -> Msg e) -> c
+    , responseType : ResponseType a
+    }
+    -> Promise c m e a
+customRequest =
+    Core.customRequest
+
+
+{-| -}
+anyRequest :
     { name : String
     , request : (a -> Msg e) -> c
     , wrap : a -> e
     , unwrap : e -> Maybe a
     }
     -> Promise c m e a
-customRequest =
-    Core.customRequest
+anyRequest =
+    Core.anyRequest
 
 
 

@@ -52,6 +52,7 @@ import Mixin.Html as Html exposing (Html)
 import Process
 import Task
 import Tepa exposing (Layer, Msg, Promise, Void)
+import Tepa.ResponseType as ResponseType
 import Tepa.Scenario as Scenario exposing (Scenario)
 import Tepa.Scenario.LayerQuery as LayerQuery exposing (LayerQuery)
 import Test.Html.Query as HtmlQuery
@@ -120,7 +121,6 @@ init =
 {-| -}
 type Event
     = CloseToastItem
-    | VoidResponse ()
 
 
 {-| -}
@@ -222,16 +222,12 @@ toastItemProcedure =
                     CloseToastItem ->
                         [ Tepa.none
                         ]
-
-                    _ ->
-                        []
             )
             |> Tepa.andRace
                 (Tepa.customRequest
                     { name = "Set time out"
                     , request = SetTimeoutOnItem
-                    , wrap = VoidResponse
-                    , unwrap = \_ -> Just ()
+                    , responseType = ResponseType.unit
                     }
                     |> Tepa.void
                 )
@@ -240,8 +236,7 @@ toastItemProcedure =
         , Tepa.customRequest
             { name = "fade out item"
             , request = FadeOutItem
-            , wrap = VoidResponse
-            , unwrap = \_ -> Just ()
+            , responseType = ResponseType.unit
             }
             |> Tepa.void
         ]

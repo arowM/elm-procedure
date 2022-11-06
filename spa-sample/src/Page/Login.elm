@@ -13,7 +13,6 @@ module Page.Login exposing
 
 import App.Session exposing (Session)
 import Browser.Navigation as Nav
-import Expect.Builder as ExpBuilder
 import Http
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -21,7 +20,6 @@ import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
 import Tepa exposing (Key, Layer, Msg, Void)
-import Tepa.Scenario as Scenario
 import Url exposing (Url)
 import Widget.Toast as Toast
 
@@ -49,7 +47,6 @@ type Event
     | ChangeLoginId String
     | ChangeLoginPass String
     | ClickSubmitLogin
-    | ReceiveLoginResp (Result Http.Error Login.Response)
 
 
 
@@ -185,7 +182,7 @@ loginFormView memory =
 {-| -}
 type Command
     = ToastCommand Toast.Command
-    | RequestLogin Login.Login (Result Http.Error Login.Response -> Msg Event)
+    | RequestLogin Login.Login (Result Http.Error Value -> Msg Event)
     | PushUrl Key String
 
 
@@ -365,18 +362,10 @@ submitLoginProcedure bucket =
 
 requestLogin : Login.Login -> Promise (Result Http.Error Login.Response)
 requestLogin login =
-    Tepa.customRequest
+    Tepa.httpRequest
         { name = "requestLogin"
         , request = RequestLogin login
-        , wrap = ReceiveLoginResp
-        , unwrap =
-            \e ->
-                case e of
-                    ReceiveLoginResp a ->
-                        Just a
-
-                    _ ->
-                        Nothing
+        , decoder = Login.responseDecoder
         }
 
 

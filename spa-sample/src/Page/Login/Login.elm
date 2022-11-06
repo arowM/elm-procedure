@@ -3,7 +3,7 @@ module Page.Login.Login exposing
     , Login
     , toValue
     , Response
-    , decodeResponse
+    , responseDecoder
     , Form
     , initForm
     , FormError(..)
@@ -21,7 +21,7 @@ module Page.Login.Login exposing
 @docs Login
 @docs toValue
 @docs Response
-@docs decodeResponse
+@docs responseDecoder
 
 
 # Form decoding
@@ -42,7 +42,7 @@ import Form.Decoder as FD
 import Http
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
-import Json.Encode as JE
+import Json.Encode as JE exposing (Value)
 import Url.Builder as Url
 
 
@@ -66,13 +66,8 @@ toValue (Login login) =
 
 
 {-| -}
-decodeResponse : JE.Value -> Result JD.Error Response
-decodeResponse =
-    JD.decodeValue decoder
-
-
-decoder : JD.Decoder Response
-decoder =
+responseDecoder : JD.Decoder Response
+responseDecoder =
     JD.succeed Response
         |> JDP.required "profile" sessionDecoder
 
@@ -98,7 +93,7 @@ type alias Response =
 
 {-| Request server for login.
 -}
-request : Login -> (Result Http.Error Response -> msg) -> Cmd msg
+request : Login -> (Result Http.Error Value -> msg) -> Cmd msg
 request login toMsg =
     Http.post
         { url =
@@ -110,7 +105,7 @@ request login toMsg =
         , body =
             Http.jsonBody <| toValue login
         , expect =
-            Http.expectJson toMsg decoder
+            Http.expectJson toMsg JD.value
         }
 
 

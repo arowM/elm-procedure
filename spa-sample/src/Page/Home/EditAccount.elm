@@ -3,7 +3,7 @@ module Page.Home.EditAccount exposing
     , EditAccount
     , Response
     , toValue
-    , decodeResponse
+    , responseDecoder
     , Form
     , initForm
     , FormError(..)
@@ -21,7 +21,7 @@ module Page.Home.EditAccount exposing
 @docs EditAccount
 @docs Response
 @docs toValue
-@docs decodeResponse
+@docs responseDecoder
 
 
 # Form decoding
@@ -70,11 +70,6 @@ toValue (EditAccount editAccount) =
 
 
 {-| -}
-decodeResponse : Value -> Result JD.Error Response
-decodeResponse =
-    JD.decodeValue responseDecoder
-
-
 responseDecoder : JD.Decoder Response
 responseDecoder =
     JD.succeed Response
@@ -96,7 +91,7 @@ type alias Response =
 
 {-| Request server for login.
 -}
-request : EditAccount -> (Result Http.Error Response -> msg) -> Cmd msg
+request : EditAccount -> (Result Http.Error Value -> msg) -> Cmd msg
 request editAccount toMsg =
     Http.post
         { url =
@@ -108,7 +103,7 @@ request editAccount toMsg =
         , body =
             Http.jsonBody <| toValue editAccount
         , expect =
-            Http.expectJson toMsg responseDecoder
+            Http.expectJson toMsg JD.value
         }
 
 

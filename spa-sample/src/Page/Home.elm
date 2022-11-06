@@ -459,10 +459,10 @@ expectEditAccountFormShowNoErrors _ session =
             \html ->
                 Query.fromHtml html
                     |> Query.find
-                        [ Selector.class "editAccountForm"
+                        [ localClassSelector "editAccountForm"
                         ]
                     |> Query.findAll
-                        [ Selector.class "editAccountForm_errorField_error"
+                        [ localClassSelector "editAccountForm_errorField_error"
                         ]
                     |> Query.count (Expect.equal 0)
         }
@@ -472,6 +472,17 @@ expectEditAccountFormShowNoErrors _ session =
 -- Helper functions
 
 
+
 localClass : String -> Mixin msg
 localClass name =
-    Mixin.class ("page_home--" ++ name)
+    Mixin.class (classPrefix ++ name)
+
+
+localClassSelector : String -> Selector.Selector
+localClassSelector name =
+    Selector.class (classPrefix ++ name)
+
+
+classPrefix : String
+classPrefix =
+    "page_home--"

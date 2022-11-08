@@ -3,10 +3,12 @@ module App exposing
     , Event
     , Memory
     , Page(..)
+    , ScenarioSet
     , init
     , main
     , procedure
     , scenario
+    , view
     )
 
 -- import Page.Users as PageUsers
@@ -23,6 +25,7 @@ import Mixin.Html as Html exposing (Html)
 import Page.Home as PageHome
 import Page.Login as PageLogin
 import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa.Scenario as Scenario
 import Tepa.Scenario.LayerQuery as LayerQuery
 import Url exposing (Url)
 import Url.Builder as Url
@@ -436,14 +439,39 @@ runPageHomePromise pointer prom =
 
 {-| -}
 type alias ScenarioSet flags =
-    { home : PageHome.ScenarioSet flags Command Memory Event
+    { login : PageLogin.ScenarioSet flags Command Memory Event
+    , home : PageHome.ScenarioSet flags Command Memory Event
     }
 
 
 {-| -}
-scenario : ScenarioSet flags
-scenario =
-    { home =
+scenario : Scenario.Session -> ScenarioSet flags
+scenario session =
+    { login =
+        PageLogin.scenario
+            { querySelf =
+                LayerQuery.self
+                    |> LayerQuery.child
+                        (\m ->
+                            case m.page of
+                                PageLogin l ->
+                                    Just l
+
+                                _ ->
+                                    Nothing
+                        )
+            , wrapEvent = PageLoginEvent
+            , unwrapCommand =
+                \c ->
+                    case c of
+                        PageLoginCommand c1 ->
+                            Just c1
+
+                        _ ->
+                            Nothing
+            , session = session
+            }
+    , home =
         PageHome.scenario
             { querySelf =
                 LayerQuery.self
@@ -465,5 +493,6 @@ scenario =
 
                         _ ->
                             Nothing
+            , session = session
             }
     }

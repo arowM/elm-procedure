@@ -345,15 +345,15 @@ scenario props =
     , expectNoWarningMessages =
         expectNoMessages
             ("toast_item-" ++ messageTypeCode WarningMessage)
-            "No toast popup warning messages now."
+            "No toast popup warning messages at this point."
     , expectNoErrorMessages =
         expectNoMessages
             ("toast_item-" ++ messageTypeCode ErrorMessage)
-            "No toast popup error messages now."
+            "No toast popup error messages at this point."
     , expectNoMessages =
         expectNoMessages
             "toast_item"
-            "No toast popup messages now."
+            "No toast popup messages at this point."
     , closeWarningsByMessage =
         closeByMessage props
             WarningMessage
@@ -371,8 +371,8 @@ expectMessage messageType descPrefix session str =
     Scenario.expectAppView session
         (descPrefix ++ str)
         { expectation =
-            \html ->
-                HtmlQuery.fromHtml html
+            \{ body } ->
+                HtmlQuery.fromHtml (Html.div [] body)
                     |> HtmlQuery.findAll
                         [ localClassSelector <| "toast_item-" ++ messageTypeCode messageType
                         ]
@@ -391,8 +391,8 @@ expectNoMessages itemClassname desc session =
     Scenario.expectAppView session
         desc
         { expectation =
-            \html ->
-                HtmlQuery.fromHtml html
+            \{ body } ->
+                HtmlQuery.fromHtml (Html.div [] body)
                     |> HtmlQuery.findAll
                         [ localClassSelector itemClassname
                         ]

@@ -1,6 +1,7 @@
 module Tepa.ResponseType exposing
     ( ResponseType
     , string, int, float, bool, unit, value, maybe, result, tuple, list
+    , httpError
     , RecordType, record, field, fromRecordType
     )
 
@@ -17,12 +18,18 @@ module Tepa.ResponseType exposing
 @docs string, int, float, bool, unit, value, maybe, result, tuple, list
 
 
+# Common Types
+
+@docs httpError
+
+
 # Record Type
 
 @docs RecordType, record, field, fromRecordType
 
 -}
 
+import Http
 import Internal.ResponseType as Internal
 import Json.Encode exposing (Value)
 
@@ -98,6 +105,16 @@ tuple =
 list : ResponseType a -> ResponseType (List a)
 list =
     Internal.list
+
+
+
+-- # Common Types
+
+
+{-| -}
+httpError : ResponseType Http.Error
+httpError =
+    Internal.httpError
 
 
 

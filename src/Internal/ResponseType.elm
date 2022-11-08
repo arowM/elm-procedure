@@ -3,8 +3,8 @@ module Internal.ResponseType exposing
     , ResponseBody
     , encode, decode
     , string, int, float, bool, unit, value, maybe, result, tuple, list
-    , RecordType, record, field, fromRecordType
     , httpError
+    , RecordType, record, field, fromRecordType
     )
 
 {-|
@@ -19,14 +19,14 @@ module Internal.ResponseType exposing
 @docs string, int, float, bool, unit, value, maybe, result, tuple, list
 
 
+# Common Types
+
+@docs httpError
+
+
 # Record Type
 
 @docs RecordType, record, field, fromRecordType
-
-
-# Hidden
-
-@docs httpError
 
 -}
 

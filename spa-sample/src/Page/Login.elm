@@ -2,17 +2,19 @@ module Page.Login exposing
     ( Command
     , Event
     , Memory
+    , ScenarioSet
     , currentSession
     , init
     , procedure
-    ,  runCommand
-       -- , scenario
-
+    , runCommand
+    , scenario
     , view
     )
 
 import App.Session exposing (Session)
 import Browser.Navigation as Nav
+import Expect
+import Expect.Builder
 import Http
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -20,6 +22,10 @@ import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
 import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa.Scenario as Scenario exposing (Scenario)
+import Tepa.Scenario.LayerQuery exposing (LayerQuery)
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 import Url exposing (Url)
 import Widget.Toast as Toast
 
@@ -400,80 +406,150 @@ runToastPromise pointer prom =
 
 
 -- Scenario
--- type alias Scenario =
---     Scenario.Scenario Command Memory Event
---
---
--- scenario :
---     Scenario.Session
---     ->
---         { user :
---             { comment : String -> Scenario
---             , changeLoginId : String -> Scenario
---             , changePass : String -> Scenario
---             , clickSubmitLogin : Scenario
---             }
---         , system :
---             { comment : String -> Scenario
---             , requestLogin : Value -> Scenario
---             }
---         , external :
---             { backend :
---                 { comment : String -> Scenario
---                 , respondToLoginRequest : Result Http.Error Login.Response -> Scenario
---                 }
---             }
---         }
--- scenario session =
---     { user =
---         { comment = Scenario.userComment session
---         , changeLoginId =
---             \str ->
---                 Scenario.userEvent session
---                     ("Type \"" ++ str ++ "\" for Account ID field")
---                     (ChangeLoginId str)
---         , changePass =
---             \str ->
---                 Scenario.userEvent session
---                     ("Type \"" ++ str ++ "\" for Password field")
---                     (ChangeLoginPass str)
---         , clickSubmitLogin =
---             Scenario.userEvent session
---                 "Click \"Login\" submit button"
---                 ClickSubmitLogin
---         }
---     , system =
---         { comment = Scenario.systemComment session
---         , requestLogin =
---             \json ->
---                 Scenario.systemCommand session
---                     "Request login to server"
---                     (ExpBuilder.custom <| \command ->
---                         case command of
---                             RequestLogin _ login ->
---                                 if Login.toValue login == json then
---                                     ExpBuilder.pass
---                                 else
---                                     ExpBuilder.fail "thought the request body is equal to the expected JSON."
---                             _ ->
---                                 ExpBuilder.fail "thought the command is `RequestLogin`."
---                     )
---         }
---     , external =
---         { backend =
---             { comment = Scenario.externalComment "backend" session
---             , respondToLoginRequest =
---                 \resp ->
---                     Scenario.externalEvent "backend"
---                         session
---                         "Respond to login request"
---                         (ReceiveLoginResp resp)
---             }
---         }
---     }
+
+
+{-| -}
+type alias ScenarioSet flags c m e =
+    { changeLoginId : String -> Scenario flags c m e
+    , changeLoginPass : String -> Scenario flags c m e
+    , clickSubmitLogin : Scenario flags c m e
+    , recieveLoginResp : Result Http.Error Value -> Scenario flags c m e
+    , expectAvailable : Scenario flags c m e
+    , expectLoginFormShowNoErrors : Scenario flags c m e
+    , expectLoginFormShowError : String -> Scenario flags c m e
+    }
+
+
+type alias ScenarioProps c m e =
+    { querySelf : LayerQuery m Memory
+    , wrapEvent : Event -> e
+    , unwrapCommand : c -> Maybe Command
+    , session : Scenario.Session
+    }
+
+
+{-| -}
+scenario : ScenarioProps c m e -> ScenarioSet flags c m e
+scenario props =
+    { changeLoginId = changeLoginId props
+    , changeLoginPass = changeLoginPass props
+    , clickSubmitLogin = clickSubmitLogin props
+    , recieveLoginResp = recieveLoginResp props
+    , expectAvailable = expectAvailable props
+    , expectLoginFormShowNoErrors = expectLoginFormShowNoErrors props
+    , expectLoginFormShowError = expectLoginFormShowError props
+    }
+
+
+changeLoginId : ScenarioProps c m e -> String -> Scenario flags c m e
+changeLoginId props str =
+    Scenario.userEvent props.session
+        ("Type \"" ++ str ++ "\" for Login ID field")
+        { target = props.querySelf
+        , event =
+            ChangeLoginId str
+                |> props.wrapEvent
+        }
+
+
+changeLoginPass : ScenarioProps c m e -> String -> Scenario flags c m e
+changeLoginPass props str =
+    Scenario.userEvent props.session
+        ("Type \"" ++ str ++ "\" for Login Password field")
+        { target = props.querySelf
+        , event =
+            ChangeLoginPass str
+                |> props.wrapEvent
+        }
+
+
+clickSubmitLogin : ScenarioProps c m e -> Scenario flags c m e
+clickSubmitLogin props =
+    Scenario.userEvent props.session
+        "Click \"Login\" button."
+        { target = props.querySelf
+        , event =
+            ClickSubmitLogin
+                |> props.wrapEvent
+        }
+
+
+recieveLoginResp : ScenarioProps c m e -> Result Http.Error Value -> Scenario flags c m e
+recieveLoginResp props res =
+    Scenario.customResponse props.session
+        "Backend responds to the login request."
+        { target = props.querySelf
+        , response =
+            \cmd ->
+                case props.unwrapCommand cmd of
+                    Just (RequestLogin _ toMsg) ->
+                        toMsg res
+                            |> Tepa.mapMsg props.wrapEvent
+                            |> Just
+
+                    _ ->
+                        Nothing
+        }
+
+
+expectLoginFormShowNoErrors : ScenarioProps c m e -> Scenario flags c m e
+expectLoginFormShowNoErrors props =
+    Scenario.expectAppView props.session
+        "The login form shows no errors at this point."
+        { expectation =
+            \{ body } ->
+                Query.fromHtml (Html.div [] body)
+                    |> Query.find
+                        [ localClassSelector "loginForm"
+                        ]
+                    |> Query.findAll
+                        [ localClassSelector "loginForm_errorField_error"
+                        ]
+                    |> Query.count (Expect.equal 0)
+        }
+
+
+expectAvailable : ScenarioProps c m e -> Scenario flags c m e
+expectAvailable props =
+    Scenario.expectMemory props.session
+        "The app shows login page."
+        { target = props.querySelf
+        , expectation = Expect.Builder.pass
+        }
+
+
+expectLoginFormShowError : ScenarioProps c m e -> String -> Scenario flags c m e
+expectLoginFormShowError props str =
+    Scenario.expectAppView props.session
+        ("The login form shows an error: " ++ str)
+        { expectation =
+            \{ body } ->
+                Query.fromHtml (Html.div [] body)
+                    |> Query.find
+                        [ localClassSelector "loginForm"
+                        ]
+                    |> Query.findAll
+                        [ localClassSelector "loginForm_errorField_error"
+                        , Selector.text str
+                        ]
+                    |> Query.count (Expect.greaterThan 0)
+        }
+
+
+
 -- Helper functions
 
 
 localClass : String -> Mixin msg
 localClass name =
-    Mixin.class ("page_login--" ++ name)
+    Mixin.class (classPrefix ++ name)
+
+
+localClassSelector : String -> Selector.Selector
+localClassSelector name =
+    Selector.class (classPrefix ++ name)
+
+
+classPrefix : String
+classPrefix =
+    "page_login--"

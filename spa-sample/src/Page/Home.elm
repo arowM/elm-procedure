@@ -14,6 +14,7 @@ module Page.Home exposing
 import App.Route as Route
 import App.Session exposing (Session)
 import Expect
+import Expect.Builder
 import Http
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
@@ -372,10 +373,11 @@ runToastPromise pointer prom =
 
 {-| -}
 type alias ScenarioSet flags c m e =
-    { changeEditAccountFormAccountId : Scenario.Session -> String -> Scenario flags c m e
-    , clickSubmitEditAccount : Scenario.Session -> Scenario flags c m e
-    , receiveEditAccountResp : Scenario.Session -> Result Http.Error Value -> Scenario flags c m e
-    , expectEditAccountFormShowNoErrors : Scenario.Session -> Scenario flags c m e
+    { changeEditAccountFormAccountId : String -> Scenario flags c m e
+    , clickSubmitEditAccount : Scenario flags c m e
+    , receiveEditAccountResp : Result Http.Error Value -> Scenario flags c m e
+    , expectAvailable : Scenario flags c m e
+    , expectEditAccountFormShowNoErrors : Scenario flags c m e
     }
 
 
@@ -383,6 +385,7 @@ type alias ScenarioProps c m e =
     { querySelf : LayerQuery m Memory
     , wrapEvent : Event -> e
     , unwrapCommand : c -> Maybe Command
+    , session : Scenario.Session
     }
 
 
@@ -392,13 +395,14 @@ scenario props =
     { changeEditAccountFormAccountId = changeEditAccountFormAccountId props
     , clickSubmitEditAccount = clickSubmitEditAccount props
     , receiveEditAccountResp = receiveEditAccountResp props
+    , expectAvailable = expectAvailable props
     , expectEditAccountFormShowNoErrors = expectEditAccountFormShowNoErrors props
     }
 
 
-changeEditAccountFormAccountId : ScenarioProps c m e -> Scenario.Session -> String -> Scenario flags c m e
-changeEditAccountFormAccountId props session str =
-    Scenario.userEvent session
+changeEditAccountFormAccountId : ScenarioProps c m e -> String -> Scenario flags c m e
+changeEditAccountFormAccountId props str =
+    Scenario.userEvent props.session
         ("Type \"" ++ str ++ "\" for Account ID field")
         { target = props.querySelf
         , event =
@@ -407,10 +411,10 @@ changeEditAccountFormAccountId props session str =
         }
 
 
-clickSubmitEditAccount : ScenarioProps c m e -> Scenario.Session -> Scenario flags c m e
-clickSubmitEditAccount props session =
-    Scenario.userEvent session
-        "Click submit button for edit account form."
+clickSubmitEditAccount : ScenarioProps c m e -> Scenario flags c m e
+clickSubmitEditAccount props =
+    Scenario.userEvent props.session
+        "Click \"Save\" button for edit account form."
         { target = props.querySelf
         , event =
             ClickSubmitEditAccount
@@ -418,9 +422,9 @@ clickSubmitEditAccount props session =
         }
 
 
-receiveEditAccountResp : ScenarioProps c m e -> Scenario.Session -> Result Http.Error Value -> Scenario flags c m e
-receiveEditAccountResp props session res =
-    Scenario.customResponse session
+receiveEditAccountResp : ScenarioProps c m e -> Result Http.Error Value -> Scenario flags c m e
+receiveEditAccountResp props res =
+    Scenario.customResponse props.session
         "Backend responds to the edit account request."
         { target = props.querySelf
         , response =
@@ -436,13 +440,22 @@ receiveEditAccountResp props session res =
         }
 
 
-expectEditAccountFormShowNoErrors : ScenarioProps c m e -> Scenario.Session -> Scenario flags c m e
-expectEditAccountFormShowNoErrors _ session =
-    Scenario.expectAppView session
-        "Expect that edit account form shows no errors"
+expectAvailable : ScenarioProps c m e -> Scenario flags c m e
+expectAvailable props =
+    Scenario.expectMemory props.session
+        "The app shows home page."
+        { target = props.querySelf
+        , expectation = Expect.Builder.pass
+        }
+
+
+expectEditAccountFormShowNoErrors : ScenarioProps c m e -> Scenario flags c m e
+expectEditAccountFormShowNoErrors props =
+    Scenario.expectAppView props.session
+        "The edit account form shows no errors at this point."
         { expectation =
-            \html ->
-                Query.fromHtml html
+            \{ body } ->
+                Query.fromHtml (Html.div [] body)
                     |> Query.find
                         [ localClassSelector "editAccountForm"
                         ]

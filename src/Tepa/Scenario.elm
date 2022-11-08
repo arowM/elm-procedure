@@ -91,6 +91,7 @@ module Tepa.Scenario exposing
 
 -}
 
+import Browser exposing (Document)
 import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
@@ -398,8 +399,8 @@ Suppose your application has a popup:
         , expectAppView sakuraChanMainSession
             "Show popup message."
             { expectation =
-                \html ->
-                    Query.fromHtml html
+                \{ body } ->
+                    Query.fromHtml (Html.div [] body)
                         |> Query.find [ Selector.id "popup" ]
                         |> Query.has
                             [ Selector.attribute
@@ -429,7 +430,7 @@ expectAppView :
     Session
     -> String
     ->
-        { expectation : Html () -> Expectation
+        { expectation : Document () -> Expectation
         }
     -> Scenario flags c m event
 expectAppView (Session session) description { expectation } =
@@ -918,7 +919,7 @@ fromJust description ma f =
 toTest :
     { init : memory
     , procedure : flags -> Url -> Key -> Promise cmd memory event Void
-    , view : Layer memory -> Html (Msg event)
+    , view : Layer memory -> Document (Msg event)
     , sections : List (Section flags cmd memory event)
     }
     -> Test

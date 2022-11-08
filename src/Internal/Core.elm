@@ -1427,7 +1427,7 @@ type TestModel c m e
 
 
 type alias TestConfig flags c m e =
-    { view : m -> Html ()
+    { view : m -> Document ()
     , init : flags -> Url -> ( Model c m e, List ( LayerId, c ) )
     }
 
@@ -1528,7 +1528,7 @@ mappendScenario (Scenario s1) (Scenario s2) =
 toTest :
     { init : memory
     , procedure : flags -> Url -> Key -> Promise cmd memory event Void
-    , view : Layer memory -> Html (Msg event)
+    , view : Layer memory -> Document (Msg event)
     , sections : List (Section flags cmd memory event)
     }
     -> Test
@@ -1540,7 +1540,18 @@ toTest o =
                     sec.content
             in
             test
-                { view = \m -> Html.map (\_ -> ()) <| o.view (Layer LayerId.init m)
+                { view =
+                    \m ->
+                        let
+                            document =
+                                o.view (Layer LayerId.init m)
+                        in
+                        { title = document.title
+                        , body =
+                            List.map
+                                (Html.map (\_ -> ()))
+                                document.body
+                        }
                 , init =
                     \flags url ->
                         init o.init

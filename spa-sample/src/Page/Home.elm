@@ -2,6 +2,8 @@ module Page.Home exposing
     ( Command
     , Event
     , Memory
+    , Promise
+    , ScenarioProps
     , ScenarioSet
     , currentSession
     , init
@@ -145,19 +147,22 @@ editAccountFormView memory =
                 [ Html.text "Save"
                 ]
             ]
-        , Html.div
-            [ localClass "editAccountForm_errorField"
-            ]
-            (List.map
-                (\err ->
-                    Html.div
-                        [ localClass "editAccountForm_errorField_error"
-                        ]
-                        [ Html.text <| EditAccount.displayFormError err
-                        ]
+        , if (memory.showError && List.length errors > 0) then
+            Html.div
+                [ localClass "editAccountForm_errorField"
+                ]
+                (List.map
+                    (\err ->
+                        Html.div
+                            [ localClass "editAccountForm_errorField_error"
+                            ]
+                            [ Html.text <| EditAccount.displayFormError err
+                            ]
+                    )
+                    errors
                 )
-                errors
-            )
+          else
+            Html.text ""
         ]
 
 
@@ -298,21 +303,26 @@ submitAccountProcedure bucket =
 
                         Ok editAccount ->
                             requestEditAccount editAccount
-                                |> Tepa.andThenSequence
+                                |> Tepa.andThen
                                     (\response ->
                                         case response of
                                             Err err ->
-                                                [ Toast.pushHttpError err
-                                                    |> runToastPromise bucket.toastPointer
-                                                , modifyEditAccountForm <|
-                                                    \m ->
-                                                        { m | isBusy = False }
-                                                , Tepa.lazy <|
-                                                    \_ ->
-                                                        editAccountFormProcedure bucket
-                                                ]
+                                                Tepa.syncAll
+                                                    [ Toast.pushHttpError err
+                                                        |> runToastPromise bucket.toastPointer
+                                                        |> Tepa.void
+                                                    , Tepa.sequence
+                                                        [ modifyEditAccountForm <|
+                                                            \m ->
+                                                                { m | isBusy = False }
+                                                        , Tepa.lazy <|
+                                                            \_ ->
+                                                                editAccountFormProcedure bucket
+                                                        ]
+                                                    ]
 
                                             Ok resp ->
+                                                Tepa.sequence
                                                 [ Tepa.modify <|
                                                     \m ->
                                                         { m
@@ -376,7 +386,7 @@ type alias ScenarioSet flags c m e =
     { changeEditAccountFormAccountId : String -> Scenario flags c m e
     , clickSubmitEditAccount : Scenario flags c m e
     , receiveEditAccountResp : Result Http.Error Value -> Scenario flags c m e
-    , expectAvailable : Scenario flags c m e
+    , expectAvailable : String -> Scenario flags c m e
     , expectEditAccountFormShowNoErrors : Scenario flags c m e
     }
 
@@ -440,10 +450,9 @@ receiveEditAccountResp props res =
         }
 
 
-expectAvailable : ScenarioProps c m e -> Scenario flags c m e
-expectAvailable props =
-    Scenario.expectMemory props.session
-        "The app shows home page."
+expectAvailable : ScenarioProps c m e -> String -> Scenario flags c m e
+expectAvailable props str =
+    Scenario.expectMemory props.session str
         { target = props.querySelf
         , expectation = Expect.Builder.pass
         }

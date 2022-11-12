@@ -3,9 +3,15 @@ module Scenario exposing
     , test
     )
 
+{-| Scenario
+
+@docs main, test
+
+-}
 import App exposing (Command, Event, Memory)
 import Html exposing (Html)
 import Http
+import Json.Decode as JD
 import Json.Encode as JE exposing (Value)
 import Tepa.Scenario as Scenario exposing (Scenario, userComment)
 import Test exposing (Test)
@@ -30,9 +36,7 @@ main =
 test : Test
 test =
     Scenario.toTest
-        { init = App.init
-        , procedure = App.procedure
-        , view = App.view
+        { props = App.props
         , sections = sections
         }
 
@@ -62,20 +66,18 @@ yabugarashiKun =
 sakuraChanMainSession : Scenario.Session
 sakuraChanMainSession =
     Scenario.defineSession
-        { uniqueName = "sakuraChanMainSession"
-        , user = sakuraChan
-        }
-
-
-sakuraChanSecondSession : Scenario.Session
-sakuraChanSecondSession =
-    Scenario.defineSession
-        { uniqueName = "sakuraChanSecondSession"
+        { uniqueName = "Sakura-chan's main session"
         , user = sakuraChan
         }
 
 
 
+-- sakuraChanSecondSession : Scenario.Session
+-- sakuraChanSecondSession =
+--     Scenario.defineSession
+--         { uniqueName = "Sakura-chan's second session"
+--         , user = sakuraChan
+--         }
 -- # Scenarios
 
 
@@ -107,16 +109,20 @@ introduction1 =
     , Scenario.loadApp sakuraChanMainSession
         "Load the home page."
         { route =
-            { path = "/"
+            { path = "tepa/"
             , query = Nothing
             , fragment = Nothing
             }
         , flags = JE.object []
         }
+    , onSakuraChanMainSession.app.receiveSession <|
+        Err (Http.BadStatus 403)
     , onSakuraChanMainSession.login.expectAvailable
+        "Displays login page."
     , userComment sakuraChan
         "I see I need to log in! I remember my dad gave me the account information in advance."
     , onSakuraChanMainSession.login.expectLoginFormShowNoErrors
+        "The login form shows no errors at first."
     , userComment yabugarashiKun
         "I'm Yabugarashi-kun. I'm going play a prank on Sakura-chan. Muahahahahaha! 😈"
     , userComment yabugarashiKun
@@ -137,17 +143,31 @@ introduction1 =
         "OK, I'll try again."
     , onSakuraChanMainSession.login.changeLoginPass "fuestPass"
     , onSakuraChanMainSession.login.expectLoginFormShowNoErrors
+        "The login form shows no errors at this point."
     , userComment sakuraChan
         "It looks good."
     , onSakuraChanMainSession.login.clickSubmitLogin
-    , onSakuraChanMainSession.login.recieveLoginResp <|
+    , onSakuraChanMainSession.login.receiveLoginResp <|
         Err (Http.BadStatus 401)
     , userComment sakuraChan "Oops!"
     , userComment yabugarashiKun "Maybe you typed the password wrong."
     , userComment sakuraChan "That may be true. It's hard to type with my two-fingered hooves..."
     , onSakuraChanMainSession.login.changeLoginPass "guestPass"
     , onSakuraChanMainSession.login.clickSubmitLogin
+    , Scenario.fromOk "Sample response"
+        (JD.decodeString JD.value """
+            {
+              "profile": {
+                "id": "Sakura-chan-ID"
+              }
+            }
+          """)
+      <|
+        \resp ->
+            [ onSakuraChanMainSession.login.receiveLoginResp <| Ok resp
+            ]
     , onSakuraChanMainSession.home.expectAvailable
+        "Redirect to home page."
     , userComment sakuraChan "Yes!"
     , Scenario.cases
         [ Scenario.section "Home page #1" pageHomeCase1

@@ -1,7 +1,6 @@
 module Page.Login.Login exposing
     ( request
     , Login
-    , toValue
     , Response
     , responseDecoder
     , Form
@@ -19,7 +18,6 @@ module Page.Login.Login exposing
 
 @docs request
 @docs Login
-@docs toValue
 @docs Response
 @docs responseDecoder
 
@@ -56,16 +54,23 @@ type Login
     = Login Login_
 
 
-{-| -}
-toValue : Login -> JE.Value
-toValue (Login login) =
-    JE.object
-        [ ( "id", JE.string login.id )
-        , ( "pass", JE.string login.pass )
-        ]
+{-|
 
+    import Json.Decode as JD
 
-{-| -}
+    sampleResponse : String
+    sampleResponse = """
+    {
+      "profile": {
+        "id": "Sakura-chan-ID"
+      }
+    }
+    """
+
+    JD.decodeString responseDecoder sampleResponse
+    --> Ok { session = { id = "Sakura-chan-ID" } }
+
+-}
 responseDecoder : JD.Decoder Response
 responseDecoder =
     JD.succeed Response
@@ -94,7 +99,7 @@ type alias Response =
 {-| Request server for login.
 -}
 request : Login -> (Result Http.Error Value -> msg) -> Cmd msg
-request login toMsg =
+request (Login login) toMsg =
     Http.post
         { url =
             Url.absolute
@@ -103,7 +108,10 @@ request login toMsg =
                 ]
                 []
         , body =
-            Http.jsonBody <| toValue login
+            Http.jsonBody <| JE.object
+                [ ( "id", JE.string login.id )
+                , ( "pass", JE.string login.pass )
+                ]
         , expect =
             Http.expectJson toMsg JD.value
         }

@@ -3,12 +3,11 @@ module App exposing
     , Event
     , Memory
     , Page(..)
+    , Promise
     , ScenarioSet
-    , init
     , main
-    , procedure
+    , props
     , scenario
-    , view
     )
 
 -- import Page.Users as PageUsers
@@ -25,7 +24,7 @@ import Mixin.Html as Html exposing (Html)
 import Page.Home as PageHome
 import Page.Login as PageLogin
 import Tepa exposing (Key, Layer, Msg, Void)
-import Tepa.Scenario as Scenario
+import Tepa.Scenario as Scenario exposing (Scenario)
 import Tepa.Scenario.LayerQuery as LayerQuery
 import Url exposing (Url)
 import Url.Builder as Url
@@ -39,15 +38,20 @@ import Url.Builder as Url
 main : Tepa.Program Value Memory Event
 main =
     Tepa.application
-        { init = init
-        , procedure =
-            \flags url key ->
-                procedure flags url key
-                    |> Tepa.mapCmd runCommand
-        , view = view
-        , onUrlRequest = LinkClicked
-        , onUrlChange = UrlChanged
+        { props = props
+        , runCommand = runCommand
         }
+
+
+{-| -}
+props : Tepa.ApplicationProps Value Command Memory Event
+props =
+    { init = init
+    , procedure = procedure
+    , view = view
+    , onUrlRequest = LinkClicked
+    , onUrlChange = UrlChanged
+    }
 
 
 
@@ -381,7 +385,7 @@ pageControllProcedure url key msession =
                     )
 
         _ ->
-            Debug.todo ""
+            Tepa.none
 
 
 requestSession : Promise (Result Http.Error FetchSessionResponse)
@@ -441,6 +445,9 @@ runPageHomePromise pointer prom =
 type alias ScenarioSet flags =
     { login : PageLogin.ScenarioSet flags Command Memory Event
     , home : PageHome.ScenarioSet flags Command Memory Event
+    , app :
+        { receiveSession : Result Http.Error Value -> Scenario flags Command Memory Event
+        }
     }
 
 
@@ -495,4 +502,23 @@ scenario session =
                             Nothing
             , session = session
             }
+    , app =
+        { receiveSession = receiveSession session
+        }
     }
+
+
+receiveSession : Scenario.Session -> Result Http.Error Value -> Scenario flags Command Memory Event
+receiveSession session res =
+    Scenario.customResponse session
+        "Backend responds to the session fetch request."
+        { target = LayerQuery.self
+        , response =
+            \cmd ->
+                case cmd of
+                    FetchSession toMsg ->
+                        Just <| toMsg res
+
+                    _ ->
+                        Nothing
+        }

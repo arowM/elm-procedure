@@ -5,11 +5,13 @@ module Widget.Toast exposing
     , Event
     , Command
     , runCommand
+    , Closed
     , pushWarning
     , pushError
     , pushHttpError
     , scenario
     , ScenarioSet
+    , ScenarioProps
     )
 
 {-| Widget for toast popup.
@@ -23,6 +25,7 @@ module Widget.Toast exposing
 @docs Event
 @docs Command
 @docs runCommand
+@docs Closed
 
 
 # Methods
@@ -40,6 +43,7 @@ module Widget.Toast exposing
 
 @docs scenario
 @docs ScenarioSet
+@docs ScenarioProps
 
 -}
 
@@ -142,25 +146,30 @@ runCommand cmd =
                 |> Task.perform toMsg
 
 
+{-| Represents that the popup is closed by user or timeout.
+-}
+type Closed = Closed
+
+
 
 -- Methods
 
 
 {-| Show warning message.
 -}
-pushWarning : String -> Promise Command Memory Event Void
+pushWarning : String -> Promise Command Memory Event Closed
 pushWarning =
     pushItem WarningMessage
 
 
 {-| Show error message.
 -}
-pushError : String -> Promise Command Memory Event Void
+pushError : String -> Promise Command Memory Event Closed
 pushError =
     pushItem ErrorMessage
 
 
-pushItem : MessageType -> String -> Promise Command Memory Event Void
+pushItem : MessageType -> String -> Promise Command Memory Event Closed
 pushItem type_ str =
     let
         newItem =
@@ -200,6 +209,7 @@ pushItem type_ str =
                             }
                 ]
             )
+        |> Tepa.map (\_ -> Closed)
 
 
 
@@ -250,7 +260,7 @@ toastItemProcedure =
 -}
 pushHttpError :
     Http.Error
-    -> Promise Command Memory Event Void
+    -> Promise Command Memory Event Closed
 pushHttpError err =
     case err of
         Http.BadStatus 401 ->
@@ -326,6 +336,7 @@ type alias ScenarioSet flags c m e =
     }
 
 
+{-| -}
 type alias ScenarioProps c m e =
     { querySelf : LayerQuery m Memory
     , wrapEvent : Event -> e

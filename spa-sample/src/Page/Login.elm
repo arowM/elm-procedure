@@ -165,19 +165,22 @@ loginFormView memory =
                 [ Html.text "Password: guest"
                 ]
             ]
-        , Html.div
-            [ localClass "loginForm_errorField"
-            ]
-            (List.map
-                (\err ->
-                    Html.div
-                        [ localClass "loginForm_errorField_error"
-                        ]
-                        [ Html.text <| Login.displayFormError err
-                        ]
+        , if (memory.showError && List.length errors > 0) then
+            Html.div
+                [ localClass "loginForm_errorField"
+                ]
+                (List.map
+                    (\err ->
+                        Html.div
+                            [ localClass "loginForm_errorField_error"
+                            ]
+                            [ Html.text <| Login.displayFormError err
+                            ]
+                    )
+                    errors
                 )
-                errors
-            )
+          else
+            Html.text ""
         ]
 
 
@@ -331,36 +334,41 @@ submitLoginProcedure bucket =
 
                         Ok login ->
                             requestLogin login
-                                |> Tepa.andThenSequence
+                                |> Tepa.andThen
                                     (\response ->
                                         case response of
                                             Err err ->
-                                                [ Toast.pushHttpError err
-                                                    |> runToastPromise bucket.toastPointer
-                                                , modifyLoginForm <|
-                                                    \m ->
-                                                        { m | isBusy = False }
-                                                , Tepa.lazy <|
-                                                    \_ ->
-                                                        loginFormProcedure bucket
-                                                ]
+                                                Tepa.syncAll
+                                                    [ Toast.pushHttpError err
+                                                        |> runToastPromise bucket.toastPointer
+                                                        |> Tepa.void
+                                                    , Tepa.sequence
+                                                        [ modifyLoginForm <|
+                                                            \m ->
+                                                                { m | isBusy = False }
+                                                        , Tepa.lazy <|
+                                                            \_ ->
+                                                                loginFormProcedure bucket
+                                                        ]
+                                                    ]
 
                                             Ok resp ->
-                                                [ Tepa.modify <|
-                                                    \m ->
-                                                        { m
-                                                            | msession = Just resp.session
-                                                            , loginForm =
-                                                                let
-                                                                    loginForm =
-                                                                        m.loginForm
-                                                                in
-                                                                { loginForm
-                                                                    | isBusy = False
-                                                                }
-                                                        }
-                                                , pushUrl bucket.key bucket.requestUrl
-                                                ]
+                                                Tepa.sequence
+                                                    [ Tepa.modify <|
+                                                        \m ->
+                                                            { m
+                                                                | msession = Just resp.session
+                                                                , loginForm =
+                                                                    let
+                                                                        loginForm =
+                                                                            m.loginForm
+                                                                    in
+                                                                    { loginForm
+                                                                        | isBusy = False
+                                                                    }
+                                                            }
+                                                    , pushUrl bucket.key bucket.requestUrl
+                                                    ]
                                     )
                 )
         ]
@@ -413,9 +421,9 @@ type alias ScenarioSet flags c m e =
     { changeLoginId : String -> Scenario flags c m e
     , changeLoginPass : String -> Scenario flags c m e
     , clickSubmitLogin : Scenario flags c m e
-    , recieveLoginResp : Result Http.Error Value -> Scenario flags c m e
-    , expectAvailable : Scenario flags c m e
-    , expectLoginFormShowNoErrors : Scenario flags c m e
+    , receiveLoginResp : Result Http.Error Value -> Scenario flags c m e
+    , expectAvailable : String -> Scenario flags c m e
+    , expectLoginFormShowNoErrors : String -> Scenario flags c m e
     , expectLoginFormShowError : String -> Scenario flags c m e
     }
 
@@ -434,7 +442,7 @@ scenario props =
     { changeLoginId = changeLoginId props
     , changeLoginPass = changeLoginPass props
     , clickSubmitLogin = clickSubmitLogin props
-    , recieveLoginResp = recieveLoginResp props
+    , receiveLoginResp = receiveLoginResp props
     , expectAvailable = expectAvailable props
     , expectLoginFormShowNoErrors = expectLoginFormShowNoErrors props
     , expectLoginFormShowError = expectLoginFormShowError props
@@ -474,8 +482,8 @@ clickSubmitLogin props =
         }
 
 
-recieveLoginResp : ScenarioProps c m e -> Result Http.Error Value -> Scenario flags c m e
-recieveLoginResp props res =
+receiveLoginResp : ScenarioProps c m e -> Result Http.Error Value -> Scenario flags c m e
+receiveLoginResp props res =
     Scenario.customResponse props.session
         "Backend responds to the login request."
         { target = props.querySelf
@@ -492,10 +500,10 @@ recieveLoginResp props res =
         }
 
 
-expectLoginFormShowNoErrors : ScenarioProps c m e -> Scenario flags c m e
-expectLoginFormShowNoErrors props =
+expectLoginFormShowNoErrors : ScenarioProps c m e -> String -> Scenario flags c m e
+expectLoginFormShowNoErrors props description =
     Scenario.expectAppView props.session
-        "The login form shows no errors at this point."
+        description
         { expectation =
             \{ body } ->
                 Query.fromHtml (Html.div [] body)
@@ -509,10 +517,9 @@ expectLoginFormShowNoErrors props =
         }
 
 
-expectAvailable : ScenarioProps c m e -> Scenario flags c m e
-expectAvailable props =
-    Scenario.expectMemory props.session
-        "The app shows login page."
+expectAvailable : ScenarioProps c m e -> String -> Scenario flags c m e
+expectAvailable props str =
+    Scenario.expectMemory props.session str
         { target = props.querySelf
         , expectation = Expect.Builder.pass
         }

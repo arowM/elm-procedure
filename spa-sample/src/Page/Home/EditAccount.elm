@@ -2,7 +2,6 @@ module Page.Home.EditAccount exposing
     ( request
     , EditAccount
     , Response
-    , toValue
     , responseDecoder
     , Form
     , initForm
@@ -20,7 +19,6 @@ module Page.Home.EditAccount exposing
 @docs request
 @docs EditAccount
 @docs Response
-@docs toValue
 @docs responseDecoder
 
 
@@ -61,15 +59,23 @@ type alias EditAccount_ =
     }
 
 
-{-| -}
-toValue : EditAccount -> JE.Value
-toValue (EditAccount editAccount) =
-    JE.object
-        [ ( "id", JE.string editAccount.id )
-        ]
+{-|
 
+    import Json.Decode as JD
 
-{-| -}
+    sampleResponse : String
+    sampleResponse = """
+    {
+      "profile": {
+        "id": "Sakura-chan-ID"
+      }
+    }
+    """
+
+    JD.decodeString responseDecoder sampleResponse
+    --> Ok { session = { id = "Sakura-chan-ID" } }
+
+-}
 responseDecoder : JD.Decoder Response
 responseDecoder =
     JD.succeed Response
@@ -92,7 +98,7 @@ type alias Response =
 {-| Request server for login.
 -}
 request : EditAccount -> (Result Http.Error Value -> msg) -> Cmd msg
-request editAccount toMsg =
+request (EditAccount editAccount) toMsg =
     Http.post
         { url =
             Url.absolute
@@ -101,7 +107,9 @@ request editAccount toMsg =
                 ]
                 []
         , body =
-            Http.jsonBody <| toValue editAccount
+            Http.jsonBody <| JE.object
+                [ ( "id", JE.string editAccount.id )
+                ]
         , expect =
             Http.expectJson toMsg JD.value
         }

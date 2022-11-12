@@ -27,6 +27,7 @@ module Tepa exposing
     , element
     , document
     , application
+    , ApplicationProps
     , Program
     , Document
     , update
@@ -34,7 +35,7 @@ module Tepa exposing
     , documentView
     , subscriptions
     , init
-    , Key, runNavCmd
+    , Key
     , Msg
     , mapMsg
     , Model
@@ -113,6 +114,7 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 @docs element
 @docs document
 @docs application
+@docs ApplicationProps
 @docs Program
 @docs Document
 
@@ -124,7 +126,7 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 @docs documentView
 @docs subscriptions
 @docs init
-@docs Key, runNavCmd
+@docs Key
 @docs Msg
 @docs mapMsg
 @docs Model
@@ -134,7 +136,6 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 -}
 
 import Browser
-import Browser.Navigation as Nav
 import Html exposing (Attribute, Html)
 import Http
 import Internal.Core as Core
@@ -816,14 +817,23 @@ The `onUrlRequest` and `onUrlChange` Events are published to the application roo
 
 -}
 application :
-    { init : memory
-    , procedure : flags -> Url -> Key -> Promise (Cmd (Msg event)) memory event Void
-    , view : Layer memory -> Document (Msg event)
-    , onUrlRequest : Browser.UrlRequest -> event
-    , onUrlChange : Url -> event
+    { props : ApplicationProps flags cmd memory event
+    , runCommand : cmd -> Cmd (Msg event)
     }
     -> Program flags memory event
-application option =
+application { props, runCommand } =
+    let
+        option =
+            { init = props.init
+            , procedure =
+                \flags url key ->
+                    props.procedure flags url key
+                        |> mapCmd runCommand
+            , view = props.view
+            , onUrlRequest = props.onUrlRequest
+            , onUrlChange = props.onUrlChange
+            }
+    in
     Browser.application
         { init =
             \flags url key ->
@@ -834,6 +844,16 @@ application option =
         , onUrlRequest = onUrlRequest option.onUrlRequest
         , onUrlChange = onUrlChange option.onUrlChange
         }
+
+
+{-| -}
+type alias ApplicationProps flags cmd memory event =
+    { init : memory
+    , procedure : flags -> Url -> Key -> Promise cmd memory event Void
+    , view : Layer memory -> Document (Msg event)
+    , onUrlRequest : Browser.UrlRequest -> event
+    , onUrlChange : Url -> event
+    }
 
 
 {-| An alias for [Platform.Program](https://package.elm-lang.org/packages/elm/core/latest/Platform#Program).
@@ -856,8 +876,16 @@ type alias Document a =
 -}
 update : Msg event -> Model (Cmd (Msg event)) memory event -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 update msg model =
-    Core.update msg model
-        |> Tuple.mapSecond (List.map Tuple.second >> Cmd.batch)
+    let
+        (newModel, cmds, appCmds) = Core.update msg model
+    in
+    ( newModel
+    , [ List.map Tuple.second cmds
+      , List.map Core.runAppCmd appCmds
+      ]
+      |> List.concat
+      |> Cmd.batch
+    )
 
 
 {-| Construct the TEA element view function.
@@ -888,23 +916,22 @@ init :
     -> Promise (Cmd (Msg event)) memory event Void
     -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 init memory procs =
-    Core.init memory procs
-        |> Tuple.mapSecond (List.map Tuple.second >> Cmd.batch)
+    let
+        (model, cmds, appCmds) = Core.init memory procs
+    in
+    ( model
+    , [ List.map Tuple.second cmds
+      , List.map Core.runAppCmd appCmds
+      ]
+      |> List.concat
+      |> Cmd.batch
+    )
 
 
 {-| `Browser.Navigation.Key` alternative.
 -}
 type alias Key =
     Core.Key
-
-
-{-| Retrieve real `Browser.Navigation.Key` from TEPA `Key`.
-It always provide real `Browser.Navigation.Key` when evaluating Procedure in the real application;
-it returns `Cmd.none` when testing as scenario or generating documentation.
--}
-runNavCmd : (Nav.Key -> Cmd msg) -> Key -> Cmd msg
-runNavCmd =
-    Core.runNavCmd
 
 
 {-| TEA Message that wraps your events.

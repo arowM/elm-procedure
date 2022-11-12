@@ -2,8 +2,9 @@ module Internal.Core exposing
     ( Model(..), memoryState, layerState
     , Msg(..), rootLayerMsg
     , mapMsg
+    , AppCmd
+    , runAppCmd
     , Key(..)
-    , runNavCmd
     , Promise
     , succeedPromise
     , mapPromise
@@ -44,12 +45,13 @@ module Internal.Core exposing
 @docs Model, memoryState, layerState
 @docs Msg, rootLayerMsg
 @docs mapMsg
+@docs AppCmd
+@docs runAppCmd
 
 
 # Key
 
 @docs Key
-@docs runNavCmd
 
 
 # Promise
@@ -164,7 +166,7 @@ type alias OnGoing_ c m e =
     , listeners : List (Listener e)
 
     -- New state to evaluate next time.
-    , next : Msg e -> Context m -> List (Listener e) -> ( Model c m e, List ( LayerId, c ) )
+    , next : Msg e -> Context m -> List (Listener e) -> ( Model c m e, List ( LayerId, c ), List AppCmd )
     }
 
 
@@ -201,6 +203,59 @@ wrapListener wrap listener1 =
     , sub = Sub.map (mapMsg wrap) listener1.sub
     }
 
+
+
+-- AppCmd
+
+type AppCmd
+    = PushRoute
+        { key : Key
+        , route : Route
+        , replace : Bool
+        }
+    | Back
+        { key : Key
+        , steps : Int
+        }
+
+
+type alias Route =
+    { path : String
+    , query : Maybe String
+    , fragment : Maybe String
+    }
+
+renderRoute : Route -> String
+renderRoute r =
+    String.concat
+        [ r.path
+        , r.query
+            |> Maybe.map (\str -> "?" ++ str)
+            |> Maybe.withDefault ""
+        , r.fragment
+            |> Maybe.map (\str -> "#" ++ str)
+            |> Maybe.withDefault ""
+        ]
+
+
+runAppCmd : AppCmd -> Cmd msg
+runAppCmd cmd =
+    case cmd of
+        PushRoute o ->
+            let
+                op = if o.replace then Nav.replaceUrl else Nav.pushUrl
+            in
+            case o.key of
+                SimKey ->
+                    Cmd.none
+                RealKey key ->
+                    op key <| renderRoute o.route
+        Back o ->
+            case o.key of
+                SimKey ->
+                    Cmd.none
+                RealKey key ->
+                    Nav.back key o.steps
 
 
 -- Msg
@@ -372,6 +427,7 @@ type Promise c m e a
 type alias PromiseEffect c m e a =
     { newContext : Context m
     , cmds : List ( LayerId, c )
+    , appCmds : List AppCmd
     , addListeners : List (Listener e)
     , closedLayers : List LayerId
     , closedRequests : List RequestId
@@ -395,6 +451,7 @@ mapPromise f (Promise prom) =
             in
             { newContext = effA.newContext
             , cmds = effA.cmds
+            , appCmds = effA.appCmds
             , addListeners = effA.addListeners
             , closedLayers = effA.closedLayers
             , closedRequests = effA.closedRequests
@@ -419,6 +476,7 @@ succeedPromise a =
         \context ->
             { newContext = context
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -445,6 +503,7 @@ failPromise =
         \context ->
             { newContext = context
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -458,6 +517,7 @@ justAwaitPromise f =
         \context ->
             { newContext = context
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -478,6 +538,7 @@ syncPromise (Promise promA) (Promise promF) =
             in
             { newContext = effA.newContext
             , cmds = effF.cmds ++ effA.cmds
+            , appCmds = effF.appCmds ++ effA.appCmds
             , addListeners = effF.addListeners ++ effA.addListeners
             , closedLayers = effF.closedLayers ++ effA.closedLayers
             , closedRequests = effF.closedRequests ++ effA.closedRequests
@@ -522,6 +583,7 @@ andRacePromise (Promise prom2) (Promise prom1) =
             in
             { newContext = eff2.newContext
             , cmds = eff1.cmds ++ eff2.cmds
+            , appCmds = eff1.appCmds ++ eff2.appCmds
             , addListeners = eff1.addListeners ++ eff2.addListeners
             , closedLayers = eff1.closedLayers ++ eff2.closedLayers
             , closedRequests = eff1.closedRequests ++ eff2.closedRequests
@@ -567,6 +629,7 @@ andThenPromise f (Promise promA) =
                     in
                     { newContext = effB.newContext
                     , cmds = effA.cmds ++ effB.cmds
+                    , appCmds = effA.appCmds ++ effB.appCmds
                     , addListeners = effA.addListeners ++ effB.addListeners
                     , closedLayers = effA.closedLayers ++ effB.closedLayers
                     , closedRequests = effA.closedRequests ++ effB.closedRequests
@@ -576,6 +639,7 @@ andThenPromise f (Promise promA) =
                 Rejected ->
                     { newContext = effA.newContext
                     , cmds = effA.cmds
+                    , appCmds = effA.appCmds
                     , addListeners = effA.addListeners
                     , closedLayers = effA.closedLayers
                     , closedRequests = effA.closedRequests
@@ -585,6 +649,7 @@ andThenPromise f (Promise promA) =
                 AwaitMsg promNextA ->
                     { newContext = effA.newContext
                     , cmds = effA.cmds
+                    , appCmds = effA.appCmds
                     , addListeners = effA.addListeners
                     , closedLayers = effA.closedLayers
                     , closedRequests = effA.closedRequests
@@ -614,6 +679,7 @@ liftPromiseMemory o (Promise prom1) =
                     , closedLayers = [ closedLayersId ]
                     , closedRequests = []
                     , cmds = []
+                    , appCmds = []
                     , handler = Rejected
                     }
 
@@ -634,6 +700,7 @@ liftPromiseMemory o (Promise prom1) =
                         , nextLayerId = eff1.newContext.nextLayerId
                         }
                     , cmds = eff1.cmds
+                    , appCmds = eff1.appCmds
                     , addListeners = eff1.addListeners
                     , closedLayers = eff1.closedLayers
                     , closedRequests = eff1.closedRequests
@@ -667,6 +734,7 @@ mapPromiseCmd f (Promise prom) =
             in
             { newContext = eff.newContext
             , cmds = List.map (\( lid, c ) -> ( lid, f c )) eff.cmds
+            , appCmds = eff.appCmds
             , addListeners = eff.addListeners
             , closedLayers = eff.closedLayers
             , closedRequests = eff.closedRequests
@@ -700,6 +768,7 @@ liftPromiseEvent o (Promise prom1) =
             in
             { newContext = eff1.newContext
             , cmds = eff1.cmds
+            , appCmds = eff1.appCmds
             , addListeners = List.map (wrapListener o.wrap) eff1.addListeners
             , closedLayers = eff1.closedLayers
             , closedRequests = eff1.closedRequests
@@ -766,6 +835,7 @@ currentState =
         \context ->
             { newContext = context
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -786,6 +856,7 @@ genNewLayerId =
             in
             { newContext = newContext
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -812,6 +883,7 @@ modify f =
                     | state = f context.state
                 }
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -831,6 +903,7 @@ push f =
             , cmds =
                 f context.state
                     |> List.map (\c -> ( thisLayerId, c ))
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -844,6 +917,7 @@ return =
         \context ->
             { newContext = context
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -1056,6 +1130,7 @@ listen { name, subscription, handler } =
             in
             { newContext = newContext
             , cmds = []
+            , appCmds = []
             , addListeners =
                 [ { layerId = thisLayerId
                   , requestId = myRequestId
@@ -1142,6 +1217,7 @@ portRequest o =
                         { requestId = RequestId.toValue myRequestId }
                   )
                 ]
+            , appCmds = []
             , handler = AwaitMsg nextPromise
             }
 
@@ -1206,6 +1282,7 @@ customRequest o =
                         )
                   )
                 ]
+            , appCmds = []
             , handler = AwaitMsg nextPromise
             }
 
@@ -1272,6 +1349,7 @@ anyRequest o =
                         )
                   )
                 ]
+            , appCmds = []
             , handler = AwaitMsg nextPromise
             }
 
@@ -1299,6 +1377,7 @@ layerEvent =
             in
             { newContext = context
             , cmds = []
+            , appCmds = []
             , addListeners = []
             , closedLayers = []
             , closedRequests = []
@@ -1313,7 +1392,7 @@ layerEvent =
 init :
     memory
     -> Promise cmd memory event Void
-    -> ( Model cmd memory event, List ( LayerId, cmd ) )
+    -> ( Model cmd memory event, List ( LayerId, cmd ), List AppCmd )
 init m prom =
     toModel (initContext m) [] prom
 
@@ -1327,7 +1406,7 @@ initContext memory =
     }
 
 
-toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List ( LayerId, c ) )
+toModel : Context m -> List (Listener e) -> Promise c m e Void -> ( Model c m e, List ( LayerId, c ), List AppCmd )
 toModel context listeners (Promise prom) =
     let
         eff =
@@ -1348,6 +1427,7 @@ toModel context listeners (Promise prom) =
                 { lastState = eff.newContext.state
                 }
             , eff.cmds
+            , eff.appCmds
             )
 
         Rejected ->
@@ -1355,6 +1435,7 @@ toModel context listeners (Promise prom) =
                 { lastState = eff.newContext.state
                 }
             , eff.cmds
+            , eff.appCmds
             )
 
         AwaitMsg nextProm ->
@@ -1369,14 +1450,16 @@ toModel context listeners (Promise prom) =
                             (nextProm msg nextContext.state)
                 }
             , eff.cmds
+            , eff.appCmds
             )
 
 
-update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List ( LayerId, cmd ) )
+update : Msg event -> Model cmd memory event -> ( Model cmd memory event, List ( LayerId, cmd ), List AppCmd )
 update msg model =
     case model of
         EndOfProcess r ->
             ( EndOfProcess r
+            , []
             , []
             )
 
@@ -1428,12 +1511,12 @@ type TestModel c m e
 
 type alias TestConfig flags c m e =
     { view : m -> Document ()
-    , init : flags -> Url -> ( Model c m e, List ( LayerId, c ) )
+    , init : flags -> Url -> ( Model c m e, List ( LayerId, c ), List AppCmd )
     }
 
 
 type alias TestContext c m e =
-    Dict SessionId ( Model c m e, List ( LayerId, c ) )
+    Dict SessionId ( Model c m e, List ( LayerId, c ), List AppCmd )
 
 
 type alias SessionId =
@@ -1526,9 +1609,13 @@ mappendScenario (Scenario s1) (Scenario s2) =
 
 
 toTest :
-    { init : memory
-    , procedure : flags -> Url -> Key -> Promise cmd memory event Void
-    , view : Layer memory -> Document (Msg event)
+    { props :
+        { init : memory
+        , procedure : flags -> Url -> Key -> Promise cmd memory event Void
+        , view : Layer memory -> Document (Msg event)
+        , onUrlRequest : Browser.UrlRequest -> event
+        , onUrlChange : Url -> event
+        }
     , sections : List (Section flags cmd memory event)
     }
     -> Test
@@ -1544,7 +1631,7 @@ toTest o =
                     \m ->
                         let
                             document =
-                                o.view (Layer LayerId.init m)
+                                o.props.view (Layer LayerId.init m)
                         in
                         { title = document.title
                         , body =
@@ -1554,8 +1641,8 @@ toTest o =
                         }
                 , init =
                     \flags url ->
-                        init o.init
-                            (o.procedure flags url SimKey)
+                        init o.props.init
+                            (o.props.procedure flags url SimKey)
                 }
                 Dict.empty
                 |> SeqTest.run sec.title

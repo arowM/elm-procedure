@@ -1,11 +1,7 @@
-module App.ZIndex exposing
-    ( mask
-    , toast
-    )
+module App.ZIndex exposing (toast)
 
 {-| Declare z-index values.
 
-@docs mask
 @docs toast
 
 -}

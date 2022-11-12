@@ -22,7 +22,7 @@ import Url.Parser as Parser exposing ((</>), Parser, s)
 
 pathPrefix : String
 pathPrefix =
-    "elm-procedure-architecture/spa"
+    "tepa"
 
 
 {-| Requested routes.
@@ -34,7 +34,8 @@ type Route
     | Users
 
 
-{-| -}
+{-|
+-}
 fromUrl : Url -> Route
 fromUrl url =
     Parser.parse parser url

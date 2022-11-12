@@ -22,6 +22,7 @@ module Tepa.Scenario exposing
     , portResponse
     , customResponse
     , fromJust
+    , fromOk
     -- , toMarkdown
     )
 
@@ -88,6 +89,7 @@ module Tepa.Scenario exposing
 # Conditions
 
 @docs fromJust
+@docs fromOk
 
 -}
 
@@ -96,24 +98,16 @@ import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Internal.Core as Core
-    exposing
-        ( Key(..)
-        , Layer(..)
-        , Model(..)
-        , Msg(..)
-        , Pointer(..)
-        , Promise
-        , Void
-        )
 import Internal.LayerId exposing (LayerId)
 import Internal.Markup as Markup
 import Json.Encode exposing (Value)
 import Mixin
 import Mixin.Html as Html exposing (Html)
+import Tepa exposing (ApplicationProps, Model, Msg)
 import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Test exposing (Test)
 import Test.Sequence as SeqTest
-import Url exposing (Url)
+import Url
 
 
 type alias ExpBuilder a =
@@ -369,11 +363,12 @@ expectMemory (Session session) description o =
                             [] ->
                                 SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
                                     \_ ->
-                                        Expect.fail
-                                            "expectMemory: No Layers for the query."
+                                        Err (Core.memoryState model)
+                                            |> Expect.equal
+                                                (Ok "expectMemory: The query should find some Layer in the current memory.")
 
                             layer1s ->
-                                List.map (\(Layer _ m1) -> m1) layer1s
+                                List.map (\(Core.Layer _ m1) -> m1) layer1s
                                     |> SeqTest.pass
                                     |> SeqTest.assert description
                                         (ExpBuilder.applyTo o.expectation)
@@ -599,7 +594,7 @@ userEvent (Session session) description o =
                             layer1s ->
                                 Dict.insert session.uniqueName
                                     (List.map
-                                        (\(Layer lid _) ->
+                                        (\(Core.Layer lid _) ->
                                             Core.LayerMsg
                                                 { layerId = lid
                                                 , event = o.event
@@ -673,13 +668,13 @@ listenerEvent (Session session) description o =
                                     layer1s ->
                                         Dict.insert session.uniqueName
                                             (List.concatMap
-                                                (\(Layer thisLid _) ->
+                                                (\(Core.Layer thisLid _) ->
                                                     onGoing.listeners
                                                         |> List.filterMap
                                                             (\listener ->
                                                                 if listener.layerId == thisLid && listener.uniqueName == Just o.listenerName then
                                                                     Just <|
-                                                                        ListenerMsg
+                                                                        Core.ListenerMsg
                                                                             { requestId = listener.requestId
                                                                             , event = o.event
                                                                             }
@@ -695,7 +690,7 @@ listenerEvent (Session session) description o =
                                             |> Core.OnGoingTest
                                             |> SeqTest.pass
 
-                            EndOfProcess _ ->
+                            Core.EndOfProcess _ ->
                                 SeqTest.pass (Core.OnGoingTest context)
         , markup =
             Core.putListItemMarkup <|
@@ -757,14 +752,14 @@ portResponse (Session session) description o =
                             layer1s ->
                                 Dict.insert session.uniqueName
                                     (List.concatMap
-                                        (\(Layer thisLid _) ->
+                                        (\(Core.Layer thisLid _) ->
                                             List.filterMap
                                                 (\( lid, c ) ->
                                                     if lid == thisLid then
                                                         o.response c
                                                             |> Maybe.map
                                                                 (\v ->
-                                                                    PortResponseMsg
+                                                                    Core.PortResponseMsg
                                                                         { response = v
                                                                         }
                                                                 )
@@ -840,7 +835,7 @@ customResponse (Session session) description o =
                             layer1s ->
                                 Dict.insert session.uniqueName
                                     (List.concatMap
-                                        (\(Layer thisLid _) ->
+                                        (\(Core.Layer thisLid _) ->
                                             List.filterMap
                                                 (\( lid, c ) ->
                                                     if lid == thisLid then
@@ -910,6 +905,31 @@ fromJust description ma f =
                 |> concat
 
 
+{-| Similar to `fromJust`, but extract `Ok` valur from `Result`.
+-}
+fromOk : String -> Result err a -> (a -> List (Scenario flags c m e)) -> Scenario flags c m e
+fromOk description res f =
+    case res of
+        Err _ ->
+            Core.Scenario
+                { test =
+                    \_ _ ->
+                        SeqTest.fail description <|
+                            \_ ->
+                                res
+                                    |> Expect.ok
+                , markup =
+                    Core.invalidMarkup <|
+                        Core.OtherInvalidMarkup <|
+                            "Error: fromResult\n"
+                                ++ description
+                }
+
+        Ok a ->
+            f a
+                |> concat
+
+
 
 -- Test
 
@@ -917,9 +937,7 @@ fromJust description ma f =
 {-| Generate scenario tests.
 -}
 toTest :
-    { init : memory
-    , procedure : flags -> Url -> Key -> Promise cmd memory event Void
-    , view : Layer memory -> Document (Msg event)
+    { props : ApplicationProps flags cmd memory event
     , sections : List (Section flags cmd memory event)
     }
     -> Test

@@ -39,15 +39,25 @@ config =
     , NoImportingEverything.rule []
     , NoMissingTypeAnnotation.rule
     , NoMissingTypeExpose.rule
+        |> Rule.ignoreErrorsForDirectories [ "src/Page" ]
     , NoUnused.CustomTypeConstructorArgs.rule
     , NoUnused.CustomTypeConstructors.rule []
     , NoUnused.Dependencies.rule
     , NoUnused.Exports.rule
+        |> Rule.ignoreErrorsForDirectories
+            [ "src/Widget"
+            , "tests"
+            ]
     , NoUnused.Modules.rule
+        |> Rule.ignoreErrorsForDirectories [ "tests" ]
     , NoUnused.Parameters.rule
     , NoUnused.Patterns.rule
     , NoUnused.Variables.rule
     , Simplify.defaults
+        |> Simplify.ignoreCaseOfForTypes
+            [ "Widget.Toast.Event"
+            , "Page.Home.EditAccount.FormError"
+            ]
         |> Simplify.rule
     ]
         |> List.map (Rule.ignoreErrorsForDirectories [ "../src" ])

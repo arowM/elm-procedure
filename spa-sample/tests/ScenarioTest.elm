@@ -1,7 +1,7 @@
 module ScenarioTest exposing (suite)
 
-import Test exposing (Test)
 import Scenario
+import Test exposing (Test)
 
 
 suite : Test

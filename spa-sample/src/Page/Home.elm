@@ -23,7 +23,8 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Home.EditAccount as EditAccount
-import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa exposing (Layer, Msg, Void)
+import Tepa.Navigation exposing (NavKey)
 import Tepa.Scenario as Scenario exposing (Scenario)
 import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Test.Html.Query as Query
@@ -147,7 +148,7 @@ editAccountFormView memory =
                 [ Html.text "Save"
                 ]
             ]
-        , if (memory.showError && List.length errors > 0) then
+        , if memory.showError && List.length errors > 0 then
             Html.div
                 [ localClass "editAccountForm_errorField"
                 ]
@@ -161,6 +162,7 @@ editAccountFormView memory =
                     )
                     errors
                 )
+
           else
             Html.text ""
         ]
@@ -198,7 +200,7 @@ type alias Pointer m =
 
 
 type alias Bucket =
-    { key : Key
+    { key : NavKey
     , toastPointer : Pointer Toast.Memory
     }
 
@@ -215,7 +217,7 @@ currentSession =
 
 
 {-| -}
-procedure : Key -> Promise Void
+procedure : NavKey -> Promise Void
 procedure key =
     -- Initialize Widget
     Tepa.putMaybeLayer
@@ -323,22 +325,22 @@ submitAccountProcedure bucket =
 
                                             Ok resp ->
                                                 Tepa.sequence
-                                                [ Tepa.modify <|
-                                                    \m ->
-                                                        { m
-                                                            | session = resp.session
-                                                            , editAccountForm =
-                                                                let
-                                                                    editAccountForm =
-                                                                        m.editAccountForm
-                                                                in
-                                                                { editAccountForm
-                                                                    | isBusy = False
-                                                                }
-                                                        }
-                                                , Tepa.lazy <|
-                                                    \_ -> editAccountFormProcedure bucket
-                                                ]
+                                                    [ Tepa.modify <|
+                                                        \m ->
+                                                            { m
+                                                                | session = resp.session
+                                                                , editAccountForm =
+                                                                    let
+                                                                        editAccountForm =
+                                                                            m.editAccountForm
+                                                                    in
+                                                                    { editAccountForm
+                                                                        | isBusy = False
+                                                                    }
+                                                            }
+                                                    , Tepa.lazy <|
+                                                        \_ -> editAccountFormProcedure bucket
+                                                    ]
                                     )
                 )
         ]
@@ -452,7 +454,8 @@ receiveEditAccountResp props res =
 
 expectAvailable : ScenarioProps c m e -> String -> Scenario flags c m e
 expectAvailable props str =
-    Scenario.expectMemory props.session str
+    Scenario.expectMemory props.session
+        str
         { target = props.querySelf
         , expectation = Expect.Builder.pass
         }

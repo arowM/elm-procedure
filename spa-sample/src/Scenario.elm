@@ -1,13 +1,11 @@
-module Scenario exposing
-    ( main
-    , test
-    )
+module Scenario exposing (main, test)
 
 {-| Scenario
 
 @docs main, test
 
 -}
+
 import App exposing (Command, Event, Memory)
 import Html exposing (Html)
 import Http
@@ -136,7 +134,7 @@ introduction1 =
     , onSakuraChanMainSession.login.expectLoginFormShowError
         "Password is required."
     , userComment sakuraChan
-        "Oh no, I got an error..."
+        "Oh my goat, I got an error..."
     , userComment yabugarashiKun
         "Sorry, sorry, I just got a little naughty. Here's the real note."
     , userComment sakuraChan
@@ -149,7 +147,13 @@ introduction1 =
     , onSakuraChanMainSession.login.clickSubmitLogin
     , onSakuraChanMainSession.login.receiveLoginResp <|
         Err (Http.BadStatus 401)
+    , onSakuraChanMainSession.login.toast.expectErrorMessage
+        { message = "Incorrect ID or Password." }
+        "Toast popup shows error: \"Incorrect ID or Password.\""
     , userComment sakuraChan "Oops!"
+    , onSakuraChanMainSession.login.toast.awaitAllToDisappear
+    , onSakuraChanMainSession.login.toast.expectNoMessages
+        "No error popup messages now."
     , userComment yabugarashiKun "Maybe you typed the password wrong."
     , userComment sakuraChan "That may be true. It's hard to type with my two-fingered hooves..."
     , onSakuraChanMainSession.login.changeLoginPass "guestPass"

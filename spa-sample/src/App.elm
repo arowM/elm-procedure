@@ -15,7 +15,7 @@ module App exposing
 import App.Route as Route
 import App.Session exposing (Session)
 import Browser exposing (Document)
-import Browser.Navigation as Nav exposing (Key)
+import Browser.Navigation
 import Http
 import Json.Decode as JD exposing (Decoder)
 import Json.Decode.Pipeline as JDP
@@ -23,7 +23,8 @@ import Json.Encode as JE exposing (Value)
 import Mixin.Html as Html exposing (Html)
 import Page.Home as PageHome
 import Page.Login as PageLogin
-import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa exposing (Layer, Msg, Void)
+import Tepa.Navigation as Nav exposing (NavKey)
 import Tepa.Scenario as Scenario exposing (Scenario)
 import Tepa.Scenario.LayerQuery as LayerQuery
 import Url exposing (Url)
@@ -149,7 +150,6 @@ type Command
     | PageHomeCommand PageHome.Command
       -- | PageUsersCommand PageUsers.Command
     | FetchSession (Result Http.Error Value -> Msg Event)
-    | PushUrl Key String
     | LoadPage String
 
 
@@ -169,13 +169,8 @@ runCommand cmd =
         FetchSession toMsg ->
             fetchSession toMsg
 
-        PushUrl key url ->
-            Tepa.runNavCmd
-                (\k -> Nav.pushUrl k url)
-                key
-
         LoadPage url ->
-            Nav.load url
+            Browser.Navigation.load url
 
 
 {-| Fetch user information from the server.
@@ -229,7 +224,7 @@ type alias Pointer m =
 
 
 {-| -}
-procedure : Value -> Url -> Key -> Promise Void
+procedure : Value -> Url -> NavKey -> Promise Void
 procedure _ url key =
     Tepa.syncAll
         [ linkControllProcedure key
@@ -243,7 +238,7 @@ procedure _ url key =
 
 {-| Handle link-click events.
 -}
-linkControllProcedure : Key -> Promise Void
+linkControllProcedure : NavKey -> Promise Void
 linkControllProcedure key =
     Tepa.withLayerEvent <|
         \e ->
@@ -251,7 +246,7 @@ linkControllProcedure key =
                 LinkClicked urlRequest ->
                     case urlRequest of
                         Browser.Internal url ->
-                            [ pushUrl key <| Url.toString url
+                            [ Nav.pushRoute key (Nav.extractRoute url)
                             , Tepa.lazy <|
                                 \_ -> linkControllProcedure key
                             ]
@@ -267,11 +262,6 @@ linkControllProcedure key =
                     []
 
 
-pushUrl : Key -> String -> Promise Void
-pushUrl key url =
-    Tepa.push <| \_ -> PushUrl key url
-
-
 loadPage : String -> Promise Void
 loadPage url =
     Tepa.push <| \_ -> LoadPage url
@@ -283,7 +273,7 @@ loadPage url =
 
 pageControllProcedure :
     Url
-    -> Key
+    -> NavKey
     -> Maybe Session
     -> Promise Void
 pageControllProcedure url key msession =

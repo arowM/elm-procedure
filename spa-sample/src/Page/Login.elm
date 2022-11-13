@@ -12,7 +12,6 @@ module Page.Login exposing
     )
 
 import App.Session exposing (Session)
-import Browser.Navigation as Nav
 import Expect
 import Expect.Builder
 import Http
@@ -21,9 +20,10 @@ import Mixin exposing (Mixin)
 import Mixin.Events as Events
 import Mixin.Html as Html exposing (Html)
 import Page.Login.Login as Login
-import Tepa exposing (Key, Layer, Msg, Void)
+import Tepa exposing (Layer, Msg, Void)
+import Tepa.Navigation as Nav exposing (NavKey)
 import Tepa.Scenario as Scenario exposing (Scenario)
-import Tepa.Scenario.LayerQuery exposing (LayerQuery)
+import Tepa.Scenario.LayerQuery as LayerQuery exposing (LayerQuery)
 import Test.Html.Query as Query
 import Test.Html.Selector as Selector
 import Url exposing (Url)
@@ -165,7 +165,7 @@ loginFormView memory =
                 [ Html.text "Password: guest"
                 ]
             ]
-        , if (memory.showError && List.length errors > 0) then
+        , if memory.showError && List.length errors > 0 then
             Html.div
                 [ localClass "loginForm_errorField"
                 ]
@@ -179,6 +179,7 @@ loginFormView memory =
                     )
                     errors
                 )
+
           else
             Html.text ""
         ]
@@ -192,7 +193,6 @@ loginFormView memory =
 type Command
     = ToastCommand Toast.Command
     | RequestLogin Login.Login (Result Http.Error Value -> Msg Event)
-    | PushUrl Key String
 
 
 {-| -}
@@ -206,11 +206,6 @@ runCommand cmd =
         RequestLogin login toMsg ->
             Login.request login toMsg
 
-        PushUrl key url ->
-            Tepa.runNavCmd
-                (\navKey -> Nav.pushUrl navKey url)
-                key
-
 
 type alias Promise a =
     Tepa.Promise Command Memory Event a
@@ -221,7 +216,7 @@ type alias Pointer m =
 
 
 type alias Bucket =
-    { key : Key
+    { key : NavKey
     , requestUrl : Url
     , toastPointer : Pointer Toast.Memory
     }
@@ -239,7 +234,7 @@ currentSession =
 
 
 {-| -}
-procedure : Url -> Key -> Promise Void
+procedure : Url -> NavKey -> Promise Void
 procedure url key =
     -- Initialize Widget
     Tepa.putMaybeLayer
@@ -367,7 +362,7 @@ submitLoginProcedure bucket =
                                                                         | isBusy = False
                                                                     }
                                                             }
-                                                    , pushUrl bucket.key bucket.requestUrl
+                                                    , Nav.pushRoute bucket.key (Nav.extractRoute bucket.requestUrl)
                                                     ]
                                     )
                 )
@@ -381,11 +376,6 @@ requestLogin login =
         , request = RequestLogin login
         , decoder = Login.responseDecoder
         }
-
-
-pushUrl : Key -> Url -> Promise Void
-pushUrl key url =
-    Tepa.push <| \_ -> PushUrl key <| Url.toString url
 
 
 
@@ -425,6 +415,7 @@ type alias ScenarioSet flags c m e =
     , expectAvailable : String -> Scenario flags c m e
     , expectLoginFormShowNoErrors : String -> Scenario flags c m e
     , expectLoginFormShowError : String -> Scenario flags c m e
+    , toast : Toast.ScenarioSet flags c m e
     }
 
 
@@ -446,6 +437,22 @@ scenario props =
     , expectAvailable = expectAvailable props
     , expectLoginFormShowNoErrors = expectLoginFormShowNoErrors props
     , expectLoginFormShowError = expectLoginFormShowError props
+    , toast =
+        Toast.scenario
+            { querySelf =
+                props.querySelf
+                    |> LayerQuery.child .toast
+            , wrapEvent = ToastEvent >> props.wrapEvent
+            , unwrapCommand =
+                \c ->
+                    case props.unwrapCommand c of
+                        Just (ToastCommand c1) ->
+                            Just c1
+
+                        _ ->
+                            Nothing
+            , session = props.session
+            }
     }
 
 
@@ -519,7 +526,8 @@ expectLoginFormShowNoErrors props description =
 
 expectAvailable : ScenarioProps c m e -> String -> Scenario flags c m e
 expectAvailable props str =
-    Scenario.expectMemory props.session str
+    Scenario.expectMemory props.session
+        str
         { target = props.querySelf
         , expectation = Expect.Builder.pass
         }

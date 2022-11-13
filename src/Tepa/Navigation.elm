@@ -1,8 +1,9 @@
 module Tepa.Navigation exposing
     ( NavKey
     , Route
-    , pushUrl
-    , replaceUrl
+    , extractRoute
+    , pushRoute
+    , replaceRoute
     , back
     , forward
     )
@@ -16,17 +17,19 @@ This module helps you manage the browser’s URL yourself.
 
 @docs NavKey
 @docs Route
+@docs extractRoute
 
 
 # Navigation Procedures
 
-@docs pushUrl
-@docs replaceUrl
+@docs pushRoute
+@docs replaceRoute
 @docs back
 @docs forward
 
 -}
 
+import Url exposing (Url)
 import Internal.Core as Core exposing (Promise, Void)
 
 
@@ -51,6 +54,15 @@ type alias Route =
     }
 
 
+{-| -}
+extractRoute : Url -> Route
+extractRoute url =
+    { path = url.path
+    , query = url.query
+    , fragment = url.fragment
+    }
+
+
 
 -- Navigation Procedures
 
@@ -62,8 +74,8 @@ Change the URL, but do not trigger a page load.
 This will add a new entry to the browser history.
 
 -}
-pushUrl : NavKey -> Route -> Promise c m e Void
-pushUrl key route =
+pushRoute : NavKey -> Route -> Promise c m e Void
+pushRoute key route =
     Core.pushAppCmd <|
         Core.PushRoute
             { key = key
@@ -79,8 +91,8 @@ Change the URL, but do not trigger a page load.
 This _will not_ add a new entry to the browser history.
 
 -}
-replaceUrl : NavKey -> Route -> Promise c m e Void
-replaceUrl key route =
+replaceRoute : NavKey -> Route -> Promise c m e Void
+replaceRoute key route =
     Core.pushAppCmd <|
         Core.PushRoute
             { key = key

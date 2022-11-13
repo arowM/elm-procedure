@@ -148,7 +148,8 @@ runCommand cmd =
 
 {-| Represents that the popup is closed by user or timeout.
 -}
-type Closed = Closed
+type Closed
+    = Closed
 
 
 
@@ -264,7 +265,7 @@ pushHttpError :
 pushHttpError err =
     case err of
         Http.BadStatus 401 ->
-            pushError """Login required."""
+            pushError """Incorrect ID or Password."""
 
         Http.BadStatus 403 ->
             pushError """Operation not permitted."""
@@ -325,14 +326,14 @@ toastItemView memory =
 
 {-| -}
 type alias ScenarioSet flags c m e =
-    { expectWarningMessage : Scenario.Session -> String -> Scenario flags c m e
-    , expectErrorMessage : Scenario.Session -> String -> Scenario flags c m e
-    , expectNoWarningMessages : Scenario.Session -> Scenario flags c m e
-    , expectNoErrorMessages : Scenario.Session -> Scenario flags c m e
-    , expectNoMessages : Scenario.Session -> Scenario flags c m e
-    , closeWarningsByMessage : Scenario.Session -> String -> Scenario flags c m e
-    , closeErrorsByMessage : Scenario.Session -> String -> Scenario flags c m e
-    , awaitAllToDisappear : Scenario.Session -> Scenario flags c m e
+    { expectWarningMessage : { message : String } -> String -> Scenario flags c m e
+    , expectErrorMessage : { message : String } -> String -> Scenario flags c m e
+    , expectNoWarningMessages : String -> Scenario flags c m e
+    , expectNoErrorMessages : String -> Scenario flags c m e
+    , expectNoMessages : String -> Scenario flags c m e
+    , closeWarningsByMessage : { message : String } -> Scenario flags c m e
+    , closeErrorsByMessage : { message : String } -> Scenario flags c m e
+    , awaitAllToDisappear : Scenario flags c m e
     }
 
 
@@ -341,30 +342,24 @@ type alias ScenarioProps c m e =
     { querySelf : LayerQuery m Memory
     , wrapEvent : Event -> e
     , unwrapCommand : c -> Maybe Command
+    , session : Scenario.Session
     }
 
 
 {-| -}
 scenario : ScenarioProps c m e -> ScenarioSet flags c m e
 scenario props =
-    { expectWarningMessage =
-        expectMessage WarningMessage
-            "System shows toast popup warning message: "
-    , expectErrorMessage =
-        expectMessage ErrorMessage
-            "System shows toast popup error message: "
+    { expectWarningMessage = expectMessage props WarningMessage
+    , expectErrorMessage = expectMessage props ErrorMessage
     , expectNoWarningMessages =
-        expectNoMessages
+        expectNoMessages props
             ("toast_item-" ++ messageTypeCode WarningMessage)
-            "No toast popup warning messages at this point."
     , expectNoErrorMessages =
-        expectNoMessages
+        expectNoMessages props
             ("toast_item-" ++ messageTypeCode ErrorMessage)
-            "No toast popup error messages at this point."
     , expectNoMessages =
-        expectNoMessages
+        expectNoMessages props
             "toast_item"
-            "No toast popup messages at this point."
     , closeWarningsByMessage =
         closeByMessage props
             WarningMessage
@@ -377,10 +372,10 @@ scenario props =
     }
 
 
-expectMessage : MessageType -> String -> Scenario.Session -> String -> Scenario flags c m e
-expectMessage messageType descPrefix session str =
-    Scenario.expectAppView session
-        (descPrefix ++ str)
+expectMessage : ScenarioProps c m e -> MessageType -> { message : String } -> String -> Scenario flags c m e
+expectMessage props messageType { message } description =
+    Scenario.expectAppView props.session
+        description
         { expectation =
             \{ body } ->
                 HtmlQuery.fromHtml (Html.div [] body)
@@ -390,17 +385,17 @@ expectMessage messageType descPrefix session str =
                     |> HtmlQuery.keep
                         (Selector.all
                             [ localClassSelector "toast_item_body"
-                            , Selector.text str
+                            , Selector.text message
                             ]
                         )
                     |> HtmlQuery.count (Expect.greaterThan 0)
         }
 
 
-expectNoMessages : String -> String -> Scenario.Session -> Scenario flags c m e
-expectNoMessages itemClassname desc session =
-    Scenario.expectAppView session
-        desc
+expectNoMessages : ScenarioProps c m e -> String -> String -> Scenario flags c m e
+expectNoMessages props itemClassname description =
+    Scenario.expectAppView props.session
+        description
         { expectation =
             \{ body } ->
                 HtmlQuery.fromHtml (Html.div [] body)
@@ -411,8 +406,8 @@ expectNoMessages itemClassname desc session =
         }
 
 
-closeByMessage : ScenarioProps c m e -> MessageType -> String -> Scenario.Session -> String -> Scenario flags c m e
-closeByMessage props messageType descPrefix session str =
+closeByMessage : ScenarioProps c m e -> MessageType -> String -> { message : String } -> Scenario flags c m e
+closeByMessage props messageType descPrefix { message } =
     let
         target =
             props.querySelf
@@ -423,17 +418,17 @@ closeByMessage props messageType descPrefix session str =
                         m.messageType
                             == messageType
                             && m.content
-                            == str
+                            == message
                     )
                 |> LayerQuery.index 0
     in
     Scenario.concat
-        [ Scenario.userEvent session
-            (descPrefix ++ str)
+        [ Scenario.userEvent props.session
+            (descPrefix ++ message)
             { target = target
             , event = props.wrapEvent CloseToastItem
             }
-        , Scenario.customResponse session
+        , Scenario.customResponse props.session
             "The popup is gradually fading away."
             { target = target
             , response =
@@ -450,8 +445,8 @@ closeByMessage props messageType descPrefix session str =
         ]
 
 
-awaitAllToDisappear : ScenarioProps c m e -> Scenario.Session -> Scenario flags c m e
-awaitAllToDisappear props session =
+awaitAllToDisappear : ScenarioProps c m e -> Scenario flags c m e
+awaitAllToDisappear props =
     let
         targets =
             props.querySelf
@@ -459,7 +454,7 @@ awaitAllToDisappear props session =
                     (\(Memory m) -> m.items)
     in
     Scenario.concat
-        [ Scenario.customResponse session
+        [ Scenario.customResponse props.session
             "After a period of time, each popup are automatically removed."
             { target = targets
             , response =
@@ -473,7 +468,7 @@ awaitAllToDisappear props session =
                         _ ->
                             Nothing
             }
-        , Scenario.customResponse session
+        , Scenario.customResponse props.session
             "Popups gradually fade away when removed."
             { target = targets
             , response =

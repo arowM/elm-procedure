@@ -107,9 +107,10 @@ request (EditAccount editAccount) toMsg =
                 ]
                 []
         , body =
-            Http.jsonBody <| JE.object
-                [ ( "id", JE.string editAccount.id )
-                ]
+            Http.jsonBody <|
+                JE.object
+                    [ ( "id", JE.string editAccount.id )
+                    ]
         , expect =
             Http.expectJson toMsg JD.value
         }

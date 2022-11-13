@@ -34,8 +34,7 @@ type Route
     | Users
 
 
-{-|
--}
+{-| -}
 fromUrl : Url -> Route
 fromUrl url =
     Parser.parse parser url

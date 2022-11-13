@@ -108,10 +108,11 @@ request (Login login) toMsg =
                 ]
                 []
         , body =
-            Http.jsonBody <| JE.object
-                [ ( "id", JE.string login.id )
-                , ( "pass", JE.string login.pass )
-                ]
+            Http.jsonBody <|
+                JE.object
+                    [ ( "id", JE.string login.id )
+                    , ( "pass", JE.string login.pass )
+                    ]
         , expect =
             Http.expectJson toMsg JD.value
         }

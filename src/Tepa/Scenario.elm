@@ -16,7 +16,6 @@ module Tepa.Scenario exposing
     , expectMemory
     , expectAppView
     , loadApp
-    , Route
     , userEvent
     , listenerEvent
     , portResponse
@@ -75,7 +74,6 @@ module Tepa.Scenario exposing
 ## Event Simulators
 
 @docs loadApp
-@docs Route
 @docs userEvent
 @docs listenerEvent
 
@@ -98,16 +96,15 @@ import Dict
 import Expect exposing (Expectation)
 import Expect.Builder as ExpBuilder
 import Internal.Core as Core
-import Internal.LayerId exposing (LayerId)
 import Internal.Markup as Markup
 import Json.Encode exposing (Value)
 import Mixin
 import Mixin.Html as Html exposing (Html)
-import Tepa exposing (ApplicationProps, Model, Msg)
+import Tepa exposing (ApplicationProps, Msg)
+import Tepa.Navigation exposing (Route)
 import Tepa.Scenario.LayerQuery exposing (LayerQuery)
 import Test exposing (Test)
 import Test.Sequence as SeqTest
-import Url
 
 
 type alias ExpBuilder a =
@@ -358,12 +355,12 @@ expectMemory (Session session) description o =
                                 Expect.fail
                                     "expectMemory: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, _ ) ->
-                        case Core.runQuery o.target model of
+                    Just sessionContext ->
+                        case Core.runQuery o.target sessionContext.model of
                             [] ->
                                 SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
                                     \_ ->
-                                        Err (Core.memoryState model)
+                                        Err (Core.memoryState sessionContext.model)
                                             |> Expect.equal
                                                 (Ok "expectMemory: The query should find some Layer in the current memory.")
 
@@ -439,9 +436,9 @@ expectAppView (Session session) description { expectation } =
                                 Expect.fail
                                     "expectAppView: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, _ ) ->
+                    Just sessionContext ->
                         SeqTest.pass
-                            (Core.memoryState model
+                            (Core.memoryState sessionContext.model
                                 |> config.view
                             )
                             |> SeqTest.assert description expectation
@@ -456,18 +453,6 @@ expectAppView (Session session) description { expectation } =
 
 
 -- -- Event Simulators
-
-
-{-| A type representing a route to access.
-
-Each field has the same meaning as [Url](https://package.elm-lang.org/packages/elm/url/latest/Url#Url).
-
--}
-type alias Route =
-    { path : String
-    , query : Maybe String
-    , fragment : Maybe String
-    }
 
 
 {-| Load the app. You can also use `loadApp` to reload the app.
@@ -516,24 +501,20 @@ loadApp :
         }
     -> Scenario flags c m e
 loadApp (Session session) description o =
-    let
-        url =
-            { protocol = Url.Http
-            , host = "example.com"
-            , port_ = Nothing
-            , path = o.route.path
-            , query = o.route.query
-            , fragment = o.route.fragment
-            }
-    in
     Core.Scenario
         { test =
             \config context ->
-                Dict.insert session.uniqueName
-                    (config.init o.flags url)
-                    context
-                    |> Core.OnGoingTest
-                    |> SeqTest.pass
+                case config.init o.flags (Core.testUrl o.route) of
+                    Err err ->
+                        SeqTest.fail "Page navigation" <|
+                            \_ -> Expect.fail err
+
+                    Ok initSessionContext ->
+                        Dict.insert session.uniqueName
+                            initSessionContext
+                            context
+                            |> Core.OnGoingTest
+                            |> SeqTest.pass
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -575,7 +556,7 @@ userEvent (Session session) description o =
     in
     Core.Scenario
         { test =
-            \_ context ->
+            \config context ->
                 case Dict.get session.uniqueName context of
                     Nothing ->
                         SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
@@ -583,8 +564,8 @@ userEvent (Session session) description o =
                                 Expect.fail
                                     "userEvent: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, _ ) ->
-                        case Core.runQuery o.target model of
+                    Just sessionContext ->
+                        case Core.runQuery o.target sessionContext.model of
                             [] ->
                                 SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
                                     \_ ->
@@ -592,20 +573,32 @@ userEvent (Session session) description o =
                                             "userEvent: No Layers for the query."
 
                             layer1s ->
-                                Dict.insert session.uniqueName
-                                    (List.map
-                                        (\(Core.Layer lid _) ->
-                                            Core.LayerMsg
-                                                { layerId = lid
-                                                , event = o.event
+                                let
+                                    resSessionContext =
+                                        List.map
+                                            (\(Core.Layer lid _) ->
+                                                Core.LayerMsg
+                                                    { layerId = lid
+                                                    , event = o.event
+                                                    }
+                                            )
+                                            layer1s
+                                            |> applyMsgsTo
+                                                { onUrlChange = config.onUrlChange
                                                 }
-                                        )
-                                        layer1s
-                                        |> applyMsgs model
-                                    )
-                                    context
-                                    |> Core.OnGoingTest
-                                    |> SeqTest.pass
+                                                sessionContext
+                                in
+                                case resSessionContext of
+                                    Err err ->
+                                        SeqTest.fail "Page navigation" <|
+                                            \_ -> Expect.fail err
+
+                                    Ok nextSessionContext ->
+                                        Dict.insert session.uniqueName
+                                            nextSessionContext
+                                            context
+                                            |> Core.OnGoingTest
+                                            |> SeqTest.pass
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -649,7 +642,7 @@ listenerEvent :
 listenerEvent (Session session) description o =
     Core.Scenario
         { test =
-            \_ context ->
+            \config context ->
                 case Dict.get session.uniqueName context of
                     Nothing ->
                         SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
@@ -657,38 +650,50 @@ listenerEvent (Session session) description o =
                                 Expect.fail
                                     "listenerEvent: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, _ ) ->
-                        case model of
+                    Just sessionContext ->
+                        case sessionContext.model of
                             Core.OnGoing onGoing ->
-                                case Core.runQuery o.target model of
+                                case Core.runQuery o.target sessionContext.model of
                                     [] ->
                                         Core.OnGoingTest context
                                             |> SeqTest.pass
 
                                     layer1s ->
-                                        Dict.insert session.uniqueName
-                                            (List.concatMap
-                                                (\(Core.Layer thisLid _) ->
-                                                    onGoing.listeners
-                                                        |> List.filterMap
-                                                            (\listener ->
-                                                                if listener.layerId == thisLid && listener.uniqueName == Just o.listenerName then
-                                                                    Just <|
-                                                                        Core.ListenerMsg
-                                                                            { requestId = listener.requestId
-                                                                            , event = o.event
-                                                                            }
+                                        let
+                                            resSessionContext =
+                                                List.concatMap
+                                                    (\(Core.Layer thisLid _) ->
+                                                        onGoing.listeners
+                                                            |> List.filterMap
+                                                                (\listener ->
+                                                                    if listener.layerId == thisLid && listener.uniqueName == Just o.listenerName then
+                                                                        Just <|
+                                                                            Core.ListenerMsg
+                                                                                { requestId = listener.requestId
+                                                                                , event = o.event
+                                                                                }
 
-                                                                else
-                                                                    Nothing
-                                                            )
-                                                )
-                                                layer1s
-                                                |> applyMsgs model
-                                            )
-                                            context
-                                            |> Core.OnGoingTest
-                                            |> SeqTest.pass
+                                                                    else
+                                                                        Nothing
+                                                                )
+                                                    )
+                                                    layer1s
+                                                    |> applyMsgsTo
+                                                        { onUrlChange = config.onUrlChange
+                                                        }
+                                                        sessionContext
+                                        in
+                                        case resSessionContext of
+                                            Err err ->
+                                                SeqTest.fail "Page navigation" <|
+                                                    \_ -> Expect.fail err
+
+                                            Ok nextSessionContext ->
+                                                Dict.insert session.uniqueName
+                                                    nextSessionContext
+                                                    context
+                                                    |> Core.OnGoingTest
+                                                    |> SeqTest.pass
 
                             Core.EndOfProcess _ ->
                                 SeqTest.pass (Core.OnGoingTest context)
@@ -735,7 +740,7 @@ portResponse :
 portResponse (Session session) description o =
     Core.Scenario
         { test =
-            \_ context ->
+            \config context ->
                 case Dict.get session.uniqueName context of
                     Nothing ->
                         SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
@@ -743,38 +748,50 @@ portResponse (Session session) description o =
                                 Expect.fail
                                     "portResponse: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, cmds ) ->
-                        case Core.runQuery o.target model of
+                    Just sessionContext ->
+                        case Core.runQuery o.target sessionContext.model of
                             [] ->
                                 Core.OnGoingTest context
                                     |> SeqTest.pass
 
                             layer1s ->
-                                Dict.insert session.uniqueName
-                                    (List.concatMap
-                                        (\(Core.Layer thisLid _) ->
-                                            List.filterMap
-                                                (\( lid, c ) ->
-                                                    if lid == thisLid then
-                                                        o.response c
-                                                            |> Maybe.map
-                                                                (\v ->
-                                                                    Core.PortResponseMsg
-                                                                        { response = v
-                                                                        }
-                                                                )
+                                let
+                                    resSessionContext =
+                                        List.concatMap
+                                            (\(Core.Layer thisLid _) ->
+                                                List.filterMap
+                                                    (\( lid, c ) ->
+                                                        if lid == thisLid then
+                                                            o.response c
+                                                                |> Maybe.map
+                                                                    (\v ->
+                                                                        Core.PortResponseMsg
+                                                                            { response = v
+                                                                            }
+                                                                    )
 
-                                                    else
-                                                        Nothing
-                                                )
-                                                cmds
-                                        )
-                                        layer1s
-                                        |> applyMsgs model
-                                    )
-                                    context
-                                    |> Core.OnGoingTest
-                                    |> SeqTest.pass
+                                                        else
+                                                            Nothing
+                                                    )
+                                                    sessionContext.cmds
+                                            )
+                                            layer1s
+                                            |> applyMsgsTo
+                                                { onUrlChange = config.onUrlChange
+                                                }
+                                                sessionContext
+                                in
+                                case resSessionContext of
+                                    Err err ->
+                                        SeqTest.fail "Page navigation" <|
+                                            \_ -> Expect.fail err
+
+                                    Ok nextSessionContext ->
+                                        Dict.insert session.uniqueName
+                                            nextSessionContext
+                                            context
+                                            |> Core.OnGoingTest
+                                            |> SeqTest.pass
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -818,7 +835,7 @@ customResponse :
 customResponse (Session session) description o =
     Core.Scenario
         { test =
-            \_ context ->
+            \config context ->
                 case Dict.get session.uniqueName context of
                     Nothing ->
                         SeqTest.fail ("[" ++ session.uniqueName ++ "] " ++ description) <|
@@ -826,32 +843,44 @@ customResponse (Session session) description o =
                                 Expect.fail
                                     "customResponse: The application is not active on the session. Use `loadApp` beforehand."
 
-                    Just ( model, cmds ) ->
-                        case Core.runQuery o.target model of
+                    Just sessionContext ->
+                        case Core.runQuery o.target sessionContext.model of
                             [] ->
                                 Core.OnGoingTest context
                                     |> SeqTest.pass
 
                             layer1s ->
-                                Dict.insert session.uniqueName
-                                    (List.concatMap
-                                        (\(Core.Layer thisLid _) ->
-                                            List.filterMap
-                                                (\( lid, c ) ->
-                                                    if lid == thisLid then
-                                                        o.response c
+                                let
+                                    resSessionContext =
+                                        List.concatMap
+                                            (\(Core.Layer thisLid _) ->
+                                                List.filterMap
+                                                    (\( lid, c ) ->
+                                                        if lid == thisLid then
+                                                            o.response c
 
-                                                    else
-                                                        Nothing
-                                                )
-                                                cmds
-                                        )
-                                        layer1s
-                                        |> applyMsgs model
-                                    )
-                                    context
-                                    |> Core.OnGoingTest
-                                    |> SeqTest.pass
+                                                        else
+                                                            Nothing
+                                                    )
+                                                    sessionContext.cmds
+                                            )
+                                            layer1s
+                                            |> applyMsgsTo
+                                                { onUrlChange = config.onUrlChange
+                                                }
+                                                sessionContext
+                                in
+                                case resSessionContext of
+                                    Err err ->
+                                        SeqTest.fail "Page navigation" <|
+                                            \_ -> Expect.fail err
+
+                                    Ok nextSessionContext ->
+                                        Dict.insert session.uniqueName
+                                            nextSessionContext
+                                            context
+                                            |> Core.OnGoingTest
+                                            |> SeqTest.pass
         , markup =
             Core.putListItemMarkup <|
                 listItemParagraph
@@ -945,18 +974,27 @@ toTest =
     Core.toTest
 
 
-applyMsgs : Model c m e -> List (Msg e) -> ( Model c m e, List ( LayerId, c ) )
-applyMsgs initModel msgs =
-    List.foldl
-        (\msg ( accModel, accCmds ) ->
-            let
-                ( newModel, newCmds ) =
-                    Core.update msg accModel
-            in
-            ( newModel, accCmds ++ newCmds )
-        )
-        ( initModel, [] )
-        msgs
+applyMsgsTo : { onUrlChange : Route -> Msg e } -> Core.SessionContext c m e -> List (Msg e) -> Result String (Core.SessionContext c m e)
+applyMsgsTo config sessionContext msgs =
+    let
+        ( updatedModel, updatedCmds, updatedAppCmds ) =
+            List.foldl
+                (\msg ( model, cmds, appCms ) ->
+                    let
+                        ( newModel, newCmds, newAppCmds ) =
+                            Core.update msg model
+                    in
+                    ( newModel, cmds ++ newCmds, appCms ++ newAppCmds )
+                )
+                ( sessionContext.model, [], [] )
+                msgs
+    in
+    Core.applyAppCmds config
+        updatedAppCmds
+        { model = updatedModel
+        , cmds = updatedCmds
+        , history = sessionContext.history
+        }
 
 
 

@@ -2,9 +2,10 @@ module Internal.Core exposing
     ( Model(..), memoryState, layerState
     , Msg(..), rootLayerMsg
     , mapMsg
-    , AppCmd
+    , AppCmd(..)
     , runAppCmd
-    , Key(..)
+    , applyAppCmds
+    , NavKey(..)
     , Promise
     , succeedPromise
     , mapPromise
@@ -18,7 +19,7 @@ module Internal.Core exposing
     , layerView, keyedLayerView, layerDocument, eventAttr, eventMixin
     , none, sequence, concurrent
     , Void, void
-    , modify, push, currentState, return, lazy, listen
+    , modify, push, pushAppCmd, currentState, return, lazy, listen
     , newLayer, onLayer
     , init, update
     , elementView, documentView, subscriptions
@@ -26,7 +27,8 @@ module Internal.Core exposing
     , noneScenario, noneTest
     , concatScenario
     , putListItemMarkup
-    , toTest
+    , toTest, testUrl
+    , SessionContext
     , toMarkup
     , InvalidMarkupReason(..)
     , invalidMarkup
@@ -47,11 +49,12 @@ module Internal.Core exposing
 @docs mapMsg
 @docs AppCmd
 @docs runAppCmd
+@docs applyAppCmds
 
 
-# Key
+# NavKey
 
-@docs Key
+@docs NavKey
 
 
 # Promise
@@ -73,7 +76,7 @@ module Internal.Core exposing
 # Primitive Procedures
 
 @docs Void, void
-@docs modify, push, currentState, return, lazy, listen
+@docs modify, push, pushAppCmd, currentState, return, lazy, listen
 
 
 # Layer
@@ -93,7 +96,8 @@ module Internal.Core exposing
 @docs noneScenario, noneTest
 @docs concatScenario
 @docs putListItemMarkup
-@docs toTest
+@docs toTest, testUrl
+@docs SessionContext
 @docs toMarkup
 @docs InvalidMarkupReason
 @docs invalidMarkup
@@ -115,6 +119,7 @@ import Dict exposing (Dict)
 import Expect
 import Html exposing (Attribute, Html)
 import Html.Attributes as Attributes
+import Internal.History as History exposing (History)
 import Internal.LayerId as LayerId exposing (LayerId)
 import Internal.Markup as Markup
 import Internal.RequestId as RequestId exposing (RequestId)
@@ -207,14 +212,15 @@ wrapListener wrap listener1 =
 
 -- AppCmd
 
+
 type AppCmd
     = PushRoute
-        { key : Key
+        { key : NavKey
         , route : Route
         , replace : Bool
         }
     | Back
-        { key : Key
+        { key : NavKey
         , steps : Int
         }
 
@@ -225,8 +231,9 @@ type alias Route =
     , fragment : Maybe String
     }
 
-renderRoute : Route -> String
-renderRoute r =
+
+buildRoute : Route -> String
+buildRoute r =
     String.concat
         [ r.path
         , r.query
@@ -239,23 +246,60 @@ renderRoute r =
 
 
 runAppCmd : AppCmd -> Cmd msg
-runAppCmd cmd =
-    case cmd of
+runAppCmd appCmd =
+    case appCmd of
         PushRoute o ->
             let
-                op = if o.replace then Nav.replaceUrl else Nav.pushUrl
+                op =
+                    if o.replace then
+                        Nav.replaceUrl
+
+                    else
+                        Nav.pushUrl
             in
             case o.key of
                 SimKey ->
                     Cmd.none
+
                 RealKey key ->
-                    op key <| renderRoute o.route
+                    op key <| buildRoute o.route
+
         Back o ->
             case o.key of
                 SimKey ->
                     Cmd.none
+
                 RealKey key ->
                     Nav.back key o.steps
+
+
+runAppCmdOnTest : AppCmd -> History -> Result String ( History, Route )
+runAppCmdOnTest appCmd history =
+    case appCmd of
+        PushRoute o ->
+            if o.replace then
+                Ok
+                    ( History.replaceRoute o.route history
+                    , o.route
+                    )
+
+            else
+                Ok
+                    ( History.pushRoute o.route history
+                    , o.route
+                    )
+
+        Back o ->
+            case History.back o.steps history of
+                Nothing ->
+                    Err "Scenario test does not support navigation to pages outside of the application."
+
+                Just newHistory ->
+                    Ok
+                        ( newHistory
+                        , History.current newHistory
+                        )
+
 
 
 -- Msg
@@ -398,22 +442,12 @@ unwrapMsg f msg1 =
 
 
 
--- Key
+-- NavKey
 
 
-type Key
+type NavKey
     = RealKey Nav.Key
     | SimKey
-
-
-runNavCmd : (Nav.Key -> Cmd msg) -> Key -> Cmd msg
-runNavCmd f key =
-    case key of
-        RealKey k ->
-            f k
-
-        _ ->
-            Cmd.none
 
 
 
@@ -934,6 +968,20 @@ lazy f =
                     f ()
             in
             prom context
+
+
+pushAppCmd : AppCmd -> Promise c m e Void
+pushAppCmd appCmd =
+    Promise <|
+        \context ->
+            { newContext = context
+            , cmds = []
+            , appCmds = [ appCmd ]
+            , addListeners = []
+            , closedLayers = []
+            , closedRequests = []
+            , handler = Resolved OnGoingProcedure
+            }
 
 
 type Layer m
@@ -1511,12 +1559,20 @@ type TestModel c m e
 
 type alias TestConfig flags c m e =
     { view : m -> Document ()
-    , init : flags -> Url -> ( Model c m e, List ( LayerId, c ), List AppCmd )
+    , init : flags -> Url -> Result String (SessionContext c m e)
+    , onUrlChange : Route -> Msg e
     }
 
 
 type alias TestContext c m e =
-    Dict SessionId ( Model c m e, List ( LayerId, c ), List AppCmd )
+    Dict SessionId (SessionContext c m e)
+
+
+type alias SessionContext c m e =
+    { model : Model c m e
+    , cmds : List ( LayerId, c )
+    , history : History
+    }
 
 
 type alias SessionId =
@@ -1608,10 +1664,21 @@ mappendScenario (Scenario s1) (Scenario s2) =
         }
 
 
+testUrl : Route -> Url
+testUrl route =
+    { protocol = Url.Https
+    , host = "example.com"
+    , port_ = Nothing
+    , path = route.path
+    , query = route.query
+    , fragment = route.fragment
+    }
+
+
 toTest :
     { props :
         { init : memory
-        , procedure : flags -> Url -> Key -> Promise cmd memory event Void
+        , procedure : flags -> Url -> NavKey -> Promise cmd memory event Void
         , view : Layer memory -> Document (Msg event)
         , onUrlRequest : Browser.UrlRequest -> event
         , onUrlChange : Url -> event
@@ -1620,6 +1687,14 @@ toTest :
     }
     -> Test
 toTest o =
+    let
+        onUrlChange route =
+            LayerMsg
+                { layerId = LayerId.init
+                , event =
+                    o.props.onUrlChange (testUrl route)
+                }
+    in
     List.map
         (\(Section sec) ->
             let
@@ -1641,14 +1716,90 @@ toTest o =
                         }
                 , init =
                     \flags url ->
-                        init o.props.init
-                            (o.props.procedure flags url SimKey)
+                        let
+                            ( model, cmds, appCmds ) =
+                                init o.props.init (o.props.procedure flags url SimKey)
+                        in
+                        { model = model
+                        , cmds = cmds
+                        , history =
+                            History.init
+                                { path = url.path
+                                , query = url.query
+                                , fragment = url.fragment
+                                }
+                        }
+                            |> applyAppCmds
+                                { onUrlChange = onUrlChange
+                                }
+                                appCmds
+                , onUrlChange = onUrlChange
                 }
                 Dict.empty
                 |> SeqTest.run sec.title
         )
         o.sections
         |> Test.describe "Scenario tests"
+
+
+applyAppCmds :
+    { onUrlChange : Route -> Msg e
+    }
+    -> List AppCmd
+    -> SessionContext c m e
+    -> Result String (SessionContext c m e)
+applyAppCmds config appCmds sessionContext =
+    let
+        result =
+            List.foldl
+                (\appCmd acc ->
+                    Result.andThen
+                        (\( accSessionContext, accAppCmds ) ->
+                            applyAppCmd config appCmd accSessionContext
+                                |> Result.map
+                                    (\( newSessionContext, newAppCmds ) ->
+                                        ( newSessionContext, accAppCmds ++ newAppCmds )
+                                    )
+                        )
+                        acc
+                )
+                (Ok ( sessionContext, [] ))
+                appCmds
+    in
+    Result.andThen
+        (\( nextSessionContext, nextAppCmds ) ->
+            case nextAppCmds of
+                [] ->
+                    Ok nextSessionContext
+
+                _ ->
+                    applyAppCmds config nextAppCmds nextSessionContext
+        )
+        result
+
+
+applyAppCmd :
+    { onUrlChange : Route -> Msg e
+    }
+    -> AppCmd
+    -> SessionContext c m e
+    -> Result String ( SessionContext c m e, List AppCmd )
+applyAppCmd config appCmd sessionContext =
+    runAppCmdOnTest appCmd sessionContext.history
+        |> Result.map
+            (\( newHistory, route ) ->
+                let
+                    ( newModel, newCmds, newAppCmds ) =
+                        update (config.onUrlChange route)
+                            sessionContext.model
+                in
+                ( { model = newModel
+                  , cmds = sessionContext.cmds ++ newCmds
+                  , history = newHistory
+                  }
+                , newAppCmds
+                )
+            )
 
 
 toMarkup :

@@ -35,7 +35,6 @@ module Tepa exposing
     , documentView
     , subscriptions
     , init
-    , Key
     , Msg
     , mapMsg
     , Model
@@ -126,7 +125,6 @@ The [low level API](#connect-to-tea-app) is also available for more advanced use
 @docs documentView
 @docs subscriptions
 @docs init
-@docs Key
 @docs Msg
 @docs mapMsg
 @docs Model
@@ -148,6 +146,7 @@ import Internal.ResponseType as ResponseType
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode exposing (Value)
 import Mixin exposing (Mixin)
+import Tepa.Navigation exposing (NavKey)
 import Tepa.ResponseType exposing (ResponseType)
 import Url exposing (Url)
 
@@ -849,7 +848,7 @@ application { props, runCommand } =
 {-| -}
 type alias ApplicationProps flags cmd memory event =
     { init : memory
-    , procedure : flags -> Url -> Key -> Promise cmd memory event Void
+    , procedure : flags -> Url -> NavKey -> Promise cmd memory event Void
     , view : Layer memory -> Document (Msg event)
     , onUrlRequest : Browser.UrlRequest -> event
     , onUrlChange : Url -> event
@@ -877,14 +876,15 @@ type alias Document a =
 update : Msg event -> Model (Cmd (Msg event)) memory event -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 update msg model =
     let
-        (newModel, cmds, appCmds) = Core.update msg model
+        ( newModel, cmds, appCmds ) =
+            Core.update msg model
     in
     ( newModel
     , [ List.map Tuple.second cmds
       , List.map Core.runAppCmd appCmds
       ]
-      |> List.concat
-      |> Cmd.batch
+        |> List.concat
+        |> Cmd.batch
     )
 
 
@@ -917,21 +917,16 @@ init :
     -> ( Model (Cmd (Msg event)) memory event, Cmd (Msg event) )
 init memory procs =
     let
-        (model, cmds, appCmds) = Core.init memory procs
+        ( model, cmds, appCmds ) =
+            Core.init memory procs
     in
     ( model
     , [ List.map Tuple.second cmds
       , List.map Core.runAppCmd appCmds
       ]
-      |> List.concat
-      |> Cmd.batch
+        |> List.concat
+        |> Cmd.batch
     )
-
-
-{-| `Browser.Navigation.Key` alternative.
--}
-type alias Key =
-    Core.Key
 
 
 {-| TEA Message that wraps your events.

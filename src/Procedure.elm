@@ -26,6 +26,7 @@ module Procedure exposing
     , when
     , unless
     , withMaybe
+    , withMemory
     , Observer
     , global
     , dig
@@ -89,6 +90,7 @@ The [low level API](#low-level-api) is also available for more advanced use case
 @docs when
 @docs unless
 @docs withMaybe
+@docs withMemory
 
 
 # Observer
@@ -1312,7 +1314,7 @@ withObserver :
     -> (Observer memory a -> List (Procedure_ cmd memory event))
     -> Procedure_ cmd memory event
 withObserver o (Observer observer) f =
-    withMemory <|
+    withMemory_ <|
         \m ->
             observer.lifter.get m
                 |> Maybe.andThen o.get
@@ -1333,7 +1335,7 @@ withObservers :
     -> (List (Observer memory a) -> List (Procedure_ cmd memory event))
     -> Procedure_ cmd memory event
 withObservers o (Observer observer) f =
-    withMemory <|
+    withMemory_ <|
         \m ->
             observer.lifter.get m
                 |> Maybe.map
@@ -1374,8 +1376,21 @@ withObservers o (Observer observer) f =
                 |> Maybe.withDefault []
 
 
-withMemory : (memory -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
-withMemory f =
+{-| -}
+withMemory : Observer memory a -> (a -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+withMemory (Observer { lifter }) f =
+    withMemory_ <|
+        \m ->
+            case lifter.get m of
+                Nothing ->
+                    []
+
+                Just a ->
+                    f a
+
+
+withMemory_ : (memory -> List (Procedure_ cmd memory event)) -> Procedure_ cmd memory event
+withMemory_ f =
     Procedure_
         [ WithMemory <|
             \memory ->
